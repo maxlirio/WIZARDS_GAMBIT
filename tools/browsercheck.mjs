@@ -106,16 +106,18 @@ try {
   if (phase === 'unit' && !(await ev('!!WG.state.pending'))) {
     await sleep(600);
     await shot('unit-phase');
-    const mk = await ev(`WG.arena && document.querySelectorAll('.mlabel').length`);
-    check('unit phase shows move markers', mk > 0, `${mk} markers`);
-    // Click the first marker through the canvas.
-    const pos = await ev(`(()=>{document.querySelector('#stage').scrollIntoView({block:'start'}); const p=WG.arena.markerScreens()[0]; if(!p) return null; const b=document.querySelector('#arena').getBoundingClientRect(); return [b.x+p[0], b.y+p[1]]})()`);
+    const u0 = await ev(`(()=>{const u=WG.state.field.units.find(u=>u.owner===0&&u.kind==='mage'); return [u.x,u.y,u.z]})()`);
+    const circ = await ev(`WG.arena.insideMove(${u0[0]} + 1000, ${u0[1]})`);
+    check('unit phase shows the move circle', circ === true);
+    // Click OPEN GROUND inside the circle, off to one side so the mage itself is not under the cursor.
+    const pos = await ev(`(()=>{document.querySelector('#stage').scrollIntoView({block:'start'}); const p=WG.arena.project(${u0[0]} + 900, ${u0[1]} - 1600, ${u0[2]}); const b=document.querySelector('#arena').getBoundingClientRect(); return [b.x+p[0], b.y+p[1]]})()`);
+    if (pos) { await mouse('mouseMoved', pos[0], pos[1], { buttons: 0 }); await sleep(250); await shot('move-preview'); }
     if (pos) {
       const before = await ev(`JSON.stringify(WG.state.field.units.filter(u=>u.owner===0).map(u=>[u.x,u.y]))`);
       await click(pos[0], pos[1]);
       await sleep(400);
       const after = await ev(`JSON.stringify(WG.state.field.units.filter(u=>u.owner===0).map(u=>[u.x,u.y]))`);
-      check('clicking a move marker moves the unit', before !== after);
+      check('clicking inside the circle moves the unit there', before !== after, after);
       console.log('  camera after marker click', await cam());
     }
     await clickSel('#tray button.end');
@@ -143,6 +145,29 @@ try {
   await sleep(300);
   await shot('inspector', await ev(`(()=>{const b=document.querySelector('#stage').getBoundingClientRect(); return {x:b.x,y:b.y,width:b.width,height:b.height}})()`));
   await ev(`document.querySelector('#hand .hcard')?.dispatchEvent(new MouseEvent('mouseleave'))`);
+
+  // The range preview: reach a spell phase where one of my spells would rotate
+  // into a face with a reach, click it, and photograph the ring.
+  const target = await ev(`(async()=>{ const AI = await import('./js/ai/ai.js');
+    const R = await import('./js/rules/orient.js');
+    const pick = () => { const S = WG.state; if (S.pending || S.active !== 0 || S.phase !== 'spell') return null;
+      const la = WG.legal(); for (const a of la) if (a.type === 'rotate') { const sp = S.players[0].table.flat().find(c => c.uid === a.uid);
+        const f = S.defs[sp.def].faces[(R.activeIndex(sp) + 1) & 3]; if (f.reach) return sp.cell; } return null; };
+    for (let k = 0; k < 3000 && WG.state.winner === null; k++) {
+      while (WG.busy) await new Promise(r => setTimeout(r, 5));
+      const c = pick(); if (c !== null) return c;
+      const S = WG.state;
+      if (S.pending) { if ((S.pending.request.player ?? S.active) === 0) WG.answer(AI.answerFor(S, { policy: 'oneply' })); else await new Promise(r => setTimeout(r, 5)); }
+      else if (S.active === 0) WG.act(AI.chooseAction(S, { policy: 'oneply' })); else await new Promise(r => setTimeout(r, 5));
+      await new Promise(r => setTimeout(r, 0));
+    } return null; })()`);
+  if (target !== null) {
+    await clickSel(`#table0 .cell[data-cell="${target}"]`);
+    await sleep(700);
+    await shot('range-preview');
+    const rings = await ev(`document.querySelectorAll('.rlabel').length`);
+    check('selecting a spell draws the range of the face it would rotate to', rings > 0, `${rings} ring label(s)`);
+  } else check('reached a rotate with a ranged face', false);
 
   // Step until the game asks the human something, and photograph the question.
   const asked = await ev(`(async()=>{ const AI = await import('./js/ai/ai.js');

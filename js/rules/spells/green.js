@@ -1,9 +1,10 @@
 // GREEN -- the spell table itself. Home cell 3.
 //
-// Green is the chain school. It rotates, shifts and destroys your own cards,
-// which means it is the school that MAKES matches rather than exploiting them,
-// and the school most able to hurt itself: every rotation it hands out is a
-// rotation a chain can turn against you.
+// Green is the chain school. It rotates, shifts and raises your own cards, so
+// it is the school that MAKES matches rather than exploiting them -- and its
+// payoffs move the whole table at once. Time Warp turns every other spell you
+// own back a face; Grove Keeper turns them all forward. Either can start a
+// chain of a length nothing else in the game reaches, and either can wreck you.
 
 import { card } from './registry.js';
 import * as M from '../motifs.js';
@@ -11,114 +12,122 @@ import { SPIRAL, SHARD, WHEEL, LATTICE } from '../runes.js';
 
 card({
   id: 'CHANGE', name: 'Change', school: 'green',
+  // Adaptation: small adjustments, then two at once.
   keywords: ['Inevitable'],
   runes: [SPIRAL, SPIRAL, SHARD, SPIRAL],
   found: null,
   I:   { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
   II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
-  III: { text: 'Destroy a Spell you control.', ...M.destroyASpell({ side: 'friendly' }) },
-  IV:  { text: 'Rotate a Spell you control right.', ...M.turnASpell({ dir: 'right' }) },
+  III: { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
+  IV:  { text: 'Rotate up to two Spells you control left, one after the other.', ...M.turnSeveral({ n: 2, dir: 'left' }) },
 });
 
 card({
   id: 'PRECISION', name: 'Precision', school: 'green',
-  runes: [SPIRAL, SPIRAL, SPIRAL, SHARD],
+  // Exactness: at the end, any card turned to any face, without consequence.
+  runes: [SPIRAL, SPIRAL, SHARD, SPIRAL],
   found: 'turnFive',
-  I:   { text: 'Rotate a Spell to any side. Trigger no effects from it.', ...M.setSideFreely() },
-  II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
-  III: { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
-  IV:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
-});
-
-card({
-  id: 'SPELL_DRAIN', name: 'Spell Drain', school: 'green',
-  runes: [SHARD, SPIRAL, LATTICE, SPIRAL],
-  found: 'drainTwo',
-  I:   { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
-  II:  { text: 'If the cell above is occupied, rotate a Spell left.',
-         gate: { id: 'neighbourFilled', where: 'above' }, ...M.turnASpell({ dir: 'left' }) },
-  III: { text: 'Destroy a Spell you control. Draw 2 cards.',
-         cost: [{ id: 'destroyFriendly', n: 1 }], ...M.drawCards({ n: 2 }) },
-  IV:  { text: 'Shift this Spell to an adjacent cell.', ...M.shiftSelf() },
-});
-
-card({
-  id: 'REWIND', name: 'Rewind', school: 'green',
-  runes: [SPIRAL, LATTICE, SPIRAL, SPIRAL],
-  found: 'rewindOnce',
   I:   { text: 'Rotate a Spell you control right.', ...M.turnASpell({ dir: 'right' }) },
-  II:  { text: 'Resolve the I of a friendly Spell, regardless of orientation.', ...M.rewind({ index: 0 }) },
-  III: { text: 'Rotate this Spell right.', ...M.turnSelf({ dir: 'right' }) },
-  IV:  { text: 'Shift this Spell to an adjacent cell.', ...M.shiftSelf() },
-});
-
-card({
-  id: 'GROVE_KEEPER', name: 'Grove Keeper', school: 'green',
-  runes: [SPIRAL, SPIRAL, SPIRAL, SHARD],
-  found: 'offColour',
-  I:   { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
-  II:  { text: 'This Spell may be rotated on any colour.', ...M.passiveFreeTurn() },
-  III: { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
-  IV:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
-});
-
-card({
-  id: 'SEED_OF_ORDER', name: 'Seed of Order', school: 'green',
-  runes: [SPIRAL, SPIRAL, LATTICE, LATTICE],
-  found: 'tableFull',
-  I:   { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
-  II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
-  III: { text: 'Grant a Spell [Spell Mastery].', ...M.grantKeyword({ kw: 'Spell Mastery' }) },
-  IV:  { text: 'Your range is increased by 1m.', ...M.passiveRange({ mm: 1000 }) },
-});
-
-card({
-  id: 'UNRAVEL', name: 'Unravel', school: 'green',
-  keywords: ['Spell Bane'],
-  runes: [SHARD, SPIRAL, SPIRAL, LATTICE],
-  found: 'banedThem',
-  I:   { text: 'Destroy a Spell.', ...M.destroyASpell({ side: 'friendly' }) },
-  II:  { text: 'Rotate a Spell left.', ...M.turnASpell({ dir: 'left' }) },
-  III: { text: 'Shift a Spell to an adjacent cell.', ...M.shiftASpell() },
-  IV:  { text: 'Spells either side of this one lose their Keywords.', ...M.passiveSilence() },
-});
-
-/* ------------------------------------------------------------ second tranche */
-
-card({
-  id: 'WEAVER', name: 'Weaver', school: 'green',
-  runes: [LATTICE, SPIRAL, SPIRAL, SPIRAL],
-  found: 'woven',
-  // Paying with a rotation is green paying in its own currency -- and the
-  // rotation it costs you can start a chain of its own.
-  I:   { text: 'Rotate another Spell you control left. Draw 2 cards.',
-         cost: [{ id: 'rotateFriendly' }], ...M.drawCards({ n: 2 }) },
-  II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
-  III: { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
+  II:  { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
+  III: { text: 'Discard a card. Rotate a Spell you control left.',
+         cost: [{ id: 'discard', n: 1 }], ...M.turnASpell({ dir: 'left' }) },
   IV:  { text: 'Rotate a Spell to any side. Trigger no effects from it.', ...M.setSideFreely() },
 });
 
 card({
-  id: 'SPIRE_WARD', name: 'Spire Ward', school: 'green',
-  runes: [SPIRAL, SHARD, SPIRAL, SPIRAL],
-  found: 'spired',
-  I:   { text: 'If you control 4 Spells, rotate a Spell you control left.',
-         gate: { id: 'spellsAtLeast', n: 4 }, ...M.turnASpell({ dir: 'left' }) },
+  id: 'SPELL_DRAIN', name: 'Spell Drain', school: 'green',
+  // Eat your own table for cards.
+  runes: [SPIRAL, SHARD, SPIRAL, LATTICE],
+  found: 'drainTwo',
+  I:   { text: 'Shift this Spell to an adjacent cell.', ...M.shiftSelf() },
   II:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
-  III: { text: 'Rotate this Spell left.', ...M.turnSelf({ dir: 'left' }) },
-  IV:  { text: 'This Spell may be rotated on any colour.', ...M.passiveFreeTurn() },
+  III: { text: 'If the cell above is occupied, rotate a Spell left.',
+         gate: { id: 'neighbourFilled', where: 'above' }, ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Destroy a Spell you control. Draw 3 cards.',
+         cost: [{ id: 'destroyFriendly', n: 1 }], ...M.drawCards({ n: 3 }) },
+});
+
+card({
+  id: 'REWIND', name: 'Time Warp', school: 'green',
+  // Turn the clock back. The payoff turns every other spell you own back a face.
+  runes: [SPIRAL, LATTICE, LATTICE, SPIRAL],
+  found: 'rewindOnce',
+  I:   { text: 'Rotate a Spell you control right.', ...M.turnASpell({ dir: 'right' }) },
+  II:  { text: 'Return a card from your discard to your hand.', ...M.recall() },
+  III: { text: 'Destroy a Spell you control. Resolve the I of a friendly Spell, regardless of orientation.',
+         cost: [{ id: 'destroyFriendly', n: 1 }], ...M.rewind({ index: 0 }) },
+  IV:  { text: 'Rotate each of your other Spells right.', ...M.turnAll({ dir: 'right' }) },
+});
+
+card({
+  id: 'GROVE_KEEPER', name: 'Grove Keeper', school: 'green',
+  // Growth. The payoff is spring: every other spell you own turns forward at once.
+  runes: [SPIRAL, SPIRAL, LATTICE, SPIRAL],
+  found: 'offColour',
+  I:   { text: 'This Spell may be rotated on any colour.', ...M.passiveFreeTurn() },
+  II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  III: { text: 'Your mage regains 1 life.', ...M.mend({ n: 1 }) },
+  IV:  { text: 'Rotate each of your other Spells left.', ...M.turnAll({ dir: 'left' }) },
+});
+
+card({
+  id: 'SEED_OF_ORDER', name: 'Seed of Order', school: 'green',
+  // Discipline, spread to everything you control.
+  runes: [LATTICE, SPIRAL, SPIRAL, LATTICE],
+  found: 'tableFull',
+  I:   { text: 'Your range is increased by 1m.', ...M.passiveRange({ mm: 1000 }) },
+  II:  { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
+  III: { text: 'Discard a card. Grant a Spell [Spell Mastery].',
+         cost: [{ id: 'discard', n: 1 }], ...M.grantKeyword({ kw: 'Spell Mastery' }) },
+  IV:  { text: 'Every Spell you control gains [Spell Mastery].', ...M.grantAll({ kw: 'Spell Mastery' }) },
+});
+
+card({
+  id: 'UNRAVEL', name: 'Unravel', school: 'green',
+  // Pulling the enemy's magic apart, thread by thread, then all at once.
+  keywords: ['Spell Bane'],
+  runes: [LATTICE, SPIRAL, SPIRAL, SHARD],
+  found: 'banedThem',
+  I:   { text: 'Spells either side of this one lose their Keywords.', ...M.passiveSilence() },
+  II:  { text: 'Hex an enemy Spell: it may not rotate until after its owner’s next turn.', ...M.hexSpell() },
+  III: { text: 'Discard a card. Rotate a Spell left.',
+         cost: [{ id: 'discard', n: 1 }], ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Destroy a Spell.', ...M.destroyASpell({ side: 'enemy' }) },
+});
+
+card({
+  id: 'WEAVER', name: 'Weaver', school: 'green',
+  // Threads of fate: draw deep, keep the best.
+  runes: [SPIRAL, SPIRAL, LATTICE, LATTICE],
+  found: 'woven',
+  I:   { text: 'Draw a card, then discard a card.', ...M.drawThenDiscard({ draw: 1, discard: 1 }) },
+  II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  III: { text: 'Rotate another Spell you control left. Draw 2 cards.',
+         cost: [{ id: 'rotateFriendly' }], ...M.drawCards({ n: 2 }) },
+  IV:  { text: 'Draw 3 cards, then discard a card.', ...M.drawThenDiscard({ draw: 3, discard: 1 }) },
+});
+
+card({
+  id: 'SPIRE_WARD', name: 'Spire Ward', school: 'green',
+  // A tower around your table. At the top, nothing of yours can be touched.
+  runes: [SPIRAL, SHARD, SPIRAL, LATTICE],
+  found: 'spired',
+  I:   { text: 'This Spell may be rotated on any colour.', ...M.passiveFreeTurn() },
+  II:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
+  III: { text: 'If you control 4 Spells, rotate a Spell you control left.',
+         gate: { id: 'spellsAtLeast', n: 4 }, ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Your opponent may not choose your Spells.', ...M.passiveWard() },
 });
 
 card({
   id: 'HOLLOW_RITE', name: 'Hollow Rite', school: 'green',
-  runes: [LATTICE, LATTICE, SHARD, SPIRAL],
+  // A rite over the dead. The last face raises a destroyed spell back onto the table.
+  runes: [LATTICE, SPIRAL, LATTICE, LATTICE],
   found: 'hollowed',
   I:   { text: 'After one of your Spells is destroyed, draw a card.', ...M.onDestroyedDraw({ n: 1 }) },
-  // The one gate that rewards an EMPTY table, which is a real position: every
-  // good face eats a friendly spell, so running on fumes happens by itself.
-  II:  { text: 'If you control 2 or fewer Spells, draw 2 cards.',
+  II:  { text: 'Put the top 2 cards of your deck into your discard. Draw a card.',
+         cost: [{ id: 'millSelf', n: 2 }], ...M.drawCards({ n: 1 }) },
+  III: { text: 'If you control 2 or fewer Spells, draw 2 cards.',
          gate: { id: 'spellsAtMost', n: 2 }, ...M.drawCards({ n: 2 }) },
-  III: { text: 'Put the top 2 cards of your deck into your discard. Destroy a Spell you control.',
-         cost: [{ id: 'millSelf', n: 2 }], ...M.destroyASpell({ side: 'friendly' }) },
-  IV:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Return a Spell from your discard to an empty cell of its colour.', ...M.reanimate() },
 });

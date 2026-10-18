@@ -206,7 +206,7 @@ export function faceListHTML(def, rot = 0) {
   if (def.kind === 'golem') return `<p>${esc(def.text)}</p>`;
   return def.faces.map((f) => `<div class="face${f.index === (rot & 3) ? ' on' : ''}">
     <span class="fn">${f.numeral}</span><span class="fr">${runeGlyphInline(def.runes[f.index], SCHOOL_INK[def.school])}</span>
-    <span class="ft">${esc(f.text)}</span></div>`).join('');
+    <span class="ft">${esc(f.text)}${f.reach ? ` <em class="fr-m">${(f.reach / 1000).toFixed(1)}m</em>` : ''}${f.cost?.length ? ' <em class="fr-c">cost</em>' : ''}</span></div>`).join('');
 }
 
 export function runeGlyphInline(rune, ink) {

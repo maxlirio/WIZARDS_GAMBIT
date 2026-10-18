@@ -51,6 +51,7 @@ export function emptyDerived() {
     /* the player */
     rangeBonus: [0, 0],           // mm added to every range check
     damageBonus: [0, 0],
+    mageLife: [0, 0],             // extra life for the player's mage
 
     /* the battlefield */
     unitMoveBonus: new Map(),     // unitId -> mm
@@ -153,6 +154,7 @@ function watched(d, state, spell, face) {
 
 export const bonusRange = (state, p) => state.derived.rangeBonus[p] || 0;
 export const bonusDamage = (state, p) => state.derived.damageBonus[p] || 0;
+export const bonusMageLife = (state, p) => state.derived.mageLife[p] || 0;
 export const grantedOn = (state, uid) => state.derived.grantedKeywords.get(uid) || [];
 export const lostOn = (state, uid) => state.derived.lostKeywords.get(uid) || [];
 export const unitMove = (state, u) => u.move + (state.derived.unitMoveBonus.get(u.id) || 0);

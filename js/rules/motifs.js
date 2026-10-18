@@ -116,7 +116,7 @@ export const destroySelf = ({ then = null } = {}) => ({
 /* ============================================================ damage */
 
 export const damage = ({ amount = 1, range = 3000, needLos = false } = {}) => ({
-  tag: 'break',
+  tag: 'break', reach: range,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range, { needLos });
     if (!ids.length) return;
@@ -127,7 +127,7 @@ export const damage = ({ amount = 1, range = 3000, needLos = false } = {}) => ({
 });
 
 export const damageAll = ({ amount = 1, range = 2500 } = {}) => ({
-  tag: 'break',
+  tag: 'break', reach: range,
   *effect(ctx) {
     // Sorted, and resolved against a SNAPSHOT of the list: a hit can kill, a
     // kill can score, and scoring can end the game, so re-querying mid-loop
@@ -141,7 +141,7 @@ export const damageAll = ({ amount = 1, range = 2500 } = {}) => ({
 
 /** Damage that scales with something you have already spent. Gold-adjacent red. */
 export const damagePerLedger = ({ key, per = 1, cap = 4, range = 3000 } = {}) => ({
-  tag: 'break',
+  tag: 'break', reach: range,
   *effect(ctx) {
     const n = Math.min(cap, ctx.state.players[ctx.p].ledger[key] * per);
     if (n <= 0) return;
@@ -163,7 +163,7 @@ export const damagePerLedger = ({ key, per = 1, cap = 4, range = 3000 } = {}) =>
  * can do to you.
  */
 export const damageAndLock = ({ amount = 3, range = 3000 } = {}) => ({
-  tag: 'break',
+  tag: 'break', reach: range,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range);
     if (ids.length) {
@@ -178,7 +178,7 @@ export const damageAndLock = ({ amount = 3, range = 3000 } = {}) => ({
 /* ============================================================ the field */
 
 export const push = ({ mm = 2000, range = 3000, side = 'enemy' } = {}) => ({
-  tag: 'move',
+  tag: 'move', reach: range,
   *effect(ctx) {
     const ids = side === 'enemy' ? ctx.enemyUnits(range) : ctx.anyUnits(range);
     if (!ids.length) return;
@@ -194,7 +194,7 @@ export const push = ({ mm = 2000, range = 3000, side = 'enemy' } = {}) => ({
 });
 
 export const pushAway = ({ mm = 2000, range = 3000 } = {}) => ({
-  tag: 'move',
+  tag: 'move', reach: range,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range);
     if (!ids.length) return;
@@ -205,7 +205,7 @@ export const pushAway = ({ mm = 2000, range = 3000 } = {}) => ({
 });
 
 export const pull = ({ mm = 2000, range = 4000 } = {}) => ({
-  tag: 'move',
+  tag: 'move', reach: range,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range);
     if (!ids.length) return;
@@ -216,7 +216,7 @@ export const pull = ({ mm = 2000, range = 4000 } = {}) => ({
 });
 
 export const relocate = ({ mm = 3000, range = 4000, side = 'friendly' } = {}) => ({
-  tag: 'move',
+  tag: 'move', reach: range,
   *effect(ctx) {
     const ids = side === 'friendly' ? ctx.friendlyUnits(range) : ctx.anyUnits(range);
     if (!ids.length) return;
@@ -234,7 +234,7 @@ export const relocate = ({ mm = 3000, range = 4000, side = 'friendly' } = {}) =>
 
 /** Printed Levitation IV: "move it to the closest elevated position". */
 export const toHighGround = ({ mm = 3000, range = 4000 } = {}) => ({
-  tag: 'move',
+  tag: 'move', reach: range,
   *effect(ctx) {
     const ids = ctx.friendlyUnits(range);
     if (!ids.length) return;
@@ -246,7 +246,7 @@ export const toHighGround = ({ mm = 3000, range = 4000 } = {}) => ({
 });
 
 export const shoveTerrain = ({ mm = 2000, range = 4000 } = {}) => ({
-  tag: 'move',
+  tag: 'move', reach: range,
   *effect(ctx) {
     const ids = ctx.propsInRange(range, { pushableOnly: true });
     if (!ids.length) return;
@@ -262,7 +262,7 @@ export const shoveTerrain = ({ mm = 2000, range = 4000 } = {}) => ({
 });
 
 export const liftTerrain = ({ mm = 1500, range = 4000 } = {}) => ({
-  tag: 'move',
+  tag: 'move', reach: range,
   *effect(ctx) {
     const ids = ctx.propsInRange(range);
     if (!ids.length) return;
@@ -274,7 +274,7 @@ export const liftTerrain = ({ mm = 1500, range = 4000 } = {}) => ({
 
 /** Printed Levitation I: remove a terrain piece from the battlefield this turn. */
 export const banishTerrain = ({ range = 5000 } = {}) => ({
-  tag: 'move',
+  tag: 'move', reach: range,
   *effect(ctx) {
     const ids = ctx.propsInRange(range);
     if (!ids.length) return;
@@ -351,6 +351,375 @@ export const rewind = ({ index = 0 } = {}) => ({
   },
 });
 
+/* ============================================================ the payoffs */
+// The big faces. A card's side IV is its payoff, and these are the shapes the
+// payoffs take: things that happen to MANY units, to the terrain, to the whole
+// table at once -- the effects a card is worth charging up for.
+
+/** Fireball: a hit, and a splash on every other enemy near the one it hit. */
+export const fireball = ({ amount = 3, splash = 1, radius = 1500, range = 4000 } = {}) => ({
+  tag: 'break', reach: range,
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Fireball: ${amount} damage`, kind: 'unit' });
+    if (id === null) return;
+    const t = ctx.unit(id);
+    const near = ctx.enemyUnits(99000)
+      .map((k) => ctx.unit(k))
+      .filter((u) => u.id !== id && (u.x - t.x) ** 2 + (u.y - t.y) ** 2 <= radius * radius)
+      .map((u) => u.id);
+    ctx.hit(id, amount);
+    for (const k of near) { if (ctx.state.winner !== null) break; ctx.hit(k, splash); }
+  },
+});
+
+/** Damage and a knock-back on every enemy around the origin. */
+export const nova = ({ amount = 2, mm = 1500, range = 2500 } = {}) => ({
+  tag: 'break', reach: range,
+  *effect(ctx) {
+    const o = ctx.origin();
+    if (!o) return;
+    for (const id of ctx.enemyUnits(range)) {
+      if (ctx.state.winner !== null) break;
+      ctx.hit(id, amount);
+      const u = ctx.unit(id);
+      if (u && !u.dead) ctx.pushFrom(id, o.x, o.y, mm);
+    }
+  },
+});
+
+/** Push every enemy within range directly away from the origin. */
+export const repel = ({ mm = 2500, range = 3000 } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const o = ctx.origin();
+    if (!o) return;
+    for (const id of ctx.enemyUnits(range)) ctx.pushFrom(id, o.x, o.y, mm);
+  },
+});
+
+/** Pull every enemy within range toward the origin. */
+export const vortex = ({ mm = 2000, range = 5000 } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const o = ctx.origin();
+    if (!o) return;
+    for (const id of ctx.enemyUnits(range)) ctx.pullTo(id, o.x, o.y, mm);
+  },
+});
+
+/** A quake: EVERY unit near the origin is thrown back, yours included. */
+export const quake = ({ mm = 2000, range = 3000 } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const o = ctx.origin();
+    if (!o) return;
+    for (const id of ctx.anyUnits(range)) {
+      const u = ctx.unit(id);
+      if (!u || (u.x === o.x && u.y === o.y)) continue;   // the epicentre stays put
+      ctx.pushFrom(id, o.x, o.y, mm);
+    }
+  },
+});
+
+/** Shove one enemy away and hit it. With crush, the wall it hits is the hit. */
+export const slam = ({ mm = 4000, range = 3000, amount = 0, crush = false } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Slam which unit?', kind: 'unit' });
+    if (id === null) return;
+    const o = ctx.origin();
+    if (o) ctx.pushFrom(id, o.x, o.y, mm, { crush });
+    const u = ctx.unit(id);
+    if (amount > 0 && u && !u.dead) ctx.hit(id, amount);
+  },
+});
+
+/** Lightning: one bolt, then it arcs to the nearest enemy it has not hit. */
+export const chainLightning = ({ amount = 2, jumps = 2, hop = 2500, range = 5000 } = {}) => ({
+  tag: 'break', reach: range,
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    let id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Strike which unit first?', kind: 'unit' });
+    const hitSet = [];
+    for (let k = 0; k <= jumps && id !== null && id !== undefined; k++) {
+      if (ctx.state.winner !== null) break;
+      const from = ctx.unit(id);
+      const fx0 = from.x, fy0 = from.y;
+      hitSet.push(id);
+      ctx.hit(id, amount);
+      // The arc goes to the NEAREST enemy not yet struck, ties to the lowest
+      // id, so the path is a function of the board and nothing else.
+      const next = ctx.enemyUnits(99000).map((n) => ctx.unit(n))
+        .filter((u) => u && !u.dead && !hitSet.includes(u.id) && (u.x - fx0) ** 2 + (u.y - fy0) ** 2 <= hop * hop)
+        .sort((a, b) => ((a.x - fx0) ** 2 + (a.y - fy0) ** 2) - ((b.x - fx0) ** 2 + (b.y - fy0) ** 2) || a.id - b.id)[0];
+      id = next ? next.id : null;
+    }
+  },
+});
+
+/** Damage that lingers: a hit, then poison. */
+export const envenom = ({ amount = 2, poison = 2, range = 5000 } = {}) => ({
+  tag: 'break', reach: range,
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Envenom which unit?', kind: 'unit' });
+    if (id === null) return;
+    ctx.hit(id, amount);
+    const u = ctx.unit(id);
+    if (u && !u.dead) { u.poison = (u.poison || 0) + poison; ctx.fx('poisoned', { id, n: u.poison }); }
+  },
+});
+
+/** Damage, and your mage drinks what it dealt. */
+export const drain = ({ amount = 3, range = 4000 } = {}) => ({
+  tag: 'break', reach: range,
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Drain ${amount}`, kind: 'unit' });
+    if (id === null) return;
+    const dealt = ctx.hit(id, amount);
+    if (dealt > 0) ctx.mend(dealt);
+  },
+});
+
+export const mend = ({ n = 2 } = {}) => ({
+  tag: 'draw',
+  *effect(ctx) { ctx.mend(n); },
+});
+
+/**
+ * Levitation's payoff: lift a rock from beside an enemy and drop it on them.
+ * The rock must be NEAR THE TARGET, not near you -- you are reaching across the
+ * arena, and the arena has to have put a stone there for you.
+ */
+export const dropRock = ({ amount = 3, range = 4000, near = 3000 } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const rocksNear = (id) => {
+      const u = ctx.unit(id);
+      return ctx.propsInRange(99000, { pushableOnly: true }).filter((r) => {
+        const pr = ctx.prop(r);
+        return (pr.x - u.x) ** 2 + (pr.y - u.y) ** 2 <= near * near;
+      });
+    };
+    const ids = ctx.enemyUnits(range).filter((id) => rocksNear(id).length);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Drop a rock on whom?', kind: 'unit' });
+    if (id === null) return;
+    const rocks = rocksNear(id);
+    const rock = rocks.length === 1 ? rocks[0] : yield ctx.ask.one(rocks, { prompt: 'Which rock?', kind: 'prop' });
+    if (rock === null) return;
+    ctx.dropRock(rock, id, amount);
+  },
+});
+
+/** Throw an enemy into the air. The fall does the rest. */
+export const hurl = ({ mm = 3000, range = 4000 } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Hurl which unit?', kind: 'unit' });
+    if (id === null) return;
+    ctx.hurl(id, mm);
+  },
+});
+
+/** Two units trade places. Any two, either side. */
+export const swapUnits = ({ range = 5000 } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const ids = ctx.anyUnits(range);
+    if (ids.length < 2) return;
+    const a = yield ctx.ask.one(ids, { prompt: 'Swap which unit…', kind: 'unit' });
+    if (a === null) return;
+    const rest = ids.filter((x) => x !== a);
+    const b = rest.length === 1 ? rest[0] : yield ctx.ask.one(rest, { prompt: '…with which?', kind: 'unit' });
+    if (b === null) return;
+    ctx.swapUnits(a, b);
+  },
+});
+
+/** Raise a stone wall out of the ground near the caster. */
+export const raiseWall = ({ mm = 2000 } = {}) => ({
+  tag: 'move', reach: mm,
+  *effect(ctx) {
+    const o = ctx.origin();
+    if (!o) return;
+    const pts = ctx.landingPoints(o.id, mm);
+    if (!pts.length) return;
+    const i = pts.length === 1 ? 0 : yield ctx.ask.pick(pts.map((_, k) => k), {
+      prompt: 'Raise the wall where?', labels: pts.map((pt) => ctx.dirLabel(pt.dir)),
+      show: pts.map(({ x, y, z }) => ({ x, y, z })),
+    });
+    ctx.raiseWall(pts[i ?? 0]);
+  },
+});
+
+/** Every other spell of yours turns. Time Warp turns them back. */
+export const turnAll = ({ dir = 'right' } = {}) => ({
+  tag: 'turn',
+  *effect(ctx) {
+    for (const uid of ctx.friendlySpells()) ctx.turnSpell(uid, dir, { forced: true });
+  },
+});
+
+/** Rotate up to N of your spells, one at a time. */
+export const turnSeveral = ({ n = 2, dir = 'left' } = {}) => ({
+  tag: 'turn',
+  *effect(ctx) {
+    const done = [];
+    for (let k = 0; k < n; k++) {
+      const opts = ctx.rotatable(ctx.friendlySpells()).filter((u) => !done.includes(u));
+      if (!opts.length) return;
+      const uid = yield ctx.ask.one(opts, { prompt: `Rotate a Spell ${dir} (${k + 1} of ${n})`, allowNone: k > 0 });
+      if (uid === null) return;
+      done.push(uid);
+      ctx.turnSpell(uid, dir);
+    }
+  },
+});
+
+/** A card from your discard back into your hand. */
+export const recall = () => ({
+  tag: 'draw',
+  *effect(ctx) {
+    const opts = ctx.discardUids();
+    if (!opts.length) return;
+    const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: 'Return which card to your hand?', kind: 'hand' });
+    if (uid !== null) ctx.recall(uid);
+  },
+});
+
+/** A destroyed spell rises again onto an empty cell of its colour. */
+export const reanimate = () => ({
+  tag: 'draw',
+  *effect(ctx) {
+    const st = ctx.state;
+    const pl = st.players[ctx.p];
+    const emptyHome = (c) => ctx.homeCellsOf(c.def).filter((cell) => !pl.table[cell].length);
+    const opts = pl.discard.filter((c) => st.defs[c.def].kind !== 'golem' && emptyHome(c).length)
+      .map((c) => c.uid).sort((a, b) => a - b);
+    if (!opts.length) return;
+    const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: 'Raise which Spell?', kind: 'hand' });
+    if (uid === null) return;
+    const cells = emptyHome(pl.discard.find((c) => c.uid === uid));
+    const cell = cells.length === 1 ? cells[0] : yield ctx.ask.pick(cells, {
+      prompt: 'Onto which cell?', labels: cells.map((c) => `cell ${c} (${CELL_COLOR[c]})`),
+    });
+    if (cell === null) return;
+    ctx.reanimate(uid, cell);
+  },
+});
+
+/** An enemy spell is frozen: it may not rotate through its owner's next turn. */
+export const hexSpell = () => ({
+  tag: 'turn',
+  *effect(ctx) {
+    const opts = ctx.enemySpells();
+    if (!opts.length) return;
+    const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: 'Hex which enemy Spell?' });
+    if (uid !== null) ctx.hex(uid);
+  },
+});
+
+/** Every spell of yours gains a Keyword. */
+export const grantAll = ({ kw } = {}) => ({
+  tag: 'draw',
+  keywords: [kw],
+  *effect(ctx) {
+    for (const uid of ctx.friendlySpells({ exceptSelf: false })) ctx.grantKeyword(uid, kw);
+  },
+});
+
+/** Choose ANY registered Keyword and grant it. */
+export const grantChosen = () => ({
+  tag: 'draw',
+  *effect(ctx) {
+    const opts = ctx.friendlySpells({ exceptSelf: false });
+    if (!opts.length) return;
+    const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: 'Grant a Keyword to which Spell?' });
+    if (uid === null) return;
+    const names = ctx.keywordNames();
+    const i = yield ctx.ask.pick(names.map((_, k) => k), { prompt: 'Which Keyword?', labels: names });
+    if (i === null) return;
+    ctx.grantKeyword(uid, names[i]);
+  },
+});
+
+/** Every Keyword anywhere on your table, gathered onto one spell. */
+export const gatherKeywords = () => ({
+  tag: 'draw',
+  *effect(ctx) {
+    const opts = ctx.friendlySpells({ exceptSelf: false });
+    if (!opts.length) return;
+    const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: 'Gather Keywords onto which Spell?' });
+    if (uid === null) return;
+    const all = [...new Set(opts.flatMap((u) => ctx.keywordsOf(u)))].sort();
+    for (const kw of all) ctx.grantKeyword(uid, kw);
+  },
+});
+
+/** This spell's Keywords, split like light across every spell you control. */
+export const spreadKeywords = () => ({
+  tag: 'draw',
+  *effect(ctx) {
+    const mine = ctx.keywords();
+    for (const uid of ctx.friendlySpells()) for (const kw of mine) ctx.grantKeyword(uid, kw);
+  },
+});
+
+/** Resolve the face now showing on EVERY other spell you control, in cell order. */
+export const resolveAll = () => ({
+  tag: 'draw',
+  *effect(ctx) {
+    const order = ctx.friendlySpells().map((u) => [u, ctx.cellOf(u)]).sort((a, b) => a[1] - b[1]).map((x) => x[0]);
+    for (const uid of order) {
+      if (ctx.state.winner !== null) break;
+      if (ctx.cellOf(uid) === null) continue;
+      yield* ctx.resolveActive(uid);
+    }
+  },
+});
+
+/** Resolve the faces of N friendly spells, adding adjacent Keywords to each. */
+export const spliceMany = ({ n = 2 } = {}) => ({
+  tag: 'draw',
+  *effect(ctx) {
+    const done = [];
+    for (let k = 0; k < n; k++) {
+      const opts = ctx.friendlySpells().filter((u) => !done.includes(u));
+      if (!opts.length) return;
+      const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: `Resolve a friendly Spell's face (${k + 1} of ${n})` });
+      if (uid === null) return;
+      done.push(uid);
+      for (const kw of ctx.keywordsNear()) ctx.grantKeyword(uid, kw);
+      yield* ctx.resolveActive(uid);
+    }
+  },
+});
+
+/** Damage that grows with every Keyword on your table. */
+export const keywordBolt = ({ per = 1, cap = 5, range = 4000 } = {}) => ({
+  tag: 'break', reach: range,
+  *effect(ctx) {
+    const kws = ctx.friendlySpells({ exceptSelf: false }).reduce((n, u) => n + ctx.keywordsOf(u).length, 0);
+    const n = Math.min(cap, kws * per);
+    if (n <= 0) return;
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Deal ${n} damage`, kind: 'unit' });
+    if (id !== null) ctx.hit(id, n);
+  },
+});
+
 /* ============================================================ passives */
 // A passive is live ONLY while its face is active, and writes ONLY into the
 // buckets its face declares in `grants`. Both halves are checked: derive.js
@@ -360,6 +729,11 @@ export const rewind = ({ index = 0 } = {}) => ({
 export const passiveRange = ({ mm = 1000 } = {}) => ({
   tag: 'draw', grants: ['rangeBonus'],
   passive: ({ p, d }) => { d.rangeBonus[p] += mm; },
+});
+
+export const passiveMageLife = ({ n = 2 } = {}) => ({
+  tag: 'draw', grants: ['mageLife'],
+  passive: ({ p, d }) => { d.mageLife[p] += n; },
 });
 
 export const passiveDamage = ({ n = 1 } = {}) => ({
@@ -481,7 +855,7 @@ export const onRotatedRotate = () => ({
 });
 
 export const onMatchDamage = ({ amount = 1, range = 3000 } = {}) => ({
-  tag: 'break',
+  tag: 'break', reach: range,
   on: {
     afterMatch: function* (ctx, payload) {
       if (payload.p !== ctx.p) return;
@@ -510,7 +884,7 @@ export const onPlayDraw = ({ n = 1 } = {}) => ({
 });
 
 export const onTurnStartDamage = ({ amount = 1, range = 3000 } = {}) => ({
-  tag: 'break',
+  tag: 'break', reach: range,
   on: {
     turnStart: function* (ctx, payload) {
       if (payload.p !== ctx.p) return;
@@ -531,7 +905,7 @@ export const onChainEndDraw = ({ n = 1, minLinks = 1 } = {}) => ({
 });
 
 export const onMoveDamage = ({ amount = 1, range = 3000 } = {}) => ({
-  tag: 'break',
+  tag: 'break', reach: range,
   on: {
     afterMove: function* (ctx, payload) {
       if (payload.p !== ctx.p) return;

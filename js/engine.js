@@ -42,7 +42,7 @@ import { unitTargets } from './field/candidates.js';
 import { findUnit } from './field/query.js';
 import { TIER_CAP, SLOTS } from './rules/golems.js';
 import { beginTurn, endTurn } from './rules/turn.js';
-import { makeMage, unitActions, doUnitAction, pendingUnits } from './rules/units.js';
+import { makeMage, unitActions, doUnitAction, pendingUnits, canMoveTo, settleMageLife } from './rules/units.js';
 import { seedRng, save as saveRng, shuffle } from './rules/rng.js';
 import { CARDS, STANDARD_DECK, FINDABLE } from './rules/spells/index.js';
 import { checkFinds } from './rules/learn.js';
@@ -60,7 +60,7 @@ import { resolveFalls, recheckSupport } from './field/move.js';
  * unimplementable.
  */
 export const CHECKS_MATCHES = Object.freeze({
-  play: true, rotate: true, shift: true, destroy: false, draw: false,
+  play: true, rotate: true, shift: true, destroy: false, pass: false,
 });
 
 export const DEFAULT_CONFIG = Object.freeze({
@@ -211,21 +211,39 @@ export function spellActions(state, p) {
     out.push({ type: 'destroy', uid: sp.uid });
   }
 
-  if (pl.deck.length || pl.discard.length) out.push({ type: 'draw' });
+  // Drawing is no longer an action -- every turn begins with one (turn.js) --
+  // so a turn where nothing on the table is worth doing needs a way to decline.
+  // Without it a player with an empty hand would be FORCED to destroy or shift
+  // their own spells, which no rule asks for.
+  out.push({ type: 'pass' });
   return out;
 }
 
 const sameAction = (a, b) => a.type === b.type && a.uid === b.uid && a.cell === b.cell
   && a.slot === b.slot && a.id === b.id && a.act === b.act && a.dir === b.dir
-  && a.target === b.target && a.golem === b.golem;
+  && a.target === b.target && a.golem === b.golem && a.x === b.x && a.y === b.y;
+
+/**
+ * Is this action legal? Membership in `legalActions` for everything except a
+ * unit MOVE, which goes anywhere inside the unit's move circle: the list only
+ * samples that circle (it is what the AI searches), and the circle is the rule.
+ */
+function isLegal(state, action) {
+  if (action && action.type === 'unit' && action.act === 'move'
+      && Number.isInteger(action.x) && Number.isInteger(action.y)) {
+    if (state.phase !== 'unit') return false;
+    const u = pendingUnits(state, state.active).find((x) => x.id === action.id);
+    return !!u && canMoveTo(state, u, action.x, action.y);
+  }
+  return legalActions(state).some((a) => sameAction(a, action));
+}
 
 /* ------------------------------------------------------------ acting */
 
 export function apply(state, action) {
   if (state.pending) throw new Error('a question is outstanding; call choose()');
   if (state.winner !== null) return state;
-  const legal = legalActions(state);
-  if (!legal.some((a) => sameAction(a, action))) {
+  if (!isLegal(state, action)) {
     throw new Error(`illegal action: ${JSON.stringify(action)}`);
   }
   const p = state.active;
@@ -254,13 +272,20 @@ export function apply(state, action) {
       emit(state, 'afterPlay', { uid: action.uid, p, cell: action.cell });
     }
   } else if (action.type === 'rotate') {
-    turn(state, action.uid, { dir: 'left' });
+    // Rotating a spell RESOLVES the face it brings to the top, and then the
+    // table is checked for matches as after any rotation. The resolve is queued
+    // ahead of the match check, and the check is not queued here: the rotation
+    // marked the table dirty, and the pump queues the chain for a dirty table
+    // once the resolve is done -- queueing it here as well would run two chains
+    // over one change, the second rescanning junctions the first had spent.
+    if (turn(state, action.uid, { dir: 'left' })) {
+      state.queue.push({ kind: 'resolve', uid: action.uid, p, seq: ++state.actionSeq });
+    }
+    did = 'rotated';
   } else if (action.type === 'shift') {
     shift(state, action.uid, action.cell);
   } else if (action.type === 'destroy') {
     destroy(state, action.uid, { by: 'action' });
-  } else if (action.type === 'draw') {
-    draw(state, p, 1);
   }
 
   refresh(state);
@@ -286,6 +311,7 @@ function runWork(state, item) {
   if (item.kind === 'unit') return doUnitAction(state, item.action);
   if (item.kind === 'trigger') return runTrigger(state, item);
   if (item.kind === 'onDestroy') return runOnDestroy(state, item);
+  if (item.kind === 'resolve') return runResolve(state, item);
   throw new Error(`unknown work item '${item.kind}'`);
 }
 
@@ -311,6 +337,13 @@ function* runOnDestroy(state, item) {
   };
   fireFor(item.keywords, 'onDestroy', ctx, {});
   return true;
+}
+
+/** A voluntary rotation's payoff: the face now on top resolves. */
+function* runResolve(state, item) {
+  const sp = findSpell(state, item.uid);
+  if (!sp || sp.cell === null) return false;
+  return yield* resolveSide(state, sp, activeIndex(sp), { voluntary: true });
 }
 
 function* runTrigger(state, item) {
@@ -372,6 +405,7 @@ export function pump(state) {
     // as it will go without needing a decision.
     refresh(state);
     checkGolemAttrition(state);
+    settleMageLife(state);
     recheckSupport(state);
     if (state.field.pendingFalls.length) { resolveFalls(state, hurt); continue; }
     if (state.winner !== null) return state;

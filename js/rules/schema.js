@@ -41,6 +41,9 @@ export const FACE_KEYS = Object.freeze([
   'objective',  // GOLD ONLY: { gate?, vp, cost } -- the payout
   'grants',     // declared derived buckets this face writes. checkderived.js reads it.
   'keywords',   // keywords this face GRANTS while active (declared, for verify-faces)
+  'reach',      // mm this face reaches from your range origins, BEFORE keywords and
+                // auras. Set by the motif; the view draws it and verify-faces holds
+                // it to the printed "within Xm", so the drawn range cannot drift.
 ]);
 
 const CARD_KEYS = Object.freeze([

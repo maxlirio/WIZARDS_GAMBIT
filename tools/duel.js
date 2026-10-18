@@ -299,11 +299,11 @@ function describeAction(state, a) {
     const sp = spellsOn(state, state.active).find((x) => x.uid === a.uid);
     return `destroy your own ${defOf(state, sp).name} (cell ${sp.cell})`;
   }
-  if (a.type === 'draw') return 'draw a card';
+  if (a.type === 'pass') return 'take no spell action';
   if (a.type === 'unit') {
     const u = state.field.units.find((x) => x.id === a.id);
     const who = u.kind === 'mage' ? 'your mage' : (CARDS[u.def]?.name || 'golem') + ` #${u.id}`;
-    if (a.act === 'move') return `${who}: move ${a.label} up to ${a.mm}mm`;
+    if (a.act === 'move') return `${who}: move ${a.label || ''} ${a.mm ? `${a.mm}mm` : `to (${a.x},${a.y})`}`;
     if (a.act === 'strike') return `${who}: strike ${unitName(state, a.target)}`;
     if (a.act === 'summon') return `${who}: summon ${name(state, a.golem)}`;
     return `${who}: pass`;

@@ -182,13 +182,16 @@ main { display: grid; grid-template-columns: auto 1fr minmax(260px, 330px); min-
 @keyframes dot { 50% { opacity: .2; transform: translateY(-3px); } }
 
 /* ------------------------------------------------------------ right panel */
+/* Over the log, never over the arena: the arena is where a selected spell's
+   range is drawn, and a card read in the inspector must not hide it. */
+#right { position: relative; }
 #inspector {
-  position: absolute; left: 12px; top: 32px; width: min(360px, 80%); z-index: 4; pointer-events: none;
-  background: rgba(10, 10, 14, 0.94); border: 1px solid var(--line-2); border-radius: 10px; padding: 12px; font-size: 12.5px;
+  position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 4; pointer-events: none; max-height: 70%; overflow: hidden;
+  background: #0b0b0f; border: 1px solid var(--line-2); border-radius: 10px; padding: 12px; font-size: 12.5px;
   box-shadow: 0 10px 40px #000c; opacity: 0; transform: translateY(-4px); transition: opacity .15s, transform .15s;
 }
 #inspector.show { opacity: 1; transform: none; }
-.ibig { width: 170px; margin: 0 auto 8px; }
+.ibig { width: 104px; float: right; margin: 0 0 6px 10px; }
 .ihead { font: 700 15px Cinzel, serif; margin-bottom: 6px; }
 .ihead small { display: block; font: 500 11px Inter; color: var(--ink-dim); text-transform: capitalize; }
 .faces { clear: none; }
@@ -272,11 +275,20 @@ main { display: grid; grid-template-columns: auto 1fr minmax(260px, 330px); min-
   #mine { border-right: 0; }
   #right { grid-template-columns: 1fr; }
   #right > #log { grid-column: 1; grid-row: auto; }
-  #inspector { width: calc(100% - 24px); }
+  #inspector { width: calc(100vw - 24px); }
   #hand { overflow-x: auto; justify-content: flex-start; }
   .hcard:hover { transform: translateY(-6%) scale(1.1); }
 }
 @media (max-height: 760px) {
   #tray .hintline { display: none; }
   #tray-wrap { padding: 6px 10px; }
+}
+.rlabel { position: absolute; left: 0; top: 0; font: 600 10.5px Inter; color: #ffe7a6; background: #2a1e05d8; border: 1px solid #ffcf5a77; padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+.float3d.heal { color: #5ee68f; }
+#tray .reach { color: #ffe7a6; font-weight: 500; }
+.fr-m { font-style: normal; font: 600 10px Inter; color: #ffe7a6; margin-left: 4px; }
+.fr-c { font-style: normal; font: 600 10px Inter; color: #ff8a70; margin-left: 4px; }
+@media (max-width: 1100px) {
+  /* The right panel sits below the fold here, so the inspector floats above the hand instead. */
+  #inspector { position: fixed; left: 12px; right: auto; width: min(420px, 92vw); bottom: calc(var(--hand) + 12px); max-height: 50vh; }
 }

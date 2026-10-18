@@ -96,6 +96,7 @@ export function createArena(host, state, handlers = {}) {
   const ground = new THREE.Mesh(geo, groundMat);
   ground.receiveShadow = true;
   ground.castShadow = true;
+  ground.userData.pick = { kind: 'ground' };
   scene.add(ground);
 
   // Anything sunk well below the median -- a chasm, a pit -- glows from
@@ -492,10 +493,12 @@ export function createArena(host, state, handlers = {}) {
     if (hit.kind === 'marker') handlers.onPickMarker?.(markers[hit.index]?.data);
     else if (hit.kind === 'unit') handlers.onPickUnit?.(hit.id);
     else if (hit.kind === 'prop') handlers.onPickProp?.(hit.id);
+    else if (hit.kind === 'ground') handlers.onPickGround?.(hit.x, hit.y);
   });
   renderer.domElement.addEventListener('pointermove', (e) => {
     const hit = pickAt(e.clientX, e.clientY);
-    renderer.domElement.style.cursor = hit && (hit.kind === 'marker' || (hit.kind === 'unit' && handlers.isPickable?.(hit))) ? 'pointer' : '';
+    renderer.domElement.style.cursor = hit && (hit.kind === 'marker' || (hit.kind === 'unit' && handlers.isPickable?.(hit))
+      || (hit.kind === 'ground' && moveCircle && insideMove(hit.x, hit.y))) ? 'pointer' : '';
     handlers.onHover?.(hit);
   });
 
@@ -507,10 +510,110 @@ export function createArena(host, state, handlers = {}) {
     markerGroup.traverse((o) => { if (o.userData.pick) objs.push(o); });
     for (const m of unitMeshes.values()) m.traverse((o) => { if (o.userData.pick) objs.push(o); });
     for (const m of propMeshes.values()) if (m.visible) m.traverse((o) => { if (o.userData.pick) objs.push(o); });
+    objs.push(ground);
     const hits = ray.intersectObjects(objs, false);
-    // Markers win over the unit standing behind them.
+    // Markers win over the unit standing behind them; anything wins over the
+    // bare ground.
     const mk = hits.find((h) => h.object.userData.pick.kind === 'marker');
-    return (mk || hits[0])?.object.userData.pick || null;
+    const solid = hits.find((h) => h.object.userData.pick.kind !== 'ground');
+    const h = mk || solid || hits[0];
+    if (!h) return null;
+    if (h.object.userData.pick.kind === 'ground') {
+      return { kind: 'ground', x: Math.round(h.point.x / MM), y: Math.round(h.point.z / MM) };
+    }
+    return h.object.userData.pick;
+  }
+
+  /* ---------------------------------------------------------- rings */
+  // A ring drawn ON the terrain: sampled round the circle, each point lifted to
+  // the ground height there, so a range reads true over a plateau or a pit.
+  function terrainRing(cx, cy, r, colour, { opacity = 0.95, fill = 0.10, dashed = false } = {}) {
+    const g = new THREE.Group();
+    const pts = [];
+    const n = Math.max(48, Math.round(r / 60));
+    for (let i = 0; i <= n; i++) {
+      const t = (i / n) * Math.PI * 2;
+      const x = cx + Math.cos(t) * r, y = cy + Math.sin(t) * r;
+      const cxl = Math.min(a.w, Math.max(0, x)), cyl = Math.min(a.h, Math.max(0, y));
+      pts.push(new THREE.Vector3(x * MM, heightAt(a, Math.round(cxl), Math.round(cyl)) * MM + 0.05, y * MM));
+    }
+    const mat = dashed
+      ? new THREE.LineDashedMaterial({ color: colour, dashSize: 0.18, gapSize: 0.1, transparent: true, opacity })
+      : new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity });
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+    if (dashed) line.computeLineDistances();
+    g.add(line);
+    if (fill > 0) {
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(r * MM, 64),
+        new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: fill, depthWrite: false, side: THREE.DoubleSide }));
+      disc.rotation.x = -Math.PI / 2;
+      disc.position.set(cx * MM, heightAt(a, Math.round(Math.min(a.w, Math.max(0, cx))), Math.round(Math.min(a.h, Math.max(0, cy)))) * MM + 0.03, cy * MM);
+      g.add(disc);
+    }
+    return g;
+  }
+
+  const rangeGroup = new THREE.Group();
+  scene.add(rangeGroup);
+  let rangeLabels = [];
+  /** Range rings: [{x, y, r, label, colour}] in mm. */
+  function setRanges(list) {
+    rangeGroup.clear();
+    for (const l of rangeLabels) l.el.remove();
+    rangeLabels = [];
+    for (const rg of list || []) {
+      rangeGroup.add(terrainRing(rg.x, rg.y, rg.r, rg.colour ?? 0xffcf5a, { fill: 0.07, dashed: true }));
+      if (rg.label) {
+        const el = document.createElement('div');
+        el.className = 'rlabel';
+        el.textContent = rg.label;
+        labels.appendChild(el);
+        rangeLabels.push({ el, p: new THREE.Vector3(rg.x * MM, heightAt(a, rg.x, Math.max(0, rg.y - rg.r)) * MM, Math.max(0, rg.y - rg.r) * MM) });
+      }
+    }
+  }
+
+  // The move circle: where the selected unit may be told to walk. The ghost is
+  // where it would actually END -- the engine's answer, walls and all.
+  let moveCircle = null;
+  const moveGroup = new THREE.Group();
+  scene.add(moveGroup);
+  const ghost = new THREE.Group();
+  {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.3, 32),
+      new THREE.MeshBasicMaterial({ color: 0x7fe0ff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2;
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.22, 24),
+      new THREE.MeshBasicMaterial({ color: 0x7fe0ff, transparent: true, opacity: 0.35, depthWrite: false }));
+    dot.rotation.x = -Math.PI / 2;
+    ghost.add(ring, dot);
+    ghost.visible = false;
+    scene.add(ghost);
+  }
+  let ghostLine = null;
+  const insideMove = (x, y) => !!moveCircle && (x - moveCircle.x) ** 2 + (y - moveCircle.y) ** 2 <= moveCircle.r ** 2;
+  function setMoveCircle(c) {
+    moveGroup.clear();
+    moveCircle = c;
+    showGhost(null);
+    if (!c) return;
+    moveGroup.add(terrainRing(c.x, c.y, c.r, 0x7fe0ff, { fill: 0.12 }));
+  }
+  function showGhost(p, from) {
+    if (ghostLine) { scene.remove(ghostLine); ghostLine = null; }
+    if (!p) { ghost.visible = false; return; }
+    ghost.visible = true;
+    ghost.position.set(p.x * MM, p.z * MM + 0.04, p.y * MM);
+    if (from) {
+      const A = new THREE.Vector3(from.x * MM, from.z * MM + 0.08, from.y * MM);
+      const B = ghost.position.clone().setY(ghost.position.y + 0.04);
+      const pts = [];
+      for (let i = 0; i <= 16; i++) { const t = i / 16; const q = A.clone().lerp(B, t); q.y += Math.sin(t * Math.PI) * 0.3; pts.push(q); }
+      ghostLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineDashedMaterial({ color: 0x7fe0ff, dashSize: 0.12, gapSize: 0.08 }));
+      ghostLine.computeLineDistances();
+      scene.add(ghostLine);
+    }
   }
 
   /* ---------------------------------------------------------- frame */
@@ -582,6 +685,8 @@ export function createArena(host, state, handlers = {}) {
       mk.ring.scale.setScalar(1 + Math.sin(now / 220) * 0.08);
       if (mk.label) place(mk.label, mk.pos, 0.55);
     }
+    for (const l of rangeLabels) place(l.el, l.p, 0.2);
+    if (ghost.visible) ghost.children[0].scale.setScalar(1 + Math.sin(now / 200) * 0.1);
     for (let i = floaters.length - 1; i >= 0; i--) {
       const f = floaters[i];
       const t = (now - f.t0) / 1400;
@@ -610,6 +715,7 @@ export function createArena(host, state, handlers = {}) {
 
   return {
     sync, setMarkers, clearMarkers, highlightUnits, floatText, floatAtUnit, pulse, pulseUnit,
+    setRanges, setMoveCircle, showGhost, insideMove: (x, y) => insideMove(x, y),
     camera, controls, renderer,
     project(x, y, z) {
       v.set(x * MM, z * MM, y * MM).project(camera);

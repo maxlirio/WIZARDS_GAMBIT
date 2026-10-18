@@ -13,7 +13,7 @@
 // leaving the grid behind.
 
 import { idiv, imin, imax, isqrt, dist2, bearing, opposite, DIR64 } from './fixed.js';
-import { STEP, FALL_SAFE, propSpec } from './arena.js';
+import { STEP, FALL_SAFE, propSpec, heightAt } from './arena.js';
 import { findProp, findUnit, propsOnBoard } from './query.js';
 import { walk, queueFall, resolveFalls, recheckSupport, isUnitBody, CLIMB_RATE } from './move.js';
 import { hurt } from '../rules/combat.js';
@@ -125,8 +125,19 @@ export const pullToward = (state, body, toX, toY, mmDist, opts = {}) =>
  * the push-them-out-from-under game needs a way to make a floater in the first
  * place.
  */
+/**
+ * Nothing is lifted higher than this above the ground beneath it. Lifts STACK
+ * -- Sky Anchor and Levitation can raise the same rock turn after turn -- and
+ * without a ceiling a unit riding one was carried 12m into the air across a
+ * long random-deck game. Six metres is already a lethal fall.
+ */
+export const LIFT_CEILING = 6000;
+
 export function levitate(state, prop, mmUp) {
   const riders = ridersOf(state, prop);
+  const floor = heightAt(state.arena, prop.x, prop.y);
+  mmUp = Math.max(0, Math.min(mmUp, floor + LIFT_CEILING - prop.z));
+  if (mmUp === 0) { fx(state, 'levitate', { id: prop.id, mm: 0 }); return; }
   prop.z += mmUp;
   prop.levitated = true;
   for (const u of riders) { u.z += mmUp; }

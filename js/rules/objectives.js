@@ -14,7 +14,7 @@
 
 import { award, stampOf, alreadyScored } from './score.js';
 import { spellsOn, defOf, destroy, fx } from './ops.js';
-import { gateMet, gateText } from './gates.js';
+import { gateMet, gateText, counted } from './gates.js';
 import { keywordsOf } from './keywords.js';
 import { bump } from './ledger.js';
 import { livingUnits, unitsOf, onHighGround } from '../field/query.js';
@@ -38,34 +38,8 @@ export const VP_FORMULAS = Object.freeze({
 
   /** The commonest gold shape: convert a counter into points. */
   perLedger: {
-    text: (f) => `${f.per} VP per ${f.key} (max ${f.cap})`,
-    vp: (state, sp, f) => clampVp(Math.floor(state.players[sp.owner].ledger[f.key] / (f.div || 1)) * f.per, f.cap),
-  },
-
-  perSpell: {
-    text: (f) => `${f.per} VP per ${f.school || ''} Spell you control (max ${f.cap})`,
-    vp: (state, sp, f) => clampVp(
-      spellsOn(state, sp.owner).filter((s) => !f.school || defOf(state, s).school === f.school).length * f.per,
-      f.cap,
-    ),
-  },
-
-  perChain: {
-    text: (f) => `${f.per} VP per link in this chain (max ${f.cap})`,
-    vp: (state, sp, f) => clampVp((state.chain?.resolutions || 0) * f.per, f.cap),
-  },
-
-  perKeyword: {
-    text: (f) => `${f.per} VP per Keyword on this Spell (max ${f.cap})`,
-    vp: (state, sp, f) => clampVp(keywordsOf(state, sp).length * f.per, f.cap),
-  },
-
-  perUnit: {
-    text: (f) => `${f.per} VP per friendly ${f.kind || 'unit'} (max ${f.cap})`,
-    vp: (state, sp, f) => clampVp(
-      unitsOf(state, sp.owner).filter((u) => !f.kind || u.kind === f.kind).length * f.per,
-      f.cap,
-    ),
+    text: (f) => `${f.per} VP per ${f.key}${f.since ? ' since this Spell was played' : ''} (max ${f.cap})`,
+    vp: (state, sp, f) => clampVp(Math.floor(counted(state, sp, f) / (f.div || 1)) * f.per, f.cap),
   },
 
   perHighGround: {
@@ -110,7 +84,7 @@ export const objectiveVp = (state, spell, obj) =>
 export function scoreObjective(state, spell, face) {
   const obj = face.objective;
   if (!obj) return 0;
-  if (obj.gate && !gateMet(state, spell, obj.gate)) {
+  if (obj.gate && !gateMet(state, spell, obj.gate, { objective: true })) {
     fx(state, 'objectiveGateUnmet', { uid: spell.uid, gate: obj.gate.id });
     return 0;
   }

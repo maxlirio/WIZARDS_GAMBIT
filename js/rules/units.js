@@ -16,9 +16,10 @@ import { bump } from './ledger.js';
 import { emit } from './triggers.js';
 import { hurt, kill, checkGolemAttrition, golemRoom } from './combat.js';
 import { applyFor, fireFor } from './keywords.js';
-import { unitMove, shieldOn } from './derive.js';
+import { unitMove, shieldOn, bonusMageLife } from './derive.js';
 import { TIER_CAP, SLOTS } from './golems.js';
-import { idiv, dist3, bearing } from '../field/fixed.js';
+import { idiv, dist3, bearing, imin, imax, isqrt, DIR64, DIR_SCALE } from '../field/fixed.js';
+import { STEP } from '../field/arena.js';
 import {
   livingUnits, unitsOf, enemiesOf, findUnit, mageOf, unitKeywords,
   strikeTargets, surfaceAt, onHighGround,
@@ -27,7 +28,28 @@ import { walk, placeBody, resolveFalls, recheckSupport } from '../field/move.js'
 import { moveDirs, summonPoints, trialWalk, dirLabel } from '../field/candidates.js';
 
 /** The mage's statline. One place, so a balance pass is one edit. */
-export const MAGE = Object.freeze({ hp: 8, move: 2500, atk: 2, reach: 900 });
+export const MAGE = Object.freeze({ hp: 5, move: 2500, atk: 2, reach: 900 });
+
+/**
+ * A mage's life is 5 plus whatever ACTIVE passives add (derive.js mageLife).
+ *
+ * Settled at rest by the pump rather than computed on read, because hit points
+ * are spent: when the bonus arrives the mage gains that much life, and when it
+ * leaves it loses that much -- but never below 1. Taking the last of a mage's
+ * life is a kill and a kill is worth 2 VP to somebody; turning a card away is
+ * not something that should be able to award it.
+ */
+export function settleMageLife(state) {
+  for (const u of state.field.units) {
+    if (u.kind !== 'mage' || u.dead) continue;
+    const want = MAGE.hp + bonusMageLife(state, u.owner);
+    if (u.maxHp === want) continue;
+    const delta = want - u.maxHp;
+    u.maxHp = want;
+    u.hp = imax(1, imin(want, u.hp + delta));
+    fx(state, 'mageLife', { id: u.id, p: u.owner, maxHp: want, delta });
+  }
+}
 
 export function makeMage(state, p) {
   const s = state.arena.spawns[p];
@@ -134,10 +156,16 @@ export function strike(state, attacker, target) {
 export function unitActions(state, unit) {
   if (unit.dead || unit.acted) return [];
   const out = [];
-  const budget = unitMove(state, unit);
-  const mv = applyFor(unitKeywords(state, unit), 'unitMove', { mm: budget });
-  for (const d of moveDirs(state, { ...unit, move: mv.mm })) {
-    out.push({ type: 'unit', id: unit.id, act: 'move', dir: d.dir, mm: d.mm, label: d.label });
+  // Movement goes ANYWHERE inside the unit's move circle (see canMoveTo). This
+  // list is a sample of that circle -- the furthest reach in each direction --
+  // which is what the AI searches and the terminal offers.
+  const mm = moveBudget(state, unit);
+  for (const d of moveDirs(state, { ...unit, move: mm })) {
+    const [ux, uy] = DIR64[d.dir];
+    out.push({
+      type: 'unit', id: unit.id, act: 'move', label: d.label, mm: d.mm,
+      x: unit.x + idiv(ux * d.mm, DIR_SCALE), y: unit.y + idiv(uy * d.mm, DIR_SCALE),
+    });
   }
   for (const t of strikeTargets(state, unit)) {
     out.push({ type: 'unit', id: unit.id, act: 'strike', target: t.id });
@@ -151,6 +179,27 @@ export function unitActions(state, unit) {
   return out;
 }
 
+/** How far this unit may move this turn, with passives and keywords applied. */
+export const moveBudget = (state, u) =>
+  applyFor(unitKeywords(state, u), 'unitMove', { mm: unitMove(state, u) }).mm;
+
+/**
+ * May this unit be told to walk to (x, y)? Anywhere inside its move circle
+ * that is at least one step away. Where it actually ENDS is decided by the walk
+ * -- a wall, a cliff or another body can stop it short -- and that is the
+ * engine's answer, not the player's.
+ */
+export function canMoveTo(state, u, x, y) {
+  if (!u || u.dead || u.acted) return false;
+  const dx = x - u.x, dy = y - u.y;
+  const d2 = dx * dx + dy * dy;
+  // A few millimetres of slack: a point sampled at full reach along a table
+  // direction floors to just outside the circle on the diagonals. The walk is
+  // capped at the budget regardless, so the slack moves nobody further.
+  const r = moveBudget(state, u) + 25;
+  return d2 >= STEP * STEP && d2 <= r * r;
+}
+
 /** Perform one unit action. A generator: summoning asks where. */
 export function* doUnitAction(state, action) {
   const u = findUnit(state, action.id);
@@ -159,13 +208,17 @@ export function* doUnitAction(state, action) {
   if (action.act === 'pass') { u.acted = true; return true; }
 
   if (action.act === 'move') {
-    const mv = applyFor(unitKeywords(state, u), 'unitMove', { mm: unitMove(state, u) });
-    const r = walk(state, u, action.dir, mv.mm, { allowFall: false, climb: true });
+    const dx = action.x - u.x, dy = action.y - u.y;
+    const dist = isqrt(dx * dx + dy * dy);
+    if (dist < STEP) { u.acted = true; return false; }
+    const vec = [idiv(dx * DIR_SCALE, dist), idiv(dy * DIR_SCALE, dist)];
+    const r = walk(state, u, bearing(u.x, u.y, action.x, action.y), imin(dist, moveBudget(state, u)),
+      { allowFall: false, climb: true, vec });
     bump(state.players[u.owner].ledger, 'moves');
     u.acted = true;
     recheckSupport(state);
     resolveFalls(state, hurt);
-    fx(state, 'move', { id: u.id, mm: r.mm, dir: action.dir, to: { x: u.x, y: u.y, z: u.z } });
+    fx(state, 'move', { id: u.id, mm: r.mm, to: { x: u.x, y: u.y, z: u.z } });
     emit(state, 'afterMove', { id: u.id, p: u.owner, mm: r.mm });
     return true;
   }

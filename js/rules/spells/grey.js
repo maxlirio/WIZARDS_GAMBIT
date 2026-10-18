@@ -46,7 +46,7 @@ card({
   runes: [LATTICE, LATTICE, LATTICE, SHARD],
   found: 'warded',
   I:   { text: 'Your opponent may not choose your Spells.', ...M.passiveWard() },
-  II:  { text: 'Your units take 1 less damage.', ...M.passiveShield({ n: 1 }) },
+  II:  { text: 'Your mage has +2 life.', ...M.passiveMageLife({ n: 2 }) },
   III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
   IV:  { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
 });

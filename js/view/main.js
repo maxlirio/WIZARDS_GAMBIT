@@ -21,6 +21,9 @@ import { TIER_CAP } from '../rules/golems.js';
 import { FINDS, FIND_IDS, spellbookPage } from '../rules/learn.js';
 import { seedRng, pick } from '../rules/rng.js';
 import * as profile from '../profile.js';
+import { makeCtx } from '../rules/resolve.js';
+import { moveBudget, canMoveTo } from '../rules/units.js';
+import { rangeOrigins } from '../field/query.js';
 import { cardSVG, centreSVG, faceListHTML, SCHOOL_INK, runeGlyphInline } from './cards.js';
 import { createArena } from './arena3d.js';
 
@@ -57,7 +60,7 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   $('#log').innerHTML = '';
   arena?.dispose();
   arena = createArena($('#arena'), S, {
-    onPickUnit, onPickMarker, onPickProp, onHover: onArenaHover,
+    onPickUnit, onPickMarker, onPickProp, onPickGround, onHover: onArenaHover,
     onPickNothing: () => { if (sel?.kind === 'unit') return; },
     isPickable: () => true,
     unitLabel: (u) => { const n = unitName(u.id); return n.charAt(0).toUpperCase() + n.slice(1); },
@@ -194,6 +197,10 @@ function flushFx() {
       case 'found': weight += 2; if (f.p === HUMAN) toast(`Learned <b>${esc(CARDS[f.defId]?.name || f.defId)}</b> — it goes to your discard`, 'learn'); break;
       case 'turnStart': banner(f.p); break;
       case 'respawn': weight += 1; break;
+      case 'hurl': weight += 2; arena.floatAtUnit(f.id, 'HURLED', 'fall'); break;
+      case 'dropRock': weight += 2; arena.floatAtUnit(f.onto, 'CRASH', 'kill'); break;
+      case 'heal': weight += 1; arena.floatAtUnit(f.id, `+${f.amount}`, 'heal'); break;
+      case 'raiseWall': case 'swap': weight += 1.5; break;
       default: break;
     }
   }
@@ -243,6 +250,15 @@ function narrate(f) {
     case 'reshuffle': return `${P(f.p)} shuffle${f.p === HUMAN ? '' : 's'} the discard back into the deck`;
     case 'prohibited': return `&nbsp;&nbsp;&nbsp;&nbsp;${N(f.uid)} may not rotate again this turn`;
     case 'chainEnd': return f.resolutions > 1 ? `<i>a chain of ${f.resolutions}</i>` : null;
+    case 'hurl': return `&nbsp;&nbsp;&nbsp;&nbsp;hurls ${esc(unitName(f.id))} ${(f.mm / 1000).toFixed(0)}m into the air`;
+    case 'dropRock': return `&nbsp;&nbsp;&nbsp;&nbsp;drops a rock on ${esc(unitName(f.onto))}`;
+    case 'swap': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.a))} and ${esc(unitName(f.b))} swap places`;
+    case 'raiseWall': return `&nbsp;&nbsp;&nbsp;&nbsp;a stone wall rises out of the ground`;
+    case 'heal': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="green">${esc(unitName(f.id))} regains ${f.amount}</span>`;
+    case 'recall': return `&nbsp;&nbsp;&nbsp;&nbsp;returns ${N(f.uid)} to hand`;
+    case 'reanimate': return `&nbsp;&nbsp;&nbsp;&nbsp;${N(f.uid)} rises from the discard`;
+    case 'poisoned': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is poisoned (${f.n})`;
+    case 'mageLife': return `${P(f.p)} mage now has ${f.maxHp} life`;
     case 'win': return `<span class="gold big">★ ${P(f.p)} win${f.p === HUMAN ? '' : 's'} — ${esc(f.reason)}</span>`;
     case 'draw': return `<b>a draw at the turn cap</b>`;
     default: return null;
@@ -301,8 +317,18 @@ function buildTable(p) {
     cell.dataset.p = p;
     cell.innerHTML = `<div class="cellmark">${cellSigil(CELL_COLOR[c])}</div><div class="slot"></div><div class="badges"></div>`;
     cell.addEventListener('click', () => onCellClick(p, c));
-    cell.addEventListener('mouseenter', () => { const sp = topOf(S, p, c); if (sp) inspectSpell(sp); });
-    cell.addEventListener('mouseleave', hideInspector);
+    cell.addEventListener('mouseenter', () => {
+      const sp = topOf(S, p, c);
+      if (!sp) return;
+      inspectSpell(sp);
+      hoverSpell = sp.uid;
+      if (arena && S) arena.setRanges(rangePreview());
+    });
+    cell.addEventListener('mouseleave', () => {
+      hideInspector();
+      hoverSpell = null;
+      if (arena && S) arena.setRanges(rangePreview());
+    });
     el.appendChild(cell);
   }
   const gs = $(`#golems${p}`);
@@ -458,6 +484,7 @@ function onArenaHover(hit) {
   const u = hit?.kind === 'unit' ? S.field.units.find((x) => x.id === hit.id) : null;
   if (u) inspectUnit(u); else if (hoverUnit !== null) hideInspector();
   hoverUnit = u ? u.id : null;
+  if (hit?.kind === 'ground') previewMove(hit.x, hit.y); else if (!u) arena.showGhost(null);
 }
 
 /* ================================================================ input */
@@ -525,6 +552,40 @@ function onPickProp(id) {
     const r = S.pending.request;
     if (r.kind === 'prop' && r.options.includes(id)) promptPick(id);
   }
+}
+
+/** The selected unit, if the player is choosing where it walks. */
+function movingUnit() {
+  if (!humanToMove() || S.phase !== 'unit' || sel?.kind !== 'unit') return null;
+  const u = S.field.units.find((x) => x.id === sel.id);
+  return u && !u.dead && !u.acted ? u : null;
+}
+
+/**
+ * Where would the unit END if told to walk to (x, y)? Asked of the engine on a
+ * copy -- a wall, a ledge or another body can stop it short, and those are
+ * rules. Throttled, because a copy is a few milliseconds and the mouse moves
+ * every frame.
+ */
+let lastPreview = 0, previewKey = '';
+function previewMove(x, y) {
+  const u = movingUnit();
+  if (!u || !canMoveTo(S, u, x, y)) { arena.showGhost(null); return; }
+  const now = performance.now();
+  const key = `${Math.round(x / 50)},${Math.round(y / 50)}`;
+  if (key === previewKey || now - lastPreview < 60) return;
+  lastPreview = now; previewKey = key;
+  const c = cloneState(S);
+  try { apply(c, { type: 'unit', id: u.id, act: 'move', x, y }); } catch { arena.showGhost(null); return; }
+  const v = c.field.units.find((k) => k.id === u.id);
+  arena.showGhost(v ? { x: v.x, y: v.y, z: v.z } : null, u);
+}
+
+function onPickGround(x, y) {
+  const u = movingUnit();
+  if (!u) return;
+  if (!canMoveTo(S, u, x, y)) { toast('Out of reach — click inside the blue circle.'); return; }
+  act({ type: 'unit', id: u.id, act: 'move', x, y });
 }
 
 function onPickMarker(data) {
@@ -630,9 +691,8 @@ function renderTray() {
   const la = myActions();
   let html = '';
   if (S.phase === 'spell') {
-    html += '<div class="hintline">Take <b>one</b> spell action: play a card from your hand, or click one of your spells to rotate, shift or destroy it.</div><div class="btns">';
-    const draw = la.find((a) => a.type === 'draw');
-    if (draw) html += `<button data-a="draw">Draw a card</button>`;
+    html += '<div class="hintline">Take <b>one</b> spell action: play a card, or click one of your spells to <b>rotate</b> it (its new top face resolves), shift or destroy it.</div><div class="btns">';
+    if (la.some((a) => a.type === 'pass')) html += `<button data-a="skip" class="ghost" title="You drew at the start of your turn; you may take no spell action">Skip spell action</button>`;
     if (sel?.kind === 'spell') {
       const sp = findSpell(S, sel.uid);
       const def = defOf(S, sp);
@@ -641,7 +701,8 @@ function renderTray() {
       const shifts = la.filter((a) => a.type === 'shift' && a.uid === sel.uid);
       if (rot) {
         const next = def.faces[(activeIndex(sp) + 1) & 3];
-        html += `<button data-a="rotate" class="primary" title="${esc(next.text)}">Rotate left → <b>${next.numeral}</b>: ${esc(next.text)}</button>`;
+        const r = reachOf(sp, (activeIndex(sp) + 1) & 3);
+        html += `<button data-a="rotate" class="primary" title="${esc(next.text)}">Rotate left → <b>${next.numeral}</b> resolves: ${esc(next.text)}${r ? ` <span class="reach">· reach ${(r.mm / 1000).toFixed(1)}m, ${r.targets.length} enemy in range</span>` : ''}</button>`;
       } else html += `<span class="note">${esc(def.name)} cannot be rotated by you right now.</span>`;
       if (des) html += `<button data-a="destroy" class="danger">Destroy ${esc(def.name)}</button>`;
       if (shifts.length) html += `<span class="note">…or click a glowing cell to shift it.</span>`;
@@ -657,7 +718,7 @@ function renderTray() {
     const mine = S.field.units.filter((u) => u.owner === HUMAN && !u.dead);
     const ready = mine.filter((u) => la.some((a) => a.type === 'unit' && a.id === u.id));
     if (sel?.kind !== 'unit' || !ready.some((u) => u.id === sel.id)) sel = ready[0] ? { kind: 'unit', id: ready[0].id } : null;
-    html += '<div class="hintline">Each unit may <b>move</b>, <b>strike</b> an adjacent enemy, or (the mage) <b>summon</b> a golem. Click a marker to move, a red-ringed enemy to strike.</div><div class="btns">';
+    html += '<div class="hintline">Each unit may <b>move</b>, <b>strike</b> an adjacent enemy, or (the mage) <b>summon</b> a golem. Click anywhere inside the blue circle to move there; click a red-ringed enemy to strike.</div><div class="btns">';
     for (const u of ready) {
       html += `<button data-unit="${u.id}" class="${sel?.id === u.id ? 'on' : ''}">${esc(unitName(u.id))}</button>`;
     }
@@ -676,7 +737,7 @@ function renderTray() {
     b.onclick = () => {
       const la2 = myActions();
       const A = b.dataset.a;
-      if (A === 'draw') return act(la2.find((a) => a.type === 'draw'));
+      if (A === 'skip') return act(la2.find((a) => a.type === 'pass'));
       if (A === 'rotate') return act(la2.find((a) => a.type === 'rotate' && a.uid === sel.uid));
       if (A === 'destroy') return act(la2.find((a) => a.type === 'destroy' && a.uid === sel.uid));
       if (A === 'play1') return act(la2.find((a) => a.type === 'play' && a.uid === sel.uid));
@@ -710,6 +771,8 @@ function renderHighlights() {
   document.querySelectorAll('.cell.target, .cell.selected, .cell.askable, .cell.hint, .gslot.target').forEach((e) => e.classList.remove('target', 'selected', 'askable', 'hint'));
   arena.clearMarkers();
   arena.highlightUnits({});
+  arena.setMoveCircle(null);
+  arena.setRanges(rangePreview());
   if (S.winner !== null) return;
 
   if (humanToAnswer()) {
@@ -746,31 +809,62 @@ function renderHighlights() {
   }
   if (sel?.kind === 'spell') {
     markCell(sel.uid, 'selected');
+    const sp = findSpell(S, sel.uid);
+    const r = sp && reachOf(sp, (activeIndex(sp) + 1) & 3);
+    if (r) arena.highlightUnits(Object.fromEntries(r.targets.map((id) => [id, 0xffa030])));
     for (const a of la.filter((x) => x.type === 'shift' && x.uid === sel.uid)) {
       document.querySelector(`#table${HUMAN} .cell[data-cell="${a.cell}"]`)?.classList.add('target');
     }
   }
   if (S.phase === 'unit' && sel?.kind === 'unit') {
     const u = S.field.units.find((x) => x.id === sel.id);
-    const moves = la.filter((a) => a.type === 'unit' && a.id === sel.id && a.act === 'move');
-    const pts = [];
-    for (const a of moves) {
-      // Where would this move end? Ask the engine, on a copy: the walk, the
-      // climb, the ledge that stops it are all rules, and the view must not
-      // guess at any of them.
-      const c = cloneState(S);
-      try { apply(c, a); } catch { continue; }
-      const v = c.field.units.find((x) => x.id === a.id);
-      if (!v || (v.x === u.x && v.y === u.y)) continue;
-      if (pts.some((p) => (p.x - v.x) ** 2 + (p.y - v.y) ** 2 < 200 ** 2)) continue;
-      const d = Math.round(Math.hypot(v.x - u.x, v.y - u.y) / 100) / 10;
-      pts.push({ x: v.x, y: v.y, z: v.z, from: u, label: `${describeMove(a)}${d}m`, data: { action: a } });
+    if (u && la.some((a) => a.type === 'unit' && a.id === u.id && a.act === 'move')) {
+      arena.setMoveCircle({ x: u.x, y: u.y, r: moveBudget(S, u) });
     }
-    arena.setMarkers(pts, 0x7fe0ff);
     const hl = { [sel.id]: 0xffffff };
     for (const a of la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'strike')) hl[a.target] = 0xff3030;
     arena.highlightUnits(hl);
   }
+}
+
+/* ================================================================ range */
+
+/**
+ * How far a face of this spell reaches right now, and which enemies are in it.
+ * Built from the engine's own context, so [Reach], Focus Stone, [Ignore
+ * Height] and every other modifier are already in -- the ring is the rule.
+ */
+function reachOf(sp, index) {
+  const def = defOf(S, sp);
+  const face = def.faces[index];
+  if (!face || face.reach === undefined) return null;
+  const ctx = makeCtx(S, sp, def, face);
+  const r = ctx.range(face.reach);
+  return { mm: r.mm, numeral: face.numeral, targets: ctx.enemyUnits(face.reach) };
+}
+
+/** The rings to draw: the face a rotation would bring up, from every origin. */
+let hoverSpell = null;
+function rangePreview() {
+  const out = [];
+  const add = (sp, index, colour, when) => {
+    const r = reachOf(sp, index);
+    if (!r) return;
+    // A ring from EVERY origin -- golems project range too -- but one label.
+    rangeOrigins(S, sp.owner).forEach((o, i) => {
+      out.push({ x: o.x, y: o.y, r: r.mm, colour, label: i ? null : `${defOf(S, sp).name} ${r.numeral} · ${(r.mm / 1000).toFixed(1)}m ${when}` });
+    });
+  };
+  const selSp = sel?.kind === 'spell' ? findSpell(S, sel.uid) : null;
+  if (selSp) add(selSp, (activeIndex(selSp) + 1) & 3, 0xffcf5a, 'if rotated');
+  else if (hoverSpell) {
+    const sp = findSpell(S, hoverSpell);
+    if (sp && sp.cell !== null && sp.cell !== undefined) {
+      add(sp, activeIndex(sp), 0xc3cad6, 'now');
+      if (sp.owner === HUMAN) add(sp, (activeIndex(sp) + 1) & 3, 0xffcf5a, 'if rotated');
+    }
+  }
+  return out;
 }
 
 /* ================================================================ top bar */
@@ -885,14 +979,14 @@ function openRules() {
   const R = (r) => runeGlyphInline(r, '#e8dcc0');
   modal(`<h2>How to play</h2>
     <div class="rules">
-    <p><b>Goal:</b> first to <b>15 VP</b>. Gold spells score by completing their objectives (scoring sends the gold spell to your discard). Killing a mage is worth 2 VP; a golem, 1.</p>
-    <p><b>Your turn</b> is one <b>spell action</b>, then a <b>unit phase</b>.</p>
-    <p><b>Spell actions</b> (pick one): play a card from hand onto its colour · rotate one of your spells left · shift a spell to an adjacent cell · destroy one of your spells · draw a card. Artifacts go on the grey corners; golem cards go in the slots beneath.</p>
-    <p><b>The top face is active.</b> Cards land showing side I. You can only rotate a spell yourself while it sits on its own colour.</p>
+    <p><b>Goal:</b> first to <b>15 VP</b>. Gold spells score by completing hard objectives (scoring sends the gold spell to your discard). Killing a mage is worth 2 VP; a golem, 1.</p>
+    <p><b>Your turn</b>: draw a card, take one <b>spell action</b>, then a <b>unit phase</b>.</p>
+    <p><b>Spell actions</b> (pick one): play a card onto its colour · <b>rotate</b> one of your spells left — <b>its new top face resolves</b> · shift a spell to an adjacent cell · destroy one of your spells · or skip. Artifacts go on the grey corners; golem cards go in the slots beneath.</p>
+    <p><b>The top face is active.</b> Cards land showing side I, and each left turn brings up the next face. <b>Side IV is every card's payoff</b>; sides I–III build toward it, and most make you pay something to get there. Select a spell to see the range of the face it would turn to. You can only rotate a spell yourself while it sits on its own colour.</p>
     <p><b>Matches:</b> wherever two of your cards meet at a corner showing the <b>same rune</b>, they match. You must choose one of them; it rotates left and its new top face <b>resolves</b>. That can set off another match, and another — a chain. Each junction resonates once per chain, and a spell turns at most four times per action. A chain is mandatory, so it can hurt you.</p>
     <p class="runes">${R('SPIRAL')} Spiral — turning &amp; shifting &nbsp; ${R('SHARD')} Shard — destruction &amp; damage &nbsp; ${R('WHEEL')} Wheel — pushing &amp; terrain &nbsp; ${R('LATTICE')} Lattice — cards, keywords, scoring</p>
     <p><b>[Keywords]</b> are copied onto the other card on a match — put [Ignore Height] on a push, [Poison] on a fireball.</p>
-    <p><b>Units:</b> each may move, strike an adjacent enemy, or (the mage) summon a golem beside itself. Golem tiers cap how many are out at once: C three, B two, A one. A golem card that has deployed and then lost every unit is spent.</p>
+    <p><b>Units:</b> each may move anywhere inside its blue move circle, strike an adjacent enemy, or (the mage) summon a golem beside itself. Mages have 5 life unless a passive raises it. Golem tiers cap how many are out at once: C three, B two, A one. A golem card that has deployed and then lost every unit is spent.</p>
     <p><b>The field is real distance.</b> Climb walls slowly, fall off ledges for damage, shove rocks out from under people.</p>
     <p><b>The Spellbook</b> remembers the ways you've found new spells, across every duel.</p>
     </div>

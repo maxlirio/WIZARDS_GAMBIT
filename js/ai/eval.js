@@ -94,7 +94,7 @@ export function goldOutlook(state, p) {
       if (!obj) continue;
       const vp = objectiveVp(state, sp, obj);
       if (vp <= 0) continue;
-      const met = !obj.gate || gateMet(state, sp, obj.gate);
+      const met = !obj.gate || gateMet(state, sp, obj.gate, { objective: true });
       // A face that is up NOW is worth much more than one three rotations away:
       // a match rotates LEFT, so the distance to a face is how many links of
       // chain you need to reach it.

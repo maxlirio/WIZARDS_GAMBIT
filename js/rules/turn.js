@@ -8,7 +8,7 @@
 // count -- there is no card that gives you another, and if one is ever written
 // it has to come through here.
 
-import { spellsOn, fx, draw } from './ops.js';
+import { fx, draw } from './ops.js';
 import { emit } from './triggers.js';
 import { refresh } from './derive.js';
 import {
@@ -29,6 +29,9 @@ export function beginTurn(state) {
   if (pl.mage.respawnOnTurn !== null && pl.mage.respawnOnTurn <= state.turn) respawnMage(state, p);
 
   startUnitTurn(state, p);
+  // Every turn begins with a draw -- except the very first turn of the duel,
+  // which is how going first is paid for.
+  if (state.turn > 1) draw(state, p, 1);
   refresh(state);
   tickPoison(state, p);
   fx(state, 'turnStart', { p, turn: state.turn });

@@ -187,6 +187,20 @@ export function invariants(state, where = '') {
     }
     if (u.hp > u.maxHp) say(`unit ${u.id} has ${u.hp}/${u.maxHp} hp`);
   }
+  // Nothing in the sky. The highest legal thing is a lifted floater with a body
+  // on top of it; anything far above that has been ratcheted there by a
+  // support cycle (two boulders each standing on the other), which is how a
+  // pump overflow looked from the inside before falls were capped.
+  const CEILING = 12000;
+  for (const b of [...state.field.units.filter((u) => !u.dead), ...state.field.props]) {
+    if (b.z > CEILING) say(`${b.body || 'body'} ${b.id} is ${b.z}mm up -- a support cycle?`);
+  }
+  for (const pr of state.field.props) {
+    if (pr.support?.kind === 'prop') {
+      const under = state.field.props.find((o) => o.id === pr.support.id);
+      if (under?.support?.kind === 'prop' && under.support.id === pr.id) say(`props ${pr.id} and ${under.id} stand on each other`);
+    }
+  }
   if (!state.pending && !state.queue.length && state.field.pendingFalls.length) {
     say(`${state.field.pendingFalls.length} falls left unresolved at rest`);
   }

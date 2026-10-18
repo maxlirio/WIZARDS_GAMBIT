@@ -84,7 +84,23 @@ activeFaceIndex === rot
 
 **A spell is played at `rot = 0`, so it always lands showing side I.**
 
-A **right** turn exists only as a card effect (printed `Change` IV, `[Reverse]`). The
+### How a card is built: side IV is the payoff
+
+Every spell has a **theme**, and its four faces climb toward **side IV, the most
+powerful face on the card**. Sides I–III are the build-up: a weaker version of the
+payoff, a step that makes you **pay** — discard a card, destroy one of your other
+spells, mill your deck, rotate another spell, spend a unit's action, wound your own
+mage — or a setup effect. Since a card lands on I and every left turn moves it one
+face on, I → II → III → IV is literally the order you reach them in, so a card plays
+like a ritual you charge up. Most spells, but not all, carry at least one such cost.
+
+The payoffs are where the arena's physics live: Levitation IV drops a rock on an
+enemy, Grave Well IV throws one into the air and lets the fall do the damage, Stone
+Tide IV is a quake that throws back friend and foe alike, Fulcrum IV swaps two
+units, Time Warp IV turns every other spell you own right, Grove Keeper IV turns them
+all left, Confluence IV resolves the face showing on every other spell you control.
+
+A **right** turn exists only as a card effect (`Precision` I, `Time Warp` I and IV). The
 player's once-per-turn rotate action is left only, and a match's forced rotation is
 left only.
 
@@ -96,18 +112,30 @@ left only.
 
 The spell action is exactly one of:
 
-| action | match check? |
+**Every turn begins with a draw** — except the very first turn of the duel, which is
+how going first is paid for. Drawing is not an action.
+
+| action | what happens |
 |---|---|
-| **play** a spell, artifact or golem card | yes |
-| **rotate** a friendly spell left | yes |
-| **shift** a friendly spell to an adjacent cell | yes |
-| **destroy** a friendly spell | no |
-| **draw** a card | no |
+| **play** a spell, artifact or golem card | then the match check |
+| **rotate** a friendly spell left | **its new top face resolves**, then the match check |
+| **shift** a friendly spell to an adjacent cell | then the match check |
+| **destroy** a friendly spell | — |
+| **take no spell action** | — |
+
+Rotating your own spell does something every time: the face it turns up resolves
+(gate, cost, objective, effect — exactly as if a match had turned it), and only then
+is the table checked for matches, which may chain as usual.
 
 Then, in the Unit Phase, **each friendly unit acts once**:
 
 - **mage** — move, attack an adjacent enemy, or summon a golem unit adjacent to itself
 - **golem unit** — move, or attack an adjacent enemy
+
+**A move goes anywhere inside the unit's move circle** — its move distance, with
+passives and keywords applied — not to a set of chosen spots. The unit walks straight
+for the point; terrain decides where it actually stops (a wall, a cliff it cannot
+climb, another body).
 
 ### Rotation lock
 
@@ -267,6 +295,20 @@ An **objective** is a gold face's payout. Objectives are **repeatable**, but sco
 **destroys the gold spell** and puts it in your discard — so you must wait to draw it
 again. That round trip is the VP throttle; there is no artificial per-turn cap.
 
+**Objectives are hard on purpose.** Three rules make them so:
+
+- **Progress is counted since the card was played.** *"After 20 rotations since this
+  was played…"* reads the counter's growth since this gold card hit the table, so a
+  payout needs fresh work every time the card comes back round. (With lifetime
+  counters, one standard-deck face paid out about twice a game, forever.)
+- **The objective's condition is checked before its cost.** An unmet condition makes
+  the face inert and nothing is paid; the cost is the price of scoring, not a trap.
+- **[Inevitable] does not waive an objective's condition.** It waives a face's gate,
+  the condition on resolving. Copied onto a gold card by a match, it used to turn
+  every objective into free points.
+
+And each gold card keeps its **biggest objective on side IV**.
+
 Gold converts the other schools' work into points, so what it reads must be counted
 over time. Those counters live in one declared place per player (spells destroyed,
 units pushed, kills, cards discarded, chain links, longest chain, …). The rule:
@@ -280,8 +322,11 @@ units pushed, kills, cards discarded, chain links, longest chain, …). The rule
 
 ### The mage
 
-Hit points, moves, attacks adjacent enemies, summons golem units adjacent to itself,
-and acts as a **range origin** for most spells.
+**5 life**, unless an active **passive** raises it (Ward Lantern II: *"Your mage has
++2 life"*). Gaining the bonus gives that much life; losing it takes that much away,
+never below 1 — turning a card away cannot kill your own mage. Moves 2.5m, attacks
+adjacent enemies, summons golem units adjacent to itself, and acts as a **range
+origin** for most spells.
 
 When a mage dies the killer scores **2 VP**, and the mage **respawns at its owner's
 own starting circle at the start of that owner's next turn**, at full hit points.
@@ -292,13 +337,14 @@ the enemy is a real strategy and the design treats it as a measurable question:
 `mageVp` and `mageVpDecay` are knobs and `tools/selfplay.js` reports VP from kills
 against VP from objectives.
 
-**Measured, over 150 games each.** With the standard ten-card deck it comes out
-**67% objectives / 19% mages / 14% golems**, which is the intended shape, and
-each mage dies about twice a match. With random sixty-card decks the same bot
-gets **51% / 38% / 11%** and mages die four times a match — so a wider card pool
-pushes the game toward killing, and `mageVpDecay` is the knob for it if a future
-format ever uses one. A real match always uses the standard deck, so the default
-stays at zero.
+**Measured after the rules of 2026-10-18** (rotation resolves, a draw every turn,
+5-life mages, hard gold): over 100 AI games with the standard deck a duel lasts
+**44 turns** and VP comes **42% objectives / 30% mages / 27% golems** -- about
+5.4 objective payouts a game between both players, the first usually around turn
+16. With random sixty-card decks: 60 turns, **50% / 42% / 8%**. So killing now
+outscores gold, because a 5-life mage dies three or four times a match. That is
+the trade the 5-life rule makes, and `mageVpDecay` (or a smaller kill reward) is
+the knob if objectives should lead again.
 
 ### Golems
 
@@ -380,15 +426,15 @@ hits the table, II is one rotation away, III is two, IV is three, and **I needs 
 full revolution to come back round**.
 
 So side I is the card's resting state, and it is the right place for a
-**passive** or a long-term objective rather than for the effect you are hoping to
-chain into. Printed `Rewind` II — *"resolve the I of a friendly Spell, regardless
+**passive** or a small effect -- and side IV, three left turns away, is where the
+payoff goes (section 3). Printed `Rewind` II — *"resolve the I of a friendly Spell, regardless
 of orientation"* — exists precisely because side I is otherwise the hard one to
 reach, which is a good sign the printed set already knew this.
 
 ### Drawing from an empty deck reshuffles the discard
 
-Otherwise the game simply runs out: the standard deck is ten cards, there is no
-draw step, and a gold objective deliberately sends its own card to the discard
+Otherwise the game simply runs out: the standard deck is ten cards, you draw one
+every turn, and a gold objective deliberately sends its own card to the discard
 every time it scores. The round trip through the discard **is** the VP throttle,
 so the discard has to come back around.
 

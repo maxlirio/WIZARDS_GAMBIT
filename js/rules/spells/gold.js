@@ -5,7 +5,10 @@
 // declares one. So the race lives in exactly one place, and balancing it means
 // reading seven cards rather than auditing forty.
 //
-// Every objective here DESTROYS ITS OWN CARD on payout and sends it to the
+// Every objective is HARD: a real condition built over several turns, usually
+// a price on top, and side IV holds the card's biggest one -- so a gold card
+// has to be turned all the way round to pay out properly. Every objective here
+// DESTROYS ITS OWN CARD on payout and sends it to the
 // discard. That round trip -- draw it again, play it again, rebuild the gate --
 // is the whole VP throttle. There is no per-turn cap because the cap is your
 // deck, which is also why gold wants the discard to come back around and why
@@ -17,125 +20,128 @@ import { SPIRAL, SHARD, WHEEL, LATTICE } from '../runes.js';
 
 card({
   id: 'TALLY', name: 'Tally', school: 'gold',
-  runes: [SHARD, LATTICE, SPIRAL, SPIRAL],
+  // Counting the cost, and finally collecting.
+  runes: [SPIRAL, SHARD, LATTICE, SPIRAL],
   found: null,
-  I:   { text: 'If 3 of your Spells have been destroyed, score 2 VP.',
-         tag: 'break',
-         objective: { gate: { id: 'ledgerAtLeast', key: 'spellsDestroyed', n: 3 }, vp: { k: 'flat', n: 2 } } },
-  II:  { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
-  III: { text: 'Score 1 VP per 4 rotations you have made, up to 3.',
-         tag: 'turn',
-         objective: { vp: { k: 'perLedger', key: 'rotations', div: 4, per: 1, cap: 3 } } },
-  IV:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  I:   { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  II:  { text: 'If 5 of your Spells were destroyed since this was played, discard a card and score 1 VP.',
+         tag: 'break', cost: [{ id: 'discard', n: 1 }],
+         objective: { gate: { id: 'ledgerAtLeast', key: 'spellsDestroyed', n: 5, since: true }, vp: { k: 'flat', n: 1 } } },
+  III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'After 20 rotations since this was played, destroy a Spell you control and score 2 VP.',
+         tag: 'turn', cost: [{ id: 'destroyFriendly', n: 1 }],
+         objective: { gate: { id: 'ledgerAtLeast', key: 'rotations', n: 20, since: true }, vp: { k: 'flat', n: 2 } } },
 });
 
 card({
   id: 'RECKONING', name: 'Reckoning', school: 'gold',
-  runes: [SPIRAL, SHARD, SHARD, LATTICE],
+  // The bill for a long chain.
+  runes: [LATTICE, SHARD, SHARD, SPIRAL],
   found: null,
-  I:   { text: 'Score 1 VP per link resolved in this chain, up to 3.',
-         tag: 'turn', objective: { vp: { k: 'perChain', per: 1, cap: 3 } } },
+  I:   { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
   II:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
-  III: { text: 'If you have killed a golem unit this duel, score 2 VP.',
-         tag: 'break',
-         objective: { gate: { id: 'ledgerAtLeast', key: 'golemsKilled', n: 1 }, vp: { k: 'flat', n: 2 } } },
-  IV:  { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  III: { text: 'If you killed 3 golem units since this was played, discard a card and score 2 VP.',
+         tag: 'break', cost: [{ id: 'discard', n: 1 }],
+         objective: { gate: { id: 'ledgerAtLeast', key: 'golemsKilled', n: 3, since: true }, vp: { k: 'flat', n: 2 } } },
+  IV:  { text: 'If this chain has resolved 6 links, score 3 VP.',
+         tag: 'turn', objective: { gate: { id: 'chainAtLeast', n: 6 }, vp: { k: 'flat', n: 3 } } },
 });
 
 card({
   id: 'HIGH_SEAT', name: 'High Seat', school: 'gold',
-  runes: [WHEEL, WHEEL, WHEEL, SPIRAL],
+  // Take the heights and hold them.
+  runes: [WHEEL, WHEEL, SPIRAL, WHEEL],
   found: 'climbHigh',
-  I:   { text: 'If you hold the high ground, score 1 VP per unit on it, up to 3.',
-         tag: 'move',
+  I:   { text: 'Move a friendly unit to the nearest high ground.', ...M.toHighGround({ mm: 3000 }) },
+  II:  { text: 'If your units climbed 4 times since this was played, score 1 VP.',
+         tag: 'move', objective: { gate: { id: 'ledgerAtLeast', key: 'climbs', n: 4, since: true }, vp: { k: 'flat', n: 1 } } },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'High ground held: destroy a Spell you control and score 1 VP per unit on it, up to 3.',
+         tag: 'move', cost: [{ id: 'destroyFriendly', n: 1 }],
          objective: { gate: { id: 'highGround' }, vp: { k: 'perHighGround', per: 1, cap: 3 } } },
-  II:  { text: 'Move a friendly unit to the nearest elevated position.', ...M.toHighGround({ mm: 3000 }) },
-  III: { text: 'If your units have climbed 3 times, score 3 VP.',
-         tag: 'move',
-         objective: { gate: { id: 'ledgerAtLeast', key: 'climbs', n: 3 }, vp: { k: 'flat', n: 3 } } },
-  IV:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
 });
 
 card({
   id: 'LEDGER_OF_ASH', name: 'Ledger of Ash', school: 'gold',
-  runes: [SHARD, SHARD, LATTICE, SPIRAL],
+  // Every spell you burned, written down and paid for.
+  runes: [SHARD, LATTICE, SPIRAL, SHARD],
   found: 'ashes',
-  I:   { text: 'Score 1 VP per Spell you have sacrificed, up to 4.',
-         tag: 'break', objective: { vp: { k: 'perLedger', key: 'spellsSacrificed', per: 1, cap: 4 } } },
-  II:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
-  III: { text: 'If your discard holds 6 cards, score 2 VP.',
-         tag: 'draw',
-         objective: { gate: { id: 'discardAtLeast', n: 6 }, vp: { k: 'flat', n: 2 } } },
-  IV:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  I:   { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
+  II:  { text: 'If your discard holds 8 cards, discard 2 cards and score 1 VP.',
+         tag: 'draw', cost: [{ id: 'discard', n: 2 }],
+         objective: { gate: { id: 'discardAtLeast', n: 8 }, vp: { k: 'flat', n: 1 } } },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'If you sacrificed 3 Spells since this was played, score 1 VP per 2 of them, up to 3.',
+         tag: 'break', objective: { gate: { id: 'ledgerAtLeast', key: 'spellsSacrificed', n: 3, since: true }, vp: { k: 'perLedger', key: 'spellsSacrificed', div: 2, per: 1, cap: 3, since: true } } },
 });
 
 card({
   id: 'WARDEN_SEAL', name: 'Warden Seal', school: 'gold',
+  // An army on the field, sealed into points.
   runes: [LATTICE, WHEEL, WHEEL, LATTICE],
   found: 'twoGolems',
-  I:   { text: 'Score 1 VP per friendly golem unit, up to 3.',
-         tag: 'draw', objective: { vp: { k: 'perUnit', kind: 'golem', per: 1, cap: 3 } } },
-  II:  { text: 'If you have 2 units, score 2 VP.',
-         tag: 'move',
-         objective: { gate: { id: 'unitsAtLeast', n: 2 }, vp: { k: 'flat', n: 2 } } },
+  I:   { text: 'Your units take 1 less damage.', ...M.passiveShield({ n: 1 }) },
+  II:  { text: "If you have 3 units, spend a unit's action and score 1 VP.",
+         tag: 'move', cost: [{ id: 'spendUnitAction' }],
+         objective: { gate: { id: 'unitsAtLeast', n: 3 }, vp: { k: 'flat', n: 1 } } },
   III: { text: 'Move a friendly unit to the nearest elevated position.', ...M.toHighGround({ mm: 3000 }) },
-  IV:  { text: 'Your units take 1 less damage.', ...M.passiveShield({ n: 1 }) },
+  IV:  { text: 'If you have 4 units on the battlefield, destroy a Spell you control and score 3 VP.',
+         tag: 'draw', cost: [{ id: 'destroyFriendly', n: 1 }],
+         objective: { gate: { id: 'unitsAtLeast', n: 4 }, vp: { k: 'flat', n: 3 } } },
 });
 
 card({
   id: 'BLOOD_TITHE', name: 'Blood Tithe', school: 'gold',
-  runes: [SHARD, SHARD, SHARD, WHEEL],
+  // Blood owed, blood collected.
+  runes: [SHARD, SHARD, WHEEL, SHARD],
   found: 'bleedThem',
-  I:   { text: 'Score 1 VP per 3 damage you have dealt, up to 4.',
-         tag: 'break', objective: { vp: { k: 'perLedger', key: 'damageDealt', div: 3, per: 1, cap: 4 } } },
-  II:  { text: 'Deal 2 damage to an enemy unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
-  III: { text: 'If the enemy mage has lost 3 hit points, score 2 VP.',
-         tag: 'break',
-         objective: { gate: { id: 'enemyMageHurt', n: 3 }, vp: { k: 'flat', n: 2 } } },
-  IV:  { text: 'Push an enemy unit within 3m 2m.', ...M.push({ mm: 2000, range: 3000 }) },
+  I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
+  II:  { text: 'Your mage takes 1 damage. Score 1 VP per 6 damage dealt since this was played, up to 2.',
+         tag: 'break', cost: [{ id: 'mageWound', n: 1 }],
+         objective: { gate: { id: 'ledgerAtLeast', key: 'damageDealt', n: 6, since: true }, vp: { k: 'perLedger', key: 'damageDealt', div: 6, per: 1, cap: 2, since: true } } },
+  III: { text: 'Push an enemy unit within 3m 2m.', ...M.push({ mm: 2000, range: 3000 }) },
+  IV:  { text: 'If the enemy mage has lost 3 hit points, discard a card and score 3 VP.',
+         tag: 'break', cost: [{ id: 'discard', n: 1 }],
+         objective: { gate: { id: 'enemyMageHurt', n: 3 }, vp: { k: 'flat', n: 3 } } },
 });
 
 card({
   id: 'LAST_GAMBIT', name: 'Last Gambit', school: 'gold',
-  runes: [LATTICE, LATTICE, LATTICE, SHARD],
+  // Everything on one throw, when you are losing.
+  runes: [SHARD, SPIRAL, LATTICE, LATTICE],
   found: 'comeback',
-  I:   { text: 'If you are 4 VP behind, score 4 VP.',
-         tag: 'draw',
-         objective: { gate: { id: 'behindBy', n: 4 }, vp: { k: 'flat', n: 4 } } },
-  II:  { text: 'Score 1 VP per 8 cards you have drawn, up to 3.',
-         tag: 'draw', objective: { vp: { k: 'perLedger', key: 'cardsDrawn', div: 8, per: 1, cap: 3 } } },
-  III: { text: 'Score 1 VP per Keyword on this Spell, up to 3.',
-         tag: 'draw', objective: { vp: { k: 'perKeyword', per: 1, cap: 3 } } },
-  IV:  { text: 'Destroy this Spell. Draw 2 cards.', ...M.destroySelf({ then: 'draw' }) },
+  I:   { text: 'Destroy this Spell. Draw 2 cards.', ...M.destroySelf({ then: 'draw' }) },
+  II:  { text: 'If this Spell has 2 Keywords, score 2 VP.',
+         tag: 'draw', objective: { gate: { id: 'keywordsAtLeast', n: 2 }, vp: { k: 'flat', n: 2 } } },
+  III: { text: 'Discard 2 cards. Score 1 VP per 5 cards drawn since this was played, up to 2.',
+         tag: 'draw', cost: [{ id: 'discard', n: 2 }],
+         objective: { gate: { id: 'ledgerAtLeast', key: 'cardsDrawn', n: 5, since: true }, vp: { k: 'perLedger', key: 'cardsDrawn', div: 5, per: 1, cap: 2, since: true } } },
+  IV:  { text: 'If you are 4 VP behind, score 4 VP.',
+         tag: 'draw', objective: { gate: { id: 'behindBy', n: 4 }, vp: { k: 'flat', n: 4 } } },
 });
-
-/* ------------------------------------------------------------ second tranche */
 
 card({
   id: 'ARCHIVE', name: 'Archive', school: 'gold',
-  runes: [LATTICE, WHEEL, WHEEL, SPIRAL],
+  // A full table, catalogued.
+  runes: [WHEEL, WHEEL, SPIRAL, LATTICE],
   found: 'archived',
-  // Gold scoring off the TABLE rather than off history, which is the one shape
-  // the first seven gold cards never used: it pays most when you are developed
-  // and the chain is dangerous, so holding it is as much a decision as playing it.
-  I:   { text: 'Score 1 VP per Spell you control, up to 4.',
-         tag: 'draw', objective: { vp: { k: 'perSpell', per: 1, cap: 4 } } },
-  II:  { text: 'Move a friendly unit to the nearest elevated position.', ...M.toHighGround({ mm: 3000 }) },
-  III: { text: 'If you have 3 units on the battlefield, score 2 VP.',
-         tag: 'move',
-         objective: { gate: { id: 'unitsAtLeast', n: 3 }, vp: { k: 'flat', n: 2 } } },
-  IV:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  I:   { text: 'Move a friendly unit to the nearest elevated position.', ...M.toHighGround({ mm: 3000 }) },
+  II:  { text: 'If you have 4 units on the battlefield, discard a card and score 2 VP.',
+         tag: 'move', cost: [{ id: 'discard', n: 1 }],
+         objective: { gate: { id: 'unitsAtLeast', n: 4 }, vp: { k: 'flat', n: 2 } } },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'If you control 6 Spells, score 4 VP.',
+         tag: 'draw', objective: { gate: { id: 'spellsAtLeast', n: 6 }, vp: { k: 'flat', n: 4 } } },
 });
 
 card({
   id: 'FIRST_LIGHT', name: 'First Light', school: 'gold',
-  runes: [LATTICE, SHARD, SPIRAL, WHEEL],
+  // Dawn, then a long day of turning.
+  runes: [LATTICE, SHARD, WHEEL, SPIRAL],
   found: 'firstLight',
   I:   { text: 'After you play a Spell, draw a card.', ...M.onPlayDraw({ n: 1 }) },
-  II:  { text: 'At the start of your turn, deal 1 damage to an enemy within 3m.',
-         ...M.onTurnStartDamage({ amount: 1, range: 3000 }) },
-  III: { text: 'If it is not the first turn, score 1 VP per 5 rotations you have made, up to 3.',
-         tag: 'turn',
-         objective: { gate: { id: 'notFirstTurn' }, vp: { k: 'perLedger', key: 'rotations', div: 5, per: 1, cap: 3 } } },
-  IV:  { text: 'Push a terrain piece within 4m 2m.', ...M.shoveTerrain({ mm: 2000, range: 4000 }) },
+  II:  { text: 'At the start of your turn, deal 1 damage to an enemy within 3m.', ...M.onTurnStartDamage({ amount: 1, range: 3000 }) },
+  III: { text: 'Push a terrain piece within 4m 2m.', ...M.shoveTerrain({ mm: 2000, range: 4000 }) },
+  IV:  { text: 'After 20 rotations since this was played, score 1 VP per 7 of them, up to 3.',
+         tag: 'turn', objective: { gate: { id: 'ledgerAtLeast', key: 'rotations', n: 20, since: true }, vp: { k: 'perLedger', key: 'rotations', div: 7, per: 1, cap: 3, since: true } } },
 });

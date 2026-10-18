@@ -235,6 +235,16 @@ function stage(defs, cardId, numeral, opts = {}) {
   placeBody(state, ally, ally.x, ally.y);
   state.field.units.push(ally);
 
+  // Something for the faces that work on the PAST to work on: a spell in the
+  // discard (recall, reanimate), a wounded mage (healing), and a rock beside
+  // the enemy (Levitation drops one on them). Without these every such face
+  // came back "nothing was in reach" and was never checked at all.
+  state.players[0].discard.push(makeCard(state, 'EMBER_LASH', 0));
+  mine.hp = Math.max(1, mine.hp - 2);
+  state.field.props.push({ id: 'vrock', kind: 'boulder', x: theirs.x, y: 3300, z: 0,
+    removedUntil: null, body: 'prop', support: { kind: 'ground' } });
+  placeBody(state, state.field.props.at(-1), theirs.x, 3300);
+
   refresh(state);
   state.tableDirty = [false, false];
   return { state, card, friend, foeCard, outside, ally, mine, theirs, cell, faceIndex, def };
@@ -336,6 +346,9 @@ function judge(st, run, claim) {
 
   switch (claim.kind) {
     case 'range': {
+      // The DECLARED reach the view draws must be the printed one.
+      const declared = st.def.faces[st.faceIndex].reach;
+      if (declared !== undefined && declared !== claim.mm) return [FAIL, `prints ${claim.mm}mm but declares a reach of ${declared}mm`];
       // The out-of-range body must never even be OFFERED. Checking only that it
       // was not hit would pass a face that offered it and happened not to pick
       // it, which is most of them under a fixed answer policy.
@@ -397,9 +410,12 @@ function judge(st, run, claim) {
     case 'goldOnly':
       return st.def.school === 'gold' ? [PASS, ''] : [FAIL, `a ${st.def.school} face mentions VP`];
     case 'neverScores': {
-      const got = (after.vp[0] - before.vp[0]) + (after.vp[1] - before.vp[1]);
-      if (got !== 0) return [FAIL, `awarded ${got} VP without printing any`];
-      return after.scored === before.scored ? [PASS, ''] : [FAIL, 'wrote to the score log without printing any VP'];
+      // KILLS are not the face scoring. With five-life mages a four-damage face
+      // can kill on this stage, and the 2 VP for a mage is the kill rule paying
+      // out, not the card -- so only objective entries count against it.
+      const objective = state.scoreLog.slice(before.scored).filter((e) => e.kind === 'objective');
+      if (objective.length) return [FAIL, `awarded ${objective.reduce((n, e) => n + e.amount, 0)} VP from an objective without printing any`];
+      return [PASS, ''];
     }
     case 'destroysSelf':
       return after.mySpells.some((s) => s.startsWith(`${card.uid}@`))
@@ -435,7 +451,12 @@ function judge(st, run, claim) {
     }
     case 'enemyUnitsOnly': {
       if (allOptions.includes(ally.id) || allOptions.includes(mine.id)) return [FAIL, 'offered a friendly unit for an enemy-only effect'];
-      if (touchedUnits.includes(ally.id) || touchedUnits.includes(mine.id)) return [FAIL, 'hit its own side'];
+      // "Your mage takes 1 damage" is the COST, printed in the same sentence as
+      // the effect; the mage paying it is not the effect hitting its own side.
+      const paysInBlood = (st.def.faces[st.faceIndex].cost || []).some((c) => c.id === 'mageWound');
+      // HURT, not touched: a drain heals your own mage, which is the point of it.
+      const hurtOwn = (id) => after.hp[id] < before.hp[id];
+      if (hurtOwn(ally.id) || (hurtOwn(mine.id) && !paysInBlood)) return [FAIL, 'hit its own side'];
       return offered.length || touchedUnits.length ? [PASS, ''] : [UNCHECKED, 'no enemy was in reach'];
     }
     case 'grantsKeyword': {
@@ -453,6 +474,11 @@ function judge(st, run, claim) {
       return gained ? [PASS, ''] : [FAIL, `prints "grant [${claim.kw}]" but no Spell gained it`];
     }
     case 'costPaid': {
+      // A gold face whose objective condition is unmet resolves inert BEFORE
+      // its cost is paid (the cost is the price of scoring, not a trap), so on
+      // a stage where the condition is unmet there is nothing to observe.
+      const inert = (state.fx || []).slice(before.fx).some((f) => f.kind === 'gateUnmet' && f.uid === card.uid);
+      if (inert) return [UNCHECKED, 'its condition was unmet, so the cost was rightly not paid'];
       const spent = before.hand !== after.hand
         || before.mySpells.length !== after.mySpells.length
         || before.hp[mine.id] !== after.hp[mine.id]
@@ -569,7 +595,7 @@ const FAULTS = [
   },
   {
     name: 'declares a Keyword it never grants',
-    apply: (defs) => mutate(defs, 'FUSE', 'II', (f) => ({
+    apply: (defs) => mutate(defs, 'FUSE', 'I', (f) => ({
       ...f,
       *effect(ctx) { ctx.draw(1); },
     })),
@@ -582,7 +608,7 @@ const FAULTS = [
   },
   {
     name: 'a gold face that scores without destroying itself',
-    apply: (defs) => mutate(defs, 'TALLY', 'III', (f) => ({
+    apply: (defs) => mutate(defs, 'TALLY', 'IV', (f) => ({
       ...f, objective: { ...f.objective, keep: true },
     })),
   },

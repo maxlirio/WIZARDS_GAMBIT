@@ -17,13 +17,13 @@
 import { ask } from './driver.js';
 import {
   spellsOn, defOf, findSpell, destroy, turn, setRot, shift, draw, mill, fx,
-  topOf, occupied, canTurn, prohibited, noteCards,
+  topOf, occupied, canTurn, prohibited, noteCards, playFromHand, homeCells,
 } from './ops.js';
 import { activeIndex, NUMERALS } from './orient.js';
 import { CELL_COLOR, above, below, leftOf, rightOf, orthoNeighbours } from './table.js';
 import { gateMet, gateText } from './gates.js';
 import { payAll, costPayable, costText } from './costs.js';
-import { keywordsOf, apply as applyKw, fire as fireKw } from './keywords.js';
+import { keywordsOf, apply as applyKw, fire as fireKw, KEYWORD_NAMES } from './keywords.js';
 import { scoreObjective } from './objectives.js';
 import { bump } from './ledger.js';
 import { emit } from './triggers.js';
@@ -36,7 +36,8 @@ import {
   mageOf, hasLos, surfaceAt,
 } from '../field/query.js';
 import { push, pushAwayFrom, pullToward, levitate, removeTerrain } from '../field/push.js';
-import { walk, placeBody } from '../field/move.js';
+import { propR, propOnBoard } from '../field/arena.js';
+import { walk, placeBody, fallDamageFor, recheckSupport, resolveFalls } from '../field/move.js';
 import { pushDirs, ringPoints, elevatedNear, unitTargets, terrainTargets, dirLabel } from '../field/candidates.js';
 
 /**
@@ -110,6 +111,9 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       .map((s) => s.uid).sort((a, b) => a - b),
 
     keywords: () => keywordsOf(state, spell),
+    keywordsOf: (uid) => { const t = findSpell(state, uid); return t ? keywordsOf(state, t) : []; },
+    keywordNames: () => [...KEYWORD_NAMES],
+    homeCellsOf: (defId) => homeCells(state.defs[defId]),
     keywordsNear: () => [...new Set(ctx.adjacentSpells()
       .flatMap((u) => keywordsOf(state, findSpell(state, u))))].sort(),
     grantKeyword: (uid, kw) => {
@@ -211,6 +215,130 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       return !!pr;
     },
 
+    /** Push a body directly away from an arbitrary point. */
+    pushFrom: (bodyId, fromX, fromY, mmDist, o = {}) => {
+      const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
+      if (!body) return { mm: 0 };
+      const pp = applyKw(state, spell, 'push', { mm: mmDist, crush: false, levitate: false });
+      return pushAwayFrom(state, body, fromX, fromY, pp.mm, { byP: p, crush: pp.crush || !!o.crush, ...o });
+    },
+    pullTo: (bodyId, toX, toY, mmDist, o = {}) => {
+      const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
+      if (!body) return { mm: 0 };
+      const pp = applyKw(state, spell, 'push', { mm: mmDist, crush: false, levitate: false });
+      return pullToward(state, body, toX, toY, pp.mm, { byP: p, crush: pp.crush, ...o });
+    },
+    /** Where this face measures from: the first range origin (usually the mage). */
+    origin: () => rangeOrigins(state, p)[0] || null,
+
+    /**
+     * Throw a unit straight up and let it come down where it was. The fall is
+     * the damage, at the fall table's rate, and it is credited to the caster --
+     * an ordinary fall has nobody to credit, and a kill nobody made scores
+     * nothing.
+     */
+    hurl: (unitId, mmUp) => {
+      const u = findUnit(state, unitId);
+      if (!u || u.dead) return 0;
+      fx(state, 'hurl', { id: unitId, mm: mmUp });
+      const dmg = fallDamageFor(mmUp);
+      return dmg > 0 ? hurt(state, u, dmg, { cause: 'fall', byP: p, drop: mmUp }) : 0;
+    },
+
+    /**
+     * Lift a terrain piece and drop it on a unit: the unit takes the hit and
+     * is knocked aside, and the rock comes to rest where the unit stood.
+     */
+    dropRock: (propId, unitId, amount) => {
+      const pr = findProp(state, propId);
+      const u = findUnit(state, unitId);
+      if (!pr || !u || u.dead) return 0;
+      const ix = u.x, iy = u.y, fromX = pr.x, fromY = pr.y;
+      fx(state, 'dropRock', { id: propId, onto: unitId, from: { x: fromX, y: fromY }, to: { x: ix, y: iy } });
+      const dealt = ctx.hit(unitId, amount, { cause: 'rock' });
+      if (!u.dead) pushAwayFrom(state, u, fromX === ix && fromY === iy ? ix - 1 : fromX, fromY, 800, { byP: p });
+      // The rock lands where the unit stood -- or, if another piece of terrain
+      // already fills that spot, just short of it along the line it fell, so
+      // two rocks never end up inside each other.
+      let lx = ix, ly = iy;
+      const r0 = propR(pr);
+      for (let k = 0; k < 10; k++) {
+        const clash = state.field.props.some((o) => o !== pr && propOnBoard(state, o)
+          && (o.x - lx) ** 2 + (o.y - ly) ** 2 < (propR(o) + r0) ** 2);
+        if (!clash) break;
+        lx = ix + idiv((fromX - ix) * (k + 1), 10);
+        ly = iy + idiv((fromY - iy) * (k + 1), 10);
+      }
+      pr.x = lx; pr.y = ly;
+      const s = surfaceAt(state, lx, ly, { ignore: pr.id });
+      pr.z = s.z; pr.support = s.support;
+      recheckSupport(state);
+      resolveFalls(state, hurt);
+      return dealt;
+    },
+
+    /** Swap two units' places. Both settle on whatever is under them. */
+    swapUnits: (aId, bId) => {
+      const a = findUnit(state, aId), b = findUnit(state, bId);
+      if (!a || !b || a === b) return false;
+      const ax = a.x, ay = a.y;
+      placeBody(state, a, b.x, b.y);
+      placeBody(state, b, ax, ay);
+      fx(state, 'swap', { a: aId, b: bId });
+      recheckSupport(state);
+      resolveFalls(state, hurt);
+      return true;
+    },
+
+    /** Raise a new stone wall. Terrain is created, named, and stays. */
+    raiseWall: (point) => {
+      if (!point) return null;
+      const f = state.field;
+      f.nextPropId = (f.nextPropId ?? f.props.length) + 1;
+      const s = surfaceAt(state, point.x, point.y);
+      const pr = { id: `w${f.nextPropId}`, kind: 'wall', x: point.x, y: point.y, z: s.z,
+        removedUntil: null, body: 'prop', support: s.support, raised: true };
+      f.props.push(pr);
+      fx(state, 'raiseWall', { id: pr.id, at: { x: point.x, y: point.y, z: s.z } });
+      return pr.id;
+    },
+
+    /** The mage regains life, up to its maximum. */
+    mend: (n) => {
+      const m = mageOf(state, p);
+      if (!m || m.dead) return 0;
+      const got = Math.min(n, m.maxHp - m.hp);
+      m.hp += got;
+      if (got > 0) fx(state, 'heal', { id: m.id, amount: got });
+      return got;
+    },
+
+    /** A card from your discard pile back into your hand. */
+    recall: (uid) => {
+      const pl = state.players[p];
+      const i = pl.discard.findIndex((c) => c.uid === uid);
+      if (i < 0) return false;
+      pl.hand.push(pl.discard.splice(i, 1)[0]);
+      fx(state, 'recall', { uid, p });
+      return true;
+    },
+
+    /** A spell from your discard straight back onto an empty cell, showing I. */
+    reanimate: (uid, cell) => {
+      const c = playFromHand(state, p, uid, cell);
+      if (c) fx(state, 'reanimate', { uid, p, cell });
+      return !!c;
+    },
+
+    /** An enemy Spell may not rotate until the end of its owner's next turn. */
+    hex: (uid) => {
+      const t = findSpell(state, uid);
+      if (!t) return false;
+      t.noTurnUntil = state.turn + 1;
+      fx(state, 'prohibited', { uid, untilTurn: state.turn + 1 });
+      return true;
+    },
+
     /** [Unstable]'s blast. Hits the nearest enemy unit in reach of the table. */
     blast: (amount) => {
       const ids = ctx.enemyUnits(4000);
@@ -266,6 +394,15 @@ export function* resolveSide(state, spell, index, opts = {}) {
     return false;
   }
 
+  // A gold face's OBJECTIVE condition is checked before its cost too. Gold
+  // costs are the price of scoring; paying one and then being told the
+  // objective was not met would make the cost a trap rather than a price.
+  if (face.objective?.gate && !gateMet(state, spell, face.objective.gate, { objective: true })) {
+    bump(state.players[spell.owner].ledger, 'inertResolutions');
+    fx(state, 'gateUnmet', { uid: spell.uid, numeral: face.numeral, gate: face.objective.gate.id, text: gateText(face.objective.gate) });
+    return false;
+  }
+
   if (face.cost && face.cost.length) {
     const paid = yield* payAll(ctx, face.cost);
     if (!paid) {
@@ -275,7 +412,11 @@ export function* resolveSide(state, spell, index, opts = {}) {
     // The cost may have destroyed the resolving card itself (destroySelf, or a
     // destroyFriendly that chose it). A face whose effect reads its own cell
     // after that would be reading a card in the discard pile.
-    if (spell.cell === null && !face.objective) return false;
+    // A face whose cost is "destroy THIS Spell" is the exception: the card is
+    // spent ON PURPOSE to power the effect, and stopping here meant printed
+    // Ash Wraith ("Destroy this Spell. Deal 4 damage...") never dealt any.
+    const spentItself = face.cost.some((c) => c.id === 'destroySelf');
+    if (spell.cell === null && !face.objective && !spentItself) return false;
   }
 
   if (face.objective) scoreObjective(state, spell, face);

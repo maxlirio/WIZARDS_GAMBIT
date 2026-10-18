@@ -262,6 +262,9 @@ export function playFromHand(state, p, uid, cell) {
   card.turnsThisAction = 0;
   card.plays = (card.plays || 0) + 1;
   card.keywords = [];
+  // What the owner's counters read at this moment, so a gold objective can ask
+  // for work done SINCE this card arrived (gates.js counted). Plain numbers.
+  card.ledgerAtPlay = { ...state.players[p].ledger };
   place(state, p, card, cell);
   state.players[p].ledger.spellsPlayed++;
   fx(state, 'play', { uid, p, cell });

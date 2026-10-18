@@ -51,9 +51,12 @@ export const fallDamageFor = (drop) => (drop <= FALL_SAFE ? 0 : 1 + idiv(drop - 
  * ledger wants the distance, and the view wants the path.
  */
 export function walk(state, body, dir, budget, {
-  allowFall = false, climb = true, ignoreUnits = false, probe = false,
+  allowFall = false, climb = true, ignoreUnits = false, probe = false, vec = null,
 } = {}) {
-  const [ux, uy] = DIR64[dir & 63];
+  // `vec` walks an exact heading (integer, scale DIR_SCALE) instead of one of
+  // the 64 table directions: a unit told to walk to a POINT must head at that
+  // point, and the nearest table direction can miss it by a body width at 2m.
+  const [ux, uy] = vec || DIR64[dir & 63];
   const x0 = body.x, y0 = body.y, z0 = body.z;
   const self = isUnitBody(body) ? null : body.id;
   const maxSteps = imin(idiv(budget, STEP), MAX_STEPS);
@@ -193,7 +196,12 @@ export function resolveFalls(state, hurt) {
       // it is worth pushing one out from under somebody.
       if (!isUnit && propSpec(body.kind).floating) continue;
       const before = body.z;
-      const s = surfaceAt(state, body.x, body.y, { ignore: isUnit ? null : body.id });
+      // A FALL NEVER RAISES ANYTHING. Only surfaces at or below the body count.
+      // Without the cap, two overlapping boulders each found the other's top
+      // above itself, "fell" upward onto it, and ratcheted each other to 1.4km
+      // until the pump gave up -- found by the 120-game random sweep after
+      // Levitation began dropping rocks beside other rocks.
+      const s = surfaceAt(state, body.x, body.y, { ignore: isUnit ? null : body.id, maxZ: before });
       if (s.z >= before) { body.z = s.z; body.support = s.support; continue; }
       body.z = s.z;
       body.support = s.support;

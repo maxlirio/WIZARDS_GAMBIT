@@ -51,10 +51,18 @@ export const GATES = Object.freeze({
   },
 
   /** Counts history. The whole reason ledger.js exists. */
+  /**
+   * A counter has reached n. With `since`, only what has happened SINCE THIS
+   * CARD WAS PLAYED counts -- so a gold objective needs fresh work every time
+   * the card comes back round, instead of paying out forever once a lifetime
+   * total has been crossed. Measured: with lifetime counters one standard-deck
+   * gold face paid 173 VP over 30 AI games, and the first objective landed on
+   * turn 9.
+   */
   ledgerAtLeast: {
-    text: (g) => `${g.key} at least ${g.n} this duel`,
-    test: (state, sp, g) => L(state, sp)[g.key] >= g.n,
-    progress: (state, sp, g) => pct(L(state, sp)[g.key], g.n),
+    text: (g) => `${g.key} at least ${g.n} ${g.since ? 'since this Spell was played' : 'this duel'}`,
+    test: (state, sp, g) => counted(state, sp, g) >= g.n,
+    progress: (state, sp, g) => pct(counted(state, sp, g), g.n),
   },
 
   /** Reads the board. */
@@ -96,12 +104,6 @@ export const GATES = Object.freeze({
     progress: (state, sp, g) => pct(keywordsOf(state, sp).length, g.n),
   },
 
-  hasKeyword: {
-    text: (g) => `this Spell has [${g.kw}]`,
-    test: (state, sp, g) => keywordsOf(state, sp).includes(g.kw),
-    progress: (state, sp, g) => (keywordsOf(state, sp).includes(g.kw) ? 100 : 0),
-  },
-
   handAtLeast: {
     text: (g) => `you have ${g.n} or more cards in hand`,
     test: (state, sp, g) => state.players[sp.owner].hand.length >= g.n,
@@ -115,12 +117,6 @@ export const GATES = Object.freeze({
   },
 
   /* ------------------------------------------------- the battlefield */
-
-  mageAlive: {
-    text: () => 'your mage is alive',
-    test: (state, sp) => !!mageOf(state, sp.owner) && !mageOf(state, sp.owner).dead,
-    progress: (state, sp) => (GATES.mageAlive.test(state, sp) ? 100 : 0),
-  },
 
   unitsAtLeast: {
     text: (g) => `you have ${g.n} or more units on the battlefield`,
@@ -171,11 +167,6 @@ export const GATES = Object.freeze({
     progress: (state, sp, g) => pct(state.chain?.resolutions || 0, g.n),
   },
 
-  notFirstTurn: {
-    text: () => 'it is not the first turn',
-    test: (state) => state.turn > 1,
-    progress: (state) => (state.turn > 1 ? 100 : 0),
-  },
 });
 
 export const GATE_IDS = Object.freeze(Object.keys(GATES).sort());
@@ -204,6 +195,10 @@ const neighbour = (cell, where) => {
  * -- false, forever, silently. Every gold face behind it would be permanently
  * unscoreable and the card would still look implemented.
  */
+/** A ledger counter, or only its growth since this card was played. */
+export const counted = (state, sp, g) =>
+  state.players[sp.owner].ledger[g.key] - (g.since ? (sp.ledgerAtPlay?.[g.key] || 0) : 0);
+
 export function validateGate(cardId, numeral, gate) {
   if (!gate) return;
   const g = GATES[gate.id];
@@ -217,10 +212,16 @@ export function validateGate(cardId, numeral, gate) {
 }
 
 /** Is this face's gate satisfied right now? [Inevitable] says yes regardless. */
-export function gateMet(state, spell, gate) {
+export function gateMet(state, spell, gate, { objective = false } = {}) {
   if (!gate) return true;
-  const over = applyKeywords(state, spell, 'gate', { ignore: false });
-  if (over.ignore) return true;
+  // [Inevitable] waives a face's GATE -- the condition on resolving it. It does
+  // NOT waive a gold OBJECTIVE's condition, which is the condition on scoring:
+  // copied onto a gold card by a match, it turned every objective into free
+  // points (one face paid out 85 times in 30 games for "kill 3 golems").
+  if (!objective) {
+    const over = applyKeywords(state, spell, 'gate', { ignore: false });
+    if (over.ignore) return true;
+  }
   const g = GATES[gate.id];
   if (!g) return false;
   try { return !!g.test(state, spell, gate); }
