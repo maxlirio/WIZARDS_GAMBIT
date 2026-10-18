@@ -13,14 +13,28 @@ game's rules exist as text, and the engine implements it.
 python3 tools/serve.py 8321        # then open http://localhost:8321
 ```
 
-`index.html` + `js/view/` is the whole UI: your Spell Table on the left, the
-enemy's on the right, a 3D arena in the middle and your hand along the bottom.
-Click a card in your hand and then a glowing cell to play it; click one of your
-spells to rotate, shift or destroy it; in the unit phase click a marker to move
-and a red-ringed enemy to strike. When a card asks a question, the answers glow
-on the table or the field and are also listed as buttons. Hover anything to read
-it. URL options: `?seed=N`, `?watch` (two AIs), `?pool` (random 60-card decks),
-`?ai=greedy|random`, `?fast` (no pauses between enemy steps).
+`index.html` + `js/view/` is the whole UI. The battlefield fills the screen: a
+real place on land — ground that keeps going to the hills, a forest, a sky with
+a sun in it — and a glowing **ward line** with standing stones marking the
+12m x 9m where the duel is actually fought. Your Spell Table sits bottom-left,
+the enemy's top-right, your hand (big enough to read) along the bottom, and the
+**turn-flow strip** at the top says what you are doing now: draw → spell action
+→ units → end turn. Every control sits next to what it acts on: click one of
+your spells and a popover beside its cell offers rotate (with the face it would
+turn to, its reach, and how many enemies are in range), shift and destroy;
+click a unit and a popover over its head offers strike, summon and hold, while
+the blue circle on the ground shows where it may walk. When a card asks a
+question, the answers glow on the table or the field and are listed under the
+question. Hover anything to read it in the inspector. **Tab** hides the panels,
+**H** homes the camera, **Esc** cancels.
+
+The mage is a rigged, fully animated character; golems are built out of rock
+and animated in code; fire burns, lightning arcs, quakes shake the camera, and
+every rock, stone, crystal, wall and tree on the field is something a spell can
+throw, crack or set alight (see `RULES.md` §9). URL options: `?seed=N`,
+`?watch` (two AIs), `?pool` (random 60-card decks), `?ai=greedy|random`,
+`?fast` (no pauses between enemy steps). Graphics quality is in the New-duel
+dialog.
 
 The view drives the engine exactly as `tools/duel.js` does — `legalActions`,
 `apply`, `choose` — so it cannot offer a move the rules would refuse. Where a
@@ -218,10 +232,24 @@ a `z`, one candidate list ordered by Set insertion, and lockstep dies while ever
 other tool reports green. Hence the grep as a build gate, `DIR64` instead of
 trig, `z` always recomputed from `support`, and `sort()` at every iteration site.
 
-## Not done yet
+## The view, file by file
 
-The **view layer**. Deferred deliberately, and the art direction is recorded in
-the plan rather than guessed at here: Chaos Gate-style arena and characters,
-luminous-ink sigil cards keeping the printed geometry, strict four-fold symmetry
-once anything is drawn, and the four runes needing C4 rotational symmetry and
-distinct *silhouettes* rather than distinct hues.
+```
+js/view/
+  main.js              the HUD and the game loop: drives the engine, turns fx notes into a timeline of cues
+  arena3d.js           the battlefield: camera, picking, rings, markers, and the cue -> effect mapping
+  world.js             the land beyond the ward: terrain, sky, sun, grass, forest, the ward line
+  props.js             the terrain pieces, drawn (boulder, standing stone, crystal, wall, floater, tree)
+  actors.js            the rigged mage: clip mapping, team colours, the staff orb
+  golems.js            golems assembled from rock and animated procedurally
+  fx.js                particles, bolts, lightning, rings, debris, decals, camera shake
+  assets.js            GLB loading, cloning, LOD picking
+  cards.js             the SVG cards (the printed geometry, luminous ink)
+assets/models/         the CC0 KayKit mage and this author's HIGHGROUND bakes (see assets/CREDITS.md)
+tools/lab/             one page per module to look at it alone, with a headless screenshot script
+```
+
+Art direction: Chaos Gate-style battlefield and characters, luminous-ink sigil
+cards keeping the printed geometry, strict four-fold symmetry on anything drawn
+on a card, and the four runes with C4 rotational symmetry and distinct
+*silhouettes* rather than distinct hues.

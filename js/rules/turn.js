@@ -15,6 +15,7 @@ import {
   respawnMage, startUnitTurn, tickPoison, recordHighGround, pendingUnits,
 } from './units.js';
 import { mageOf } from '../field/query.js';
+import { tickFire } from '../field/push.js';
 
 export function beginTurn(state) {
   const p = state.active;
@@ -34,6 +35,8 @@ export function beginTurn(state) {
   if (state.turn > 1) draw(state, p, 1);
   refresh(state);
   tickPoison(state, p);
+  // Whatever is burning bites now, on EVERY turn start -- fire takes no sides.
+  tickFire(state);
   fx(state, 'turnStart', { p, turn: state.turn });
   emit(state, 'turnStart', { p, turn: state.turn });
 }

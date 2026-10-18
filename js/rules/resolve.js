@@ -35,8 +35,8 @@ import {
   livingUnits, unitsOf, enemiesOf, findUnit, findProp, propsOnBoard, rangeOrigins,
   mageOf, hasLos, surfaceAt,
 } from '../field/query.js';
-import { push, pushAwayFrom, pullToward, levitate, removeTerrain } from '../field/push.js';
-import { propR, propOnBoard } from '../field/arena.js';
+import { push, pushAwayFrom, pullToward, levitate, removeTerrain, smashProp, ignite } from '../field/push.js';
+import { propR, propOnBoard, propSpec } from '../field/arena.js';
 import { walk, placeBody, fallDamageFor, recheckSupport, resolveFalls } from '../field/move.js';
 import { pushDirs, ringPoints, elevatedNear, unitTargets, terrainTargets, dirLabel } from '../field/candidates.js';
 
@@ -149,6 +149,46 @@ export function makeCtx(state, spell, def, face, opts = {}) {
     propsInRange: (mmDist, o = {}) => terrainTargets(state, p, range(mmDist).mm, o),
     unit: (id) => findUnit(state, id),
     prop: (id) => findProp(state, id),
+
+    /** Terrain whose edge is within `r` of a point. On the board, id order. */
+    propsNear: (x, y, r) => propsOnBoard(state)
+      .filter((pr) => (pr.x - x) ** 2 + (pr.y - y) ** 2 <= (r + propR(pr)) ** 2)
+      .map((pr) => pr.id).sort(),
+    smash: (propId, amount, why = {}) => smashProp(state, findProp(state, propId), amount, { byP: p, cause: why.cause || 'spell' }),
+    ignite: (propId) => ignite(state, findProp(state, propId), { byP: p }),
+
+    /**
+     * EVERYTHING CAN BE AFFECTED. A face's element, let loose on the terrain
+     * around a point:
+     *
+     *   fire       lights anything made of wood. The fire is the effect -- it
+     *              bites at the start of every turn and spreads.
+     *   lightning  lights wood too, and bursts crystal outright.
+     *   force      cracks whatever it reaches for `amount`, and throws it
+     *              `mm` away from the point if `mm` is given. A quake topples a
+     *              standing stone; a nova shoves a boulder as well as a mage.
+     *
+     * One funnel, so a card that says "fire" never has to know what wood is.
+     */
+    sweep: (x, y, radius, element, { amount = 1, mm = 0 } = {}) => {
+      if (!element) return;
+      for (const id of ctx.propsNear(x, y, radius)) {
+        const pr = findProp(state, id);
+        if (!pr || !propOnBoard(state, pr)) continue;
+        if (element === 'fire') {
+          ignite(state, pr, { byP: p });
+        } else if (element === 'lightning') {
+          ignite(state, pr, { byP: p });
+          if (pr.kind === 'shard') smashProp(state, pr, pr.hp, { byP: p, cause: 'lightning' });
+        } else if (element === 'force') {
+          if (mm > 0 && !(pr.x === x && pr.y === y)) {
+            const pp = applyKw(state, spell, 'push', { mm, crush: false, levitate: false });
+            pushAwayFrom(state, pr, x, y, pp.mm, { byP: p, crush: pp.crush });
+          }
+          if (propOnBoard(state, pr)) smashProp(state, pr, amount, { byP: p, cause: 'force' });
+        }
+      }
+    },
 
     /** Damage, with [Impact] and any aura already in, and [Stun]/[Poison] after. */
     hit: (unitId, amount, why = {}) => {
@@ -297,7 +337,8 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       f.nextPropId = (f.nextPropId ?? f.props.length) + 1;
       const s = surfaceAt(state, point.x, point.y);
       const pr = { id: `w${f.nextPropId}`, kind: 'wall', x: point.x, y: point.y, z: s.z,
-        removedUntil: null, body: 'prop', support: s.support, raised: true };
+        removedUntil: null, body: 'prop', support: s.support, raised: true,
+        hp: propSpec('wall').hp, burning: null, litBy: null, destroyed: false };
       f.props.push(pr);
       fx(state, 'raiseWall', { id: pr.id, at: { x: point.x, y: point.y, z: s.z } });
       return pr.id;

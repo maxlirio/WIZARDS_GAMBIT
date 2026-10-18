@@ -79,6 +79,8 @@ try {
   await send('Page.navigate', { url: `http://localhost:${port}/?seed=${seed}&fast${arg('extra', '')}` });
   for (let k = 0; k < 100; k++) { if (await ev('!!(window.WG && WG.state)')) break; await sleep(200); }
   check('page boots and exposes WG', await ev('!!(window.WG && WG.state)'));
+  for (let k = 0; k < 200; k++) { if (await ev('!!(WG.arena && WG.arena.ready)')) break; await sleep(250); }
+  check('the battlefield loads its models', await ev('!!(WG.arena && WG.arena.ready)'));
   await sleep(1500);
   await shot('start');
   const ow = await ev(`[document.documentElement.scrollWidth, innerWidth, [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).slice(0, 4).map(e => e.id || e.className).join(' | ')]`);
@@ -110,7 +112,7 @@ try {
     const circ = await ev(`WG.arena.insideMove(${u0[0]} + 1000, ${u0[1]})`);
     check('unit phase shows the move circle', circ === true);
     // Click OPEN GROUND inside the circle, off to one side so the mage itself is not under the cursor.
-    const pos = await ev(`(()=>{document.querySelector('#stage').scrollIntoView({block:'start'}); const p=WG.arena.project(${u0[0]} + 900, ${u0[1]} - 1600, ${u0[2]}); const b=document.querySelector('#arena').getBoundingClientRect(); return [b.x+p[0], b.y+p[1]]})()`);
+    const pos = await ev(`(()=>{const p=WG.arena.project(${u0[0]} + 900, ${u0[1]} - 1600, ${u0[2]}); const b=document.querySelector('#arena').getBoundingClientRect(); return [b.x+p[0], b.y+p[1]]})()`);
     if (pos) { await mouse('mouseMoved', pos[0], pos[1], { buttons: 0 }); await sleep(250); await shot('move-preview'); }
     if (pos) {
       const before = await ev(`JSON.stringify(WG.state.field.units.filter(u=>u.owner===0).map(u=>[u.x,u.y]))`);
@@ -140,10 +142,10 @@ try {
   await shot('midgame');
   console.log('  camera at midgame', await cam());
   await shot('midgame-table', await ev(`(()=>{const b=document.querySelector('#table0').getBoundingClientRect(); return {x:b.x,y:b.y,width:b.width,height:b.height}})()`));
-  await shot('midgame-arena', await ev(`(()=>{const b=document.querySelector('#stage').getBoundingClientRect(); return {x:b.x,y:b.y,width:b.width,height:b.height}})()`));
+  await shot('midgame-arena', await ev(`(()=>{const b=document.querySelector('#arena').getBoundingClientRect(); return {x:b.x,y:b.y,width:b.width,height:b.height}})()`));
   await ev(`document.querySelector('#hand .hcard')?.dispatchEvent(new MouseEvent('mouseenter'))`);
   await sleep(300);
-  await shot('inspector', await ev(`(()=>{const b=document.querySelector('#stage').getBoundingClientRect(); return {x:b.x,y:b.y,width:b.width,height:b.height}})()`));
+  await shot('inspector', await ev(`(()=>{const b=document.querySelector('#arena').getBoundingClientRect(); return {x:b.x,y:b.y,width:b.width,height:b.height}})()`));
   await ev(`document.querySelector('#hand .hcard')?.dispatchEvent(new MouseEvent('mouseleave'))`);
 
   // The range preview: reach a spell phase where one of my spells would rotate
@@ -157,7 +159,10 @@ try {
       while (WG.busy) await new Promise(r => setTimeout(r, 5));
       const c = pick(); if (c !== null) return c;
       const S = WG.state;
-      if (S.pending) { if ((S.pending.request.player ?? S.active) === 0) WG.answer(AI.answerFor(S, { policy: 'oneply' })); else await new Promise(r => setTimeout(r, 5)); }
+      // Steer toward the thing under test: with no ranged rotate in reach, play a ranged card first.
+      const ranged = (!S.pending && S.active === 0 && S.phase === 'spell') ? WG.legal().find(a => a.type === 'play' && S.defs[S.players[0].hand.find(h => h.uid === a.uid)?.def]?.faces?.some(f => f.reach)) : null;
+      if (ranged) WG.act(ranged);
+      else if (S.pending) { if ((S.pending.request.player ?? S.active) === 0) WG.answer(AI.answerFor(S, { policy: 'oneply' })); else await new Promise(r => setTimeout(r, 5)); }
       else if (S.active === 0) WG.act(AI.chooseAction(S, { policy: 'oneply' })); else await new Promise(r => setTimeout(r, 5));
       await new Promise(r => setTimeout(r, 0));
     } return null; })()`);

@@ -383,6 +383,38 @@ millimetres so that replays and lockstep are exact.
 - **Addressable terrain pieces**, because printed `Levitation` I removes one from the
   battlefield until end of turn.
 - Pushable props, including floating rocks, which fall when they lose support.
+
+### Everything on the field can be affected
+
+Nothing on the battlefield is scenery. Every terrain piece — boulder, standing stone,
+crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points** and a
+**material**, and the rules treat all of them the same way:
+
+| piece | mass | hp | notes |
+|---|---|---|---|
+| crystal shard | 1 | 2 | flies when pushed; lightning bursts it outright |
+| floating rock | 1 | 3 | held up by magic; push it out from under someone |
+| boulder | 2 | 4 | can be stood on and climbed |
+| tree | 3 | 3 | **burns** |
+| standing stone | 4 | 5 | a quake can crack it |
+| wall | 6 | 6 | slides a hand's width, but it slides |
+
+- **Pushed:** a push of N metres moves a piece of mass *m* by `2N / (m + 1)` — a shard
+  the whole way, a boulder two thirds, a wall a seventh. Units have no mass term.
+- **Smashed:** a piece at 0 hp **shatters** and is gone for good; whatever stood on it
+  falls. Under `[Crush]`, both the body shoved into a wall *and the wall* take the damage.
+- **Burned:** fire faces light anything made of wood. A burning piece **bites at the
+  start of every turn** (1 damage to every unit within 0.9m of its edge, whichever side
+  it is on, credited to whoever lit it), **spreads** to wood within 1.2m, and after its
+  second bite burns away to nothing. Fire takes no sides.
+- **Elements.** A face declares what it does to terrain, and the engine applies it in
+  one place (`ctx.sweep`), so no card has to know what wood is:
+  - **fire** (Ember Lash, Cinder Rain, Firebrand, Ash Wraith): lights wood in the blast.
+  - **lightning** (Storm Brand): lights wood and bursts crystal.
+  - **force** (Shove, Thornwall's nova, Stone Tide's quake, Undertow's vortex, slams):
+    throws every piece in reach the same way it throws units, and cracks it.
+
+The arena kinds now include a **grove**, a stand of trees where fire is the game.
 - **Range is measured from your mage or one of your golem units** (printed
   `[Channel]` marks an origin), in three dimensions — which is what `[Ignore Height]`
   switches off.

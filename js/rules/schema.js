@@ -25,6 +25,8 @@ export const TIERS = Object.freeze(['A', 'B', 'C']);
  * optional key ('passve', 'gates') is otherwise a face that quietly does
  * nothing while reading as implemented.
  */
+export const ELEMENTS = Object.freeze(['fire', 'lightning', 'force']);
+
 export const FACE_KEYS = Object.freeze([
   'text',       // the printed text. verify-faces.js judges the code against THIS.
   'tag',        // verb class: turn | break | move | draw. Usually set by the motif.
@@ -41,6 +43,9 @@ export const FACE_KEYS = Object.freeze([
   'objective',  // GOLD ONLY: { gate?, vp, cost } -- the payout
   'grants',     // declared derived buckets this face writes. checkderived.js reads it.
   'keywords',   // keywords this face GRANTS while active (declared, for verify-faces)
+  'element',    // fire | lightning | force: what this face does to the TERRAIN it
+                // touches. Fire lights wood, lightning bursts crystal, force cracks
+                // and throws stone. Set by the motif from the card's option.
   'reach',      // mm this face reaches from your range origins, BEFORE keywords and
                 // auras. Set by the motif; the view draws it and verify-faces holds
                 // it to the printed "within Xm", so the drawn range cannot drift.
@@ -135,6 +140,7 @@ export function makeDef(spec) {
     if (f.tag && !['turn', 'break', 'move', 'draw'].includes(f.tag)) {
       bad(id, `side ${n}: bad tag '${f.tag}'`);
     }
+    if (f.element && !ELEMENTS.includes(f.element)) bad(id, `side ${n}: bad element '${f.element}'`);
     return Object.freeze({ ...f, numeral: n, index: NUMERALS.indexOf(n) });
   });
 

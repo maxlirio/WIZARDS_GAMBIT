@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Golem lab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  #hud { position: fixed; left: 8px; top: 8px; color: #fff; font: 12px/1.5 monospace; background: rgba(0,0,0,.45); padding: 6px 10px; border-radius: 4px; white-space: pre; pointer-events: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud">loading…</div>
+<script type="module">
+// All six golems in a row on lit ground. ?anim=idle|walk|strike|hit|rise|die|cast|jump
+// loops that action; ?manual=1 freezes the clock so a harness can step it with
+// LAB.advance(ms); ?team=1 for the red team; ?only=EMBER_HOUND for one golem.
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { load } from '../../js/view/assets.js';
+import { makeGolemActor } from '../../js/view/golems.js';
+
+const q = new URLSearchParams(location.search);
+const anim = q.get('anim') || 'idle';
+const manual = q.has('manual');
+const team = q.get('team') === '1' ? 0xff5d5d : 0x4fd2ff;
+const IDS = ['CLAY_HAND', 'STONE_WARDEN', 'IRON_COLOSSUS', 'SPARK_WISP', 'GLASS_SENTINEL', 'EMBER_HOUND'];
+const only = q.get('only');
+const ids = only ? [only] : IDS;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fa6c4);
+const pm = new THREE.PMREMGenerator(renderer);
+scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.35;
+pm.dispose();
+
+// The arena's late-afternoon light, but from the camera's side so faces are lit.
+const sun = new THREE.DirectionalLight(0xffe3bd, 3.2);
+sun.position.set(0.45, 0.6, 0.7).normalize().multiplyScalar(40);
+sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 10, bottom: -10, near: 10, far: 90 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; sun.shadow.radius = 2;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0x9fb8e8, 0x4a4030, 0.75));
+scene.add(new THREE.AmbientLight(0x60584a, 0.25));
+
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshStandardMaterial({ color: 0x6b6a4e, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
+scene.add(ground);
+const grid = new THREE.GridHelper(40, 40, 0x555544, 0x555544);
+grid.material.transparent = true; grid.material.opacity = 0.25; grid.position.y = 0.005;
+scene.add(grid);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 2.8, 11);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.1, 0);
+controls.update();
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+const gltfs = { boulderA: await load('boulderA'), boulderB: await load('boulderB'), boulderC: await load('boulderC') };
+const golems = ids.map((id, i) => {
+  const g = makeGolemActor(gltfs, id, { team });
+  const x = (i - (ids.length - 1) / 2) * 3.2;
+  g.root.position.set(x, 0, 0);
+  g.home = new THREE.Vector3(x, 0, 0);
+  g.circleA = 0;
+  scene.add(g.root);
+  return g;
+});
+
+// Walking: each golem walks a circle around its home, so the view sees every side.
+function walkStep(g, dt) {
+  const r = 1.3;
+  g.circleA += dt * g.speed / r;
+  const a = g.circleA;
+  g.root.position.set(g.home.x + Math.cos(a) * r, 0, g.home.z + Math.sin(a) * r);
+  g.facingTarget = Math.atan2(-Math.sin(a), Math.cos(a));
+  g.moving = true;
+}
+
+let now = 0;
+let last = null;
+let loopT = 0;
+const DURS = { strike: 1.4, hit: 0.9, rise: 2.2, die: 4.2, cast: 1.2, jump: 1.2 };
+function tick(dtMs) {
+  const dt = dtMs / 1000;
+  now += dtMs;
+  if (!manual && anim !== 'idle') {
+    loopT += dt;
+    if (anim === 'walk') golems.forEach((g) => walkStep(g, dt));
+    else if (loopT > (DURS[anim] || 1.5)) {
+      loopT = 0;
+      for (const g of golems) { if (anim === 'die') { if (g.dead) g.revive(); else g.die(); } else g[anim]?.(); }
+    }
+  }
+  for (const g of golems) g.update(dt, now);
+  controls.update();
+  renderer.render(scene, camera);
+  hud.textContent = `${anim}${manual ? ' (manual)' : ''}  t=${(now / 1000).toFixed(2)}s\n` + golems.map((g) => `${g.root.name || ''}${ids[golems.indexOf(g)]}: h=${g.height} ${g.dead ? 'DEAD' : g.moving ? 'walk' : 'idle'}`).join('\n');
+}
+function frame(ts) {
+  if (!manual) { const dtMs = last === null ? 16 : Math.min(50, ts - last); last = ts; tick(dtMs); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+const sph = new THREE.Spherical();
+window.LAB = {
+  ready: true, ids, golems, scene, camera, renderer, now: () => now,
+  /** Step the (manual) clock by ms, in 1/60 s slices, and render. */
+  advance(ms) { let left = ms; while (left > 0) { const s = Math.min(1000 / 60, left); tick(s); left -= s; } },
+  /** Close-up on golem i: camera orbits its chest at a distance scaled by its height. */
+  focus(i, { yaw = 0.55, pitch = 0.22, dist = null, up = 0.5 } = {}) {
+    const g = golems[i];
+    golems.forEach((o, j) => { o.root.visible = j === i; });
+    camera.fov = 42; camera.updateProjectionMatrix();
+    const c = g.root.position.clone(); c.y += g.height * up;
+    const d = dist || Math.max(2.6, g.height * 1.7);
+    sph.set(d, Math.PI / 2 - pitch, yaw);
+    camera.position.setFromSpherical(sph).add(c);
+    controls.target.copy(c); controls.update();
+  },
+  wide() { golems.forEach((o) => { o.root.visible = true; }); camera.fov = 55; camera.updateProjectionMatrix(); camera.position.set(0, 3, 17); controls.target.set(0, 1.1, 0); controls.update(); },
+  set(i, o) { for (const g of (i === 'all' ? golems : [golems[i]])) { if (o.moving !== undefined) g.moving = o.moving; if (o.facing !== undefined) { g.facing = g.facingTarget = o.facing; } if (o.pos) g.root.position.set(...o.pos); } },
+  trigger(name, i = 'all') { for (const g of (i === 'all' ? golems : [golems[i]])) g[name]?.(); },
+};
+hud.textContent = 'ready';
+</script>
+</body>
+</html>

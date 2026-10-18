@@ -102,3 +102,16 @@ export function seen(what) {
   } catch { /* blocked: behave as if never seen, which only re-shows a note */ }
   return false;
 }
+
+/**
+ * A browser setting that is not part of the Spellbook: the graphics quality.
+ * Here for the same reason `seen` is -- one file touches localStorage.
+ */
+export function setting(what, value) {
+  const h = host();
+  const key = `wizards-gambit:setting:${what}`;
+  try {
+    if (value !== undefined) { h?.setItem(key, String(value)); return value; }
+    return h?.getItem(key) ?? null;
+  } catch { return value === undefined ? null : value; }
+}

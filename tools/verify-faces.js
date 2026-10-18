@@ -242,8 +242,12 @@ function stage(defs, cardId, numeral, opts = {}) {
   state.players[0].discard.push(makeCard(state, 'EMBER_LASH', 0));
   mine.hp = Math.max(1, mine.hp - 2);
   state.field.props.push({ id: 'vrock', kind: 'boulder', x: theirs.x, y: 3300, z: 0,
-    removedUntil: null, body: 'prop', support: { kind: 'ground' } });
+    removedUntil: null, body: 'prop', support: { kind: 'ground' }, hp: 4, burning: null, litBy: null, destroyed: false });
   placeBody(state, state.field.props.at(-1), theirs.x, 3300);
+  // And a tree beside them, so a fire face has something to set alight.
+  state.field.props.push({ id: 'vtree', kind: 'tree', x: theirs.x + 700, y: 5300, z: 0,
+    removedUntil: null, body: 'prop', support: { kind: 'ground' }, hp: 3, burning: null, litBy: null, destroyed: false });
+  placeBody(state, state.field.props.at(-1), theirs.x + 700, 5300);
 
   refresh(state);
   state.tableDirty = [false, false];
@@ -309,7 +313,7 @@ function snapshotOf(st) {
     pos: Object.fromEntries(state.field.units.map((u) => [u.id, `${u.x},${u.y}`])),
     rots: Object.fromEntries(spellsOn(state, 0).concat(spellsOn(state, 1)).map((s) => [s.uid, s.rot])),
     scored: state.scoreLog.length,
-    props: state.field.props.map((pr) => `${pr.id}:${pr.x},${pr.y},${pr.z}:${pr.removedUntil ?? '-'}`).join('|'),
+    props: state.field.props.map((pr) => `${pr.id}:${pr.x},${pr.y},${pr.z}:${pr.removedUntil ?? '-'}:${pr.hp}:${pr.burning ?? '-'}${pr.destroyed ? 'X' : ''}`).join('|'),
     // The view notes, which say what the rules THINK they did. Used for the
     // claims where the board cannot show it -- granting a Keyword to a card
     // that already has it changes nothing observable, and three faces were

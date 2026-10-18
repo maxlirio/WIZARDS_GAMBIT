@@ -184,6 +184,9 @@ export function invariants(state, where = '') {
     if (!u.support) say(`unit ${u.id} has no support`);
     else if (u.support.kind === 'prop' && !state.field.props.some((pr) => pr.id === u.support.id)) {
       say(`unit ${u.id} stands on missing prop '${u.support.id}'`);
+    } else if (u.support.kind === 'prop' && !state.pending && !state.queue.length
+      && state.field.props.find((pr) => pr.id === u.support.id)?.destroyed) {
+      say(`unit ${u.id} stands on shattered prop '${u.support.id}'`);
     }
     if (u.hp > u.maxHp) say(`unit ${u.id} has ${u.hp}/${u.maxHp} hp`);
   }
@@ -196,6 +199,9 @@ export function invariants(state, where = '') {
     if (b.z > CEILING) say(`${b.body || 'body'} ${b.id} is ${b.z}mm up -- a support cycle?`);
   }
   for (const pr of state.field.props) {
+    if (!Number.isInteger(pr.hp) || pr.hp < 0) say(`prop ${pr.id} has hp ${pr.hp}`);
+    if (pr.hp === 0 && !pr.destroyed) say(`prop ${pr.id} is at 0 hp but was not shattered`);
+    if (pr.burning !== null && pr.burning !== undefined && !Number.isInteger(pr.burning)) say(`prop ${pr.id} burning is ${pr.burning}`);
     if (pr.support?.kind === 'prop') {
       const under = state.field.props.find((o) => o.id === pr.support.id);
       if (under?.support?.kind === 'prop' && under.support.id === pr.id) say(`props ${pr.id} and ${under.id} stand on each other`);

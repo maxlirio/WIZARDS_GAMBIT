@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Props lab</title>
+<!-- Every terrain piece on lit ground in a row, so each can be looked at on its
+     own at arm's length. ?state=normal|burning|damaged applies the arena's hooks.
+     ?kind=boulder&dist=2.5&ang=0.6 frames one piece. window.LAB drives it from
+     tools/lab/shoot-props.mjs. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}canvas{display:block}#info{position:fixed;left:8px;top:8px;color:#fff;font:12px monospace;text-shadow:0 1px 2px #000}</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="info"></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { loadAll } from '../../js/view/assets.js';
+import { createPropFactory } from '../../js/view/props.js';
+
+const q = new URLSearchParams(location.search);
+const KINDS = ['boulder', 'pillar', 'shard', 'wall', 'floater', 'tree'];
+const GAP = 4;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fa6c4);
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 300);
+const controls = new OrbitControls(camera, renderer.domElement);
+
+// The same late-afternoon sun as world.js, so the pieces are judged in the light they will live in.
+const sunDir = new THREE.Vector3(-0.55, 0.32, -0.62).normalize();
+const sky = new Sky(); sky.scale.setScalar(4000);
+Object.assign(sky.material.uniforms.turbidity, { value: 6 }); sky.material.uniforms.rayleigh.value = 1.6;
+sky.material.uniforms.mieCoefficient.value = 0.008; sky.material.uniforms.mieDirectionalG.value = 0.82;
+sky.material.uniforms.sunPosition.value.copy(sunDir);
+scene.add(sky);
+{ const pm = new THREE.PMREMGenerator(renderer); const es = new THREE.Scene(); es.add(sky.clone()); scene.environment = pm.fromScene(es, 0.04).texture; scene.environmentIntensity = 0.35; pm.dispose(); }
+const sun = new THREE.DirectionalLight(0xffe3bd, 3.2);
+sun.position.copy(sunDir).multiplyScalar(40).add(new THREE.Vector3(GAP * 2.5, 0, 0));
+sun.target.position.set(GAP * 2.5, 0, 0);
+sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 14, bottom: -14, near: 10, far: 120 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; sun.shadow.radius = 2;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0x9fb8e8, 0x4a4030, 0.75));
+scene.add(new THREE.AmbientLight(0x60584a, 0.25));
+
+// Grassy ground: a noisy canvas so a sunk boulder has something to sit in.
+{
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256; const g = cv.getContext('2d');
+  g.fillStyle = '#5f7a3a'; g.fillRect(0, 0, 256, 256);
+  let s = 99; const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  for (let i = 0; i < 6000; i++) { const t = 70 + rnd() * 60; g.fillStyle = `rgba(${t - 20},${t + 30},${t - 40},0.35)`; g.fillRect(rnd() * 256, rnd() * 256, 1 + rnd() * 3, 1 + rnd() * 3); }
+  const tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(30, 30); tex.colorSpace = THREE.SRGBColorSpace;
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.MeshStandardMaterial({ map: tex, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+}
+
+const props = new Map();
+const clock = new THREE.Clock();
+window.LAB = {
+  ready: false, scene, camera, renderer, controls, props, gltfs: null,
+  KINDS,
+  /** Frame one piece: dist in m from its pick-cylinder centre, ang = azimuth in rad, pitch = camera height ratio. */
+  frame(kind, dist = 3, ang = 0.6, pitch = 0.35) {
+    const g = props.get(kind); if (!g) return false;
+    const h = g.userData.h, r = g.userData.r;
+    const c = new THREE.Vector3(g.position.x, g.position.y + h * 0.5, g.position.z);
+    if (kind === 'floater') c.y -= h * 0.35;
+    const d = dist ?? Math.max(h, r * 2) * 1.6;
+    camera.position.set(c.x + Math.sin(ang) * d, c.y + d * pitch, c.z + Math.cos(ang) * d);
+    controls.target.copy(c); controls.update();
+    return true;
+  },
+  wide() {
+    camera.position.set(GAP * 2.5 + 2, 5, 16); controls.target.set(GAP * 2.5, 1.2, 0); controls.update();
+  },
+  setState(state) {
+    for (const g of props.values()) {
+      g.userData.setBurning?.(state === 'burning');
+      g.userData.setDamage?.(state === 'damaged' ? 0.9 : state === 'half' ? 0.5 : 0);
+    }
+    document.querySelector('#info').textContent = `props lab — ${state}`;
+  },
+  /** Step the per-frame hooks by dt seconds from a fixed clock, for deterministic shots. */
+  step(dt, now) { for (const g of props.values()) g.userData.update?.(dt, now); renderer.render(scene, camera); },
+};
+
+const gltfs = await loadAll();
+LAB.gltfs = gltfs;
+const makeProp = createPropFactory({ gltfs, quality: q.get('quality') || 'high' });
+KINDS.forEach((kind, i) => {
+  const pr = { id: `${kind[0]}${i}`, kind, x: i * GAP * 1000, y: 0, z: kind === 'floater' ? 1500 : 0 };
+  const g = makeProp(pr);
+  g.position.set(pr.x / 1000, pr.z / 1000, 0);
+  scene.add(g); props.set(kind, g);
+});
+LAB.setState(q.get('state') || 'normal');
+if (q.get('kind')) LAB.frame(q.get('kind'), +(q.get('dist') || 3), +(q.get('ang') || 0.6)); else LAB.wide();
+LAB.ready = true;
+
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+let last = performance.now();
+function loop() {
+  requestAnimationFrame(loop);
+  if (LAB.paused) return;
+  const now = performance.now(); const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  controls.update();
+  for (const g of props.values()) g.userData.update?.(dt, now);
+  renderer.render(scene, camera);
+}
+loop();
+</script>
+</body>
+</html>

@@ -115,19 +115,25 @@ export const destroySelf = ({ then = null } = {}) => ({
 
 /* ============================================================ damage */
 
-export const damage = ({ amount = 1, range = 3000, needLos = false } = {}) => ({
-  tag: 'break', reach: range,
+export const damage = ({ amount = 1, range = 3000, needLos = false, element = null } = {}) => ({
+  tag: 'break', reach: range, element,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range, { needLos });
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Deal ${amount} damage`, kind: 'unit' });
     if (id === null) return;
+    const t = ctx.unit(id);
     ctx.hit(id, amount);
+    // An elemental bolt scorches what the target was standing beside.
+    if (element && t) ctx.sweep(t.x, t.y, SCORCH, element, { amount: 1 });
   },
 });
 
-export const damageAll = ({ amount = 1, range = 2500 } = {}) => ({
-  tag: 'break', reach: range,
+/** How far a single elemental hit reaches into the terrain around its target. */
+export const SCORCH = 700;
+
+export const damageAll = ({ amount = 1, range = 2500, element = null } = {}) => ({
+  tag: 'break', reach: range, element,
   *effect(ctx) {
     // Sorted, and resolved against a SNAPSHOT of the list: a hit can kill, a
     // kill can score, and scoring can end the game, so re-querying mid-loop
@@ -136,6 +142,9 @@ export const damageAll = ({ amount = 1, range = 2500 } = {}) => ({
       if (ctx.state.winner !== null) break;
       ctx.hit(id, amount);
     }
+    // Rain of cinders over the whole radius: every tree in it catches.
+    const o = ctx.origin();
+    if (element && o) ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount });
   },
 });
 
@@ -162,13 +171,17 @@ export const damagePerLedger = ({ key, per = 1, cap = 4, range = 3000 } = {}) =>
  * happens. The rulebook names both because the difference decides what a chain
  * can do to you.
  */
-export const damageAndLock = ({ amount = 3, range = 3000 } = {}) => ({
-  tag: 'break', reach: range,
+export const damageAndLock = ({ amount = 3, range = 3000, element = null } = {}) => ({
+  tag: 'break', reach: range, element,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range);
     if (ids.length) {
       const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Deal ${amount} damage`, kind: 'unit' });
-      if (id !== null) ctx.hit(id, amount);
+      if (id !== null) {
+        const t = ctx.unit(id);
+        ctx.hit(id, amount);
+        if (element && t) ctx.sweep(t.x, t.y, SCORCH, element, { amount: 1 });
+      }
     }
     ctx.spell.noTurnUntil = ctx.state.turn;
     ctx.fx('prohibited', { uid: ctx.spell.uid, untilTurn: ctx.state.turn });
@@ -357,26 +370,29 @@ export const rewind = ({ index = 0 } = {}) => ({
 // table at once -- the effects a card is worth charging up for.
 
 /** Fireball: a hit, and a splash on every other enemy near the one it hit. */
-export const fireball = ({ amount = 3, splash = 1, radius = 1500, range = 4000 } = {}) => ({
-  tag: 'break', reach: range,
+export const fireball = ({ amount = 3, splash = 1, radius = 1500, range = 4000, element = 'fire' } = {}) => ({
+  tag: 'break', reach: range, element,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range);
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Fireball: ${amount} damage`, kind: 'unit' });
     if (id === null) return;
     const t = ctx.unit(id);
+    const tx = t.x, ty = t.y;
     const near = ctx.enemyUnits(99000)
       .map((k) => ctx.unit(k))
       .filter((u) => u.id !== id && (u.x - t.x) ** 2 + (u.y - t.y) ** 2 <= radius * radius)
       .map((u) => u.id);
     ctx.hit(id, amount);
     for (const k of near) { if (ctx.state.winner !== null) break; ctx.hit(k, splash); }
+    // The blast lights everything in the splash radius.
+    ctx.sweep(tx, ty, radius, element, { amount: splash });
   },
 });
 
 /** Damage and a knock-back on every enemy around the origin. */
-export const nova = ({ amount = 2, mm = 1500, range = 2500 } = {}) => ({
-  tag: 'break', reach: range,
+export const nova = ({ amount = 2, mm = 1500, range = 2500, element = 'force' } = {}) => ({
+  tag: 'break', reach: range, element,
   *effect(ctx) {
     const o = ctx.origin();
     if (!o) return;
@@ -386,32 +402,37 @@ export const nova = ({ amount = 2, mm = 1500, range = 2500 } = {}) => ({
       const u = ctx.unit(id);
       if (u && !u.dead) ctx.pushFrom(id, o.x, o.y, mm);
     }
+    // And the terrain goes with them: rocks shoved, crystals cracked.
+    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount, mm });
   },
 });
 
 /** Push every enemy within range directly away from the origin. */
-export const repel = ({ mm = 2500, range = 3000 } = {}) => ({
-  tag: 'move', reach: range,
+export const repel = ({ mm = 2500, range = 3000, element = 'force' } = {}) => ({
+  tag: 'move', reach: range, element,
   *effect(ctx) {
     const o = ctx.origin();
     if (!o) return;
     for (const id of ctx.enemyUnits(range)) ctx.pushFrom(id, o.x, o.y, mm);
+    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 0, mm });
   },
 });
 
 /** Pull every enemy within range toward the origin. */
-export const vortex = ({ mm = 2000, range = 5000 } = {}) => ({
-  tag: 'move', reach: range,
+export const vortex = ({ mm = 2000, range = 5000, element = 'force' } = {}) => ({
+  tag: 'move', reach: range, element,
   *effect(ctx) {
     const o = ctx.origin();
     if (!o) return;
     for (const id of ctx.enemyUnits(range)) ctx.pullTo(id, o.x, o.y, mm);
+    // Loose stone is dragged in too. Pulled toward the mage, not past it.
+    for (const id of ctx.propsNear(o.x, o.y, ctx.range(range).mm)) ctx.pullTo(id, o.x, o.y, mm);
   },
 });
 
 /** A quake: EVERY unit near the origin is thrown back, yours included. */
-export const quake = ({ mm = 2000, range = 3000 } = {}) => ({
-  tag: 'move', reach: range,
+export const quake = ({ mm = 2000, range = 3000, element = 'force' } = {}) => ({
+  tag: 'move', reach: range, element,
   *effect(ctx) {
     const o = ctx.origin();
     if (!o) return;
@@ -420,12 +441,15 @@ export const quake = ({ mm = 2000, range = 3000 } = {}) => ({
       if (!u || (u.x === o.x && u.y === o.y)) continue;   // the epicentre stays put
       ctx.pushFrom(id, o.x, o.y, mm);
     }
+    // The ground heaves: standing stones crack, crystals shatter, and what
+    // was standing on a boulder is on the ground now.
+    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 2, mm });
   },
 });
 
 /** Shove one enemy away and hit it. With crush, the wall it hits is the hit. */
-export const slam = ({ mm = 4000, range = 3000, amount = 0, crush = false } = {}) => ({
-  tag: 'move', reach: range,
+export const slam = ({ mm = 4000, range = 3000, amount = 0, crush = false, element = 'force' } = {}) => ({
+  tag: 'move', reach: range, element,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range);
     if (!ids.length) return;
@@ -439,8 +463,8 @@ export const slam = ({ mm = 4000, range = 3000, amount = 0, crush = false } = {}
 });
 
 /** Lightning: one bolt, then it arcs to the nearest enemy it has not hit. */
-export const chainLightning = ({ amount = 2, jumps = 2, hop = 2500, range = 5000 } = {}) => ({
-  tag: 'break', reach: range,
+export const chainLightning = ({ amount = 2, jumps = 2, hop = 2500, range = 5000, element = 'lightning' } = {}) => ({
+  tag: 'break', reach: range, element,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range);
     if (!ids.length) return;
@@ -452,6 +476,7 @@ export const chainLightning = ({ amount = 2, jumps = 2, hop = 2500, range = 5000
       const fx0 = from.x, fy0 = from.y;
       hitSet.push(id);
       ctx.hit(id, amount);
+      ctx.sweep(fx0, fy0, SCORCH, element, { amount });
       // The arc goes to the NEAREST enemy not yet struck, ties to the lowest
       // id, so the path is a function of the board and nothing else.
       const next = ctx.enemyUnits(99000).map((n) => ctx.unit(n))

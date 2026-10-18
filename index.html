@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wizard's Gambit</title>
-<meta name="description" content="A duel of rotating four-sided spells, corner-rune chains and a real 3D arena.">
+<meta name="description" content="A duel of rotating four-sided spells, corner-rune chains and a living battlefield where everything can be pushed, burned and broken.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect x=%224%22 y=%224%22 width=%2292%22 height=%2292%22 rx=%228%22 fill=%22%2307080b%22 stroke=%22%23ffcf5a%22 stroke-width=%226%22/%3E%3Cpath d=%22M50 18 L60 40 L82 50 L60 60 L50 82 L40 60 L18 50 L40 40Z%22 fill=%22%23ffcf5a%22/%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/style.css">
 <script type="importmap">
@@ -18,47 +18,51 @@
 </script>
 </head>
 <body>
-<div id="app">
+<div id="arena"></div>
+
+<div id="hud">
   <header id="top">
     <div class="brand">Wizard's <span>Gambit</span></div>
     <div id="vps"></div>
-    <div class="meta"><span id="turn"></span><span id="phase"></span></div>
+    <div id="flow"></div>
     <nav>
-      <button id="btn-rules" class="ghost">How to play</button>
+      <button id="btn-rules" class="ghost" title="How to play">?</button>
       <button id="btn-book" class="ghost">Spellbook</button>
+      <button id="btn-hide" class="ghost" title="Hide the panels (Tab)">Hide HUD</button>
       <button id="btn-new">New duel</button>
     </nav>
   </header>
 
-  <main>
-    <section id="mine" class="side">
-      <div class="shead p0">Your Spell Table <span id="mage0"></span></div>
-      <div id="table0" class="table"></div>
-      <div id="golems0" class="golems"></div>
-      <div id="piles0" class="piles"></div>
-    </section>
+  <section id="mine" class="panel">
+    <div class="shead p0">Your Spell Table <span id="mage0"></span></div>
+    <div id="table0" class="table"></div>
+    <div id="golems0" class="golems"></div>
+    <div id="piles0" class="piles"></div>
+  </section>
 
-    <section id="stage">
-      <div id="arena"></div>
-      <div id="seed"></div>
-      <div id="banner" class="banner"></div>
-      <div id="prompt" hidden></div>
-      <div id="toasts"></div>
-      <div id="tray-wrap"><div id="tray"></div></div>
-    </section>
+  <aside id="theirs" class="panel">
+    <div class="shead p1">Enemy Spell Table <span id="mage1"></span></div>
+    <div id="table1" class="table small"></div>
+    <div id="golems1" class="golems small"></div>
+    <div id="piles1" class="piles"></div>
+  </aside>
 
-    <aside id="right" class="side">
-      <div class="shead p1">Enemy Spell Table <span id="mage1"></span></div>
-      <div id="table1" class="table small"></div>
-      <div id="golems1" class="golems small"></div>
-      <div id="piles1" class="piles"></div>
-      <div id="log"></div>
-      <div id="inspector"></div>
-    </aside>
-  </main>
+  <div id="inspector"></div>
 
+  <div id="logwrap" class="panel collapsed">
+    <div id="loghead"><span>Battle log</span><button id="btn-log" class="ghost">Expand</button></div>
+    <div id="log"></div>
+  </div>
+
+  <div id="seed"></div>
+  <div id="banner" class="banner"></div>
+  <div id="prompt" hidden></div>
+  <div id="popover" hidden></div>
+  <div id="toasts"></div>
+  <div id="tray"></div>
   <footer id="hand"></footer>
 </div>
+
 <div id="modal" hidden></div>
 <script type="module" src="js/view/main.js"></script>
 </body>

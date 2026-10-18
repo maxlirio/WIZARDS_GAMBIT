@@ -13,8 +13,11 @@
 // leaving the grid behind.
 
 import { idiv, imin, imax, isqrt, dist2, bearing, opposite, DIR64 } from './fixed.js';
-import { STEP, FALL_SAFE, propSpec, heightAt } from './arena.js';
-import { findProp, findUnit, propsOnBoard } from './query.js';
+import {
+  STEP, FALL_SAFE, propSpec, heightAt, propR, propMass, propOnBoard, propBurnable, propBurning,
+  BURN_TURNS, FIRE_REACH, FIRE_SPREAD,
+} from './arena.js';
+import { findProp, findUnit, propsOnBoard, livingUnits } from './query.js';
 import { walk, queueFall, resolveFalls, recheckSupport, isUnitBody, CLIMB_RATE } from './move.js';
 import { hurt } from '../rules/combat.js';
 import { fx } from '../rules/ops.js';
@@ -39,6 +42,15 @@ export function push(state, body, dir, mmDist, {
 } = {}) {
   const log = chain || [];
   if (!body || body.dead || mmDist < STEP) return { mm: 0, shortfall: mmDist, blockedBy: null, chain: log };
+  // MASS. Everything can be pushed, but not everything flies: a push of N
+  // metres moves a piece of mass m by 2N/(m+1) -- a crystal shard (mass 1)
+  // the whole way, a boulder two thirds, a standing stone two fifths, a wall a
+  // seventh. Units have no mass term; a shoved body is the thing the push is
+  // for. Applied once at the top, so the shortfall [Crush] converts into
+  // damage is measured against what the push could really have done.
+  const nominal = mmDist;
+  if (!isUnitBody(body)) mmDist = idiv(mmDist * 2, propMass(body) + 1);
+  if (mmDist < STEP) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
 
   const riders = isUnitBody(body) ? [] : ridersOf(state, body);
   const x0 = body.x, y0 = body.y;
@@ -85,14 +97,23 @@ export function push(state, body, dir, mmDist, {
     // the card actually named. A printed "push 3m" becomes 3m of travel against
     // real terrain, so the two differ -- and the gap is the price of leaving the
     // grid, which is a number worth being able to read rather than assume.
-    if (depth === 0) fx(state, 'pushResult', { id: body.id, want: mmDist, got: total, body: body.body });
+    if (depth === 0) fx(state, 'pushResult', { id: body.id, want: nominal, got: total, body: body.body });
   }
 
-  if (crush && remaining >= CRUSH_MM && isUnitBody(body)) {
+  if (crush && remaining >= CRUSH_MM) {
     // [Crush]: the travel the wall ate becomes damage. A push that goes
     // nowhere because the target was already against a pillar is the single
     // nastiest line this keyword enables, and it is intentional.
-    hurt(state, body, idiv(remaining, CRUSH_MM), { cause: 'crush', byP });
+    const dmg = idiv(remaining, CRUSH_MM);
+    if (isUnitBody(body)) hurt(state, body, dmg, { cause: 'crush', byP });
+    else smashProp(state, body, dmg, { byP, cause: 'crush' });
+    // And the wall takes it too. The thing that stopped the push is hit as
+    // hard as the thing that was pushed into it -- a crystal shard somebody
+    // is slammed against shatters.
+    if (blockedBy?.kind === 'prop') {
+      const wall = findProp(state, blockedBy.id);
+      if (wall) smashProp(state, wall, dmg, { byP, cause: 'crush' });
+    }
   }
 
   if (depth === 0) {
@@ -153,4 +174,92 @@ export function removeTerrain(state, prop, untilTurn) {
   fx(state, 'terrainRemoved', { id: prop.id, until: untilTurn });
   recheckSupport(state);
   resolveFalls(state, hurt);
+}
+
+/* ------------------------------------------------------------ breaking */
+
+/**
+ * Take hit points off a terrain piece. At zero it SHATTERS: gone for good,
+ * and whatever stood on it falls. The one way a piece is destroyed, so the
+ * ledger and the view hear about every case.
+ */
+export function smashProp(state, prop, amount, { byP = null, cause = 'spell' } = {}) {
+  if (!prop || amount <= 0 || !propOnBoard(state, prop)) return 0;
+  const dealt = imin(prop.hp, amount);
+  prop.hp -= dealt;
+  fx(state, 'propHit', { id: prop.id, amount: dealt, cause, hp: prop.hp });
+  if (prop.hp <= 0) shatterProp(state, prop, { byP, cause });
+  return dealt;
+}
+
+export function shatterProp(state, prop, { byP = null, cause = 'spell' } = {}) {
+  if (prop.destroyed) return false;
+  const riders = ridersOf(state, prop);
+  prop.destroyed = true;
+  prop.hp = 0;
+  prop.burning = null;
+  if (byP !== null && byP !== undefined) bump(state.players[byP].ledger, 'propsBroken');
+  fx(state, 'shatter', { id: prop.id, kind: prop.kind, cause, at: { x: prop.x, y: prop.y, z: prop.z } });
+  for (const u of riders) queueFall(state, u);
+  recheckSupport(state);
+  resolveFalls(state, hurt);
+  return true;
+}
+
+/* ------------------------------------------------------------ fire */
+
+/**
+ * Set a piece alight. Only wood burns; everything else shrugs it off.
+ *
+ * `burning` holds the LAST turn number the fire still bites on, so the fire
+ * ends by comparison rather than by a cleanup pass -- the same reason a
+ * rotation prohibition is stored as a turn number. Lit during turn T, it bites
+ * at the start of T+1 and again at T+2, and after that second bite it is ash.
+ */
+export function ignite(state, prop, { byP = null } = {}) {
+  if (!prop || !propBurnable(prop) || !propOnBoard(state, prop)) return false;
+  if (propBurning(state, prop)) return false;
+  prop.burning = state.turn + BURN_TURNS;
+  prop.litBy = byP;
+  if (byP !== null && byP !== undefined) bump(state.players[byP].ledger, 'firesLit');
+  fx(state, 'ignite', { id: prop.id, by: byP, at: { x: prop.x, y: prop.y, z: prop.z } });
+  return true;
+}
+
+/**
+ * The start-of-turn fire pass. Every burning piece, in id order: it hurts
+ * every unit standing within FIRE_REACH of its edge (both sides -- fire is
+ * nobody's friend), it spreads to any wood within FIRE_SPREAD, and if its
+ * time is up it burns away to nothing.
+ *
+ * Spread is to pieces found BEFORE this pass began, so one pass cannot run a
+ * fire across the whole grove in a single turn: a tree lit now bites and
+ * spreads next turn. Bounded by construction -- the list is fixed up front.
+ */
+export function tickFire(state) {
+  const burning = [...state.field.props]
+    .filter((pr) => propBurning(state, pr))
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+  if (!burning.length) return;
+  const lit = [];   // [piece, credited player], fixed before anything is lit
+  for (const pr of burning) {
+    const reach = propR(pr) + FIRE_REACH;
+    for (const u of [...livingUnits(state)].sort((a, b) => a.id - b.id)) {
+      if (dist2(u.x, u.y, pr.x, pr.y) > reach * reach) continue;
+      if (u.z > pr.z + propSpec(pr.kind).h || u.z < pr.z - 1500) continue;
+      hurt(state, u, 1, { cause: 'fire', byP: pr.litBy });
+    }
+    for (const o of [...state.field.props].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+      if (o === pr || !propBurnable(o) || !propOnBoard(state, o) || propBurning(state, o)) continue;
+      const gap = propR(pr) + propR(o) + FIRE_SPREAD;
+      if (dist2(o.x, o.y, pr.x, pr.y) <= gap * gap) lit.push([o, pr.litBy]);
+    }
+  }
+  for (const [o, by] of lit) ignite(state, o, { byP: by });
+  for (const pr of burning) {
+    if (pr.burning <= state.turn) {
+      fx(state, 'burntOut', { id: pr.id, kind: pr.kind, at: { x: pr.x, y: pr.y, z: pr.z } });
+      shatterProp(state, pr, { byP: pr.litBy, cause: 'fire' });
+    }
+  }
 }

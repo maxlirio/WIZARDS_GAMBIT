@@ -506,7 +506,7 @@ export function hashField(state) {
   const us = [...state.field.units].sort((a, b) => a.id - b.id)
     .map((u) => `${u.id}:${u.owner}${u.kind[0]}:${u.x},${u.y},${u.z}:${u.hp}:${u.dead ? 'D' : ''}${u.acted ? 'A' : ''}:${u.poison || 0}:${(u.keywords || []).join('+')}:${u.support?.kind || '-'}${u.support?.id || ''}`);
   const ps = [...state.field.props].sort((a, b) => (a.id < b.id ? -1 : 1))
-    .map((pr) => `${pr.id}:${pr.x},${pr.y},${pr.z}:${pr.removedUntil ?? '-'}`);
+    .map((pr) => `${pr.id}:${pr.x},${pr.y},${pr.z}:${pr.removedUntil ?? '-'}:${pr.hp}:${pr.burning ?? '-'}${pr.destroyed ? 'X' : ''}`);
   return `F[${us.join('|')}][${ps.join('|')}][${[...state.field.pendingFalls].sort().join(',')}]`;
 }
 

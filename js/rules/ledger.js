@@ -54,6 +54,8 @@ export function emptyLedger() {
     fallsCaused: 0,
     fallDamage: 0,
     terrainRemoved: 0,
+    propsBroken: 0,           // terrain pieces you shattered
+    firesLit: 0,              // pieces you set alight
     climbs: 0,
     highGroundEnds: 0,        // turns ended with a friendly unit on high ground
 
@@ -92,7 +94,7 @@ export const DIAGNOSTIC = Object.freeze([
   'reshuffles', 'cardsFound', 'inertResolutions', 'fallDamage',
   'golemCardsLost', 'objectivesScored', 'vpFromObjectives', 'vpFromKills',
   'unitsLost', 'mageDeaths', 'forcedRotations', 'artifactsPlayed', 'golemsPlayed',
-  'spellsPlayed',
+  'spellsPlayed', 'propsBroken', 'firesLit',
 ]);
 
 export const bump = (ledger, key, by = 1) => {

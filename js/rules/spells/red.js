@@ -15,9 +15,9 @@ card({
   // A whip of fire that ends as a fireball.
   runes: [SHARD, SHARD, WHEEL, SHARD],
   found: null,
-  I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
+  I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000, element: 'fire' }) },
   II:  { text: 'Discard a card. Deal 2 damage to an enemy unit within 3m.',
-         cost: [{ id: 'discard', n: 1 }], ...M.damage({ amount: 2, range: 3000 }) },
+         cost: [{ id: 'discard', n: 1 }], ...M.damage({ amount: 2, range: 3000, element: 'fire' }) },
   III: { text: 'Push an enemy unit within 3m 2m away.', ...M.pushAway({ mm: 2000, range: 3000 }) },
   IV:  { text: 'Fireball: deal 3 damage to an enemy unit within 4m and 1 to each enemy near it.',
          ...M.fireball({ amount: 3, splash: 1, radius: 1500, range: 4000 }) },
@@ -32,10 +32,10 @@ card({
   found: 'burnBright',
   I:   { text: 'Your damage is increased by 1.', ...M.passiveDamage({ n: 1 }) },
   II:  { text: 'Destroy a Spell you control. Deal 3 damage to an enemy unit within 3m.',
-         cost: [{ id: 'destroyFriendly', n: 1 }], ...M.damage({ amount: 3, range: 3000 }) },
+         cost: [{ id: 'destroyFriendly', n: 1 }], ...M.damage({ amount: 3, range: 3000, element: 'fire' }) },
   III: { text: 'Rotate this Spell left.', ...M.turnSelf({ dir: 'left' }) },
   IV:  { text: 'Deal 4 damage within 3m. Do not rotate this Spell again this turn.',
-         ...M.damageAndLock({ amount: 4, range: 3000 }) },
+         ...M.damageAndLock({ amount: 4, range: 3000, element: 'fire' }) },
 });
 
 card({
@@ -43,11 +43,11 @@ card({
   // Burning ash over a widening circle.
   runes: [SHARD, SHARD, LATTICE, SHARD],
   found: 'wideBurn',
-  I:   { text: 'Deal 1 damage to each enemy unit within 2m.', ...M.damageAll({ amount: 1, range: 2000 }) },
+  I:   { text: 'Deal 1 damage to each enemy unit within 2m.', ...M.damageAll({ amount: 1, range: 2000, element: 'fire' }) },
   II:  { text: 'Discard a card. Deal 1 damage to each enemy unit within 3m.',
-         cost: [{ id: 'discard', n: 1 }], ...M.damageAll({ amount: 1, range: 3000 }) },
+         cost: [{ id: 'discard', n: 1 }], ...M.damageAll({ amount: 1, range: 3000, element: 'fire' }) },
   III: { text: 'Grant a Spell [Poison].', ...M.grantKeyword({ kw: 'Poison' }) },
-  IV:  { text: 'Deal 2 damage to each enemy unit within 4m.', ...M.damageAll({ amount: 2, range: 4000 }) },
+  IV:  { text: 'Deal 2 damage to each enemy unit within 4m.', ...M.damageAll({ amount: 2, range: 4000, element: 'fire' }) },
 });
 
 card({
@@ -114,10 +114,10 @@ card({
   found: 'unstableEnd',
   I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
   II:  { text: 'Rotate another Spell you control left. Deal 2 damage to an enemy unit within 3m.',
-         cost: [{ id: 'rotateFriendly' }], ...M.damage({ amount: 2, range: 3000 }) },
+         cost: [{ id: 'rotateFriendly' }], ...M.damage({ amount: 2, range: 3000, element: 'fire' }) },
   III: { text: 'Grant a Spell [Unstable].', ...M.grantKeyword({ kw: 'Unstable' }) },
   IV:  { text: 'Destroy this Spell. Deal 4 damage to an enemy unit within 4m.',
-         cost: [{ id: 'destroySelf' }], ...M.damage({ amount: 4, range: 4000 }) },
+         cost: [{ id: 'destroySelf' }], ...M.damage({ amount: 4, range: 4000, element: 'fire' }) },
 });
 
 card({
@@ -130,7 +130,7 @@ card({
   II:  { text: 'Deal 1 damage to an enemy unit within 4m. It arcs to one more enemy near it.',
          ...M.chainLightning({ amount: 1, jumps: 1, hop: 2500, range: 4000 }) },
   III: { text: "Spend a friendly unit's action. Deal 2 damage to an enemy unit within 5m.",
-         cost: [{ id: 'spendUnitAction' }], ...M.damage({ amount: 2, range: 5000 }) },
+         cost: [{ id: 'spendUnitAction' }], ...M.damage({ amount: 2, range: 5000, element: 'lightning' }) },
   IV:  { text: 'Deal 2 damage to an enemy unit within 5m. It arcs to two more enemies near it.',
          ...M.chainLightning({ amount: 2, jumps: 2, hop: 2500, range: 5000 }) },
 });

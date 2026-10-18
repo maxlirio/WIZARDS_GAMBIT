@@ -1,32 +1,49 @@
-// The arena, in three dimensions.
+// The battlefield, in three dimensions.
 //
 // This file READS the field and never writes it. Everything it draws is a
 // function of `state.arena` (the static ground) and `state.field` (the bodies),
-// and the only thing it hands back is what the player clicked. Positions are
-// tweened toward the engine's numbers each frame, so a push or a fall is seen
-// travelling rather than teleporting -- but the engine's number is always the
+// and the only thing it hands back is what the player clicked. Bodies travel
+// toward the engine's numbers each frame, so a push or a fall is seen
+// happening rather than teleporting -- but the engine's number is always the
 // destination, never something the view accumulates.
 //
 // Engine millimetres -> scene metres: X = x, Z = y, Y = z (height).
+//
+// The world beyond the ward, the actors and the effects live in their own
+// files; this one owns the camera, the picking, the markers and rings, and the
+// mapping from "the engine says X happened" to "show X".
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { heightAt, propSpec, propOnBoard } from '../field/arena.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { heightAt, propSpec, propOnBoard, propBurning } from '../field/arena.js';
+import { loadAll, pickLod } from './assets.js';
+import { buildWorld, menhir } from './world.js';
+import { createPropFactory } from './props.js';
+import { createFx } from './fx.js';
+import { makeMageActor } from './actors.js';
+import { makeGolemActor } from './golems.js';
 
 const MM = 1 / 1000;
 const TEAM = [0x4fd2ff, 0xff5d5d];
+const TEAM_DARK = [0x1d4e78, 0x6a1a1a];
 const TEAM_CSS = ['#4fd2ff', '#ff6b6b'];
+export const SCHOOL_HEX = { red: 0xff6a52, blue: 0x52b6ff, green: 0x5ee68f, purple: 0xc98bff, gold: 0xffcf5a, grey: 0xc3cad6 };
 
 export function createArena(host, state, handlers = {}) {
   const a = state.arena;
   const W = a.w * MM, H = a.h * MM;
+  const quality = handlers.quality || 'high';
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  const renderer = new THREE.WebGLRenderer({ antialias: quality !== 'high', preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(quality === 'low' ? 1 : 2, window.devicePixelRatio || 1));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 0.95;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   host.appendChild(renderer.domElement);
   const labels = document.createElement('div');
@@ -34,404 +51,215 @@ export function createArena(host, state, handlers = {}) {
   host.appendChild(labels);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x07080c);
-  scene.fog = new THREE.FogExp2(0x07080c, 0.035);
+  scene.background = new THREE.Color(0x8fa6c4);
 
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
-  // Behind your own mage, over the shoulder, looking down the arena at the
-  // enemy: a board you can read whole, framed like a third-person shot.
-  const HOME = { pos: new THREE.Vector3(-6.4, 11.4, H / 2), tgt: new THREE.Vector3(W / 2 + 0.1, -1.3, H / 2) };
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.2, 400);
+  const HOME = { pos: new THREE.Vector3(-6.4, 10.2, H / 2 + 0.01), tgt: new THREE.Vector3(W / 2 + 0.8, 0.2, H / 2) };
   camera.position.copy(HOME.pos);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.copy(HOME.tgt);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.maxPolarAngle = Math.PI * 0.44;
+  controls.maxPolarAngle = Math.PI * 0.46;
+  controls.minPolarAngle = Math.PI * 0.08;
   controls.minDistance = 4;
-  controls.maxDistance = 26;
+  controls.maxDistance = 34;
+  controls.enablePan = true;
+  controls.panSpeed = 0.6;
   controls.update();
 
-  /* ---------------------------------------------------------- light */
-  scene.add(new THREE.HemisphereLight(0x5a6c99, 0x1a1208, 0.55));
-  const key = new THREE.DirectionalLight(0xffd7a8, 2.1);
-  key.position.set(W * 0.2, 14, -4);
-  key.target.position.set(W / 2, 0, H / 2);
-  key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
-  Object.assign(key.shadow.camera, { left: -10, right: 10, top: 10, bottom: -10, near: 1, far: 40 });
-  key.shadow.bias = -0.0006;
-  scene.add(key, key.target);
-  const rim = new THREE.DirectionalLight(0x7aa0ff, 0.7);
-  rim.position.set(W, 6, H + 8);
-  scene.add(rim);
+  const fx = createFx(scene, { quality });
 
-  /* ---------------------------------------------------------- ground */
-  const STEPMM = 250;
-  const nx = Math.round(a.w / STEPMM) + 1, ny = Math.round(a.h / STEPMM) + 1;
-  const geo = new THREE.PlaneGeometry(W, H, nx - 1, ny - 1);
-  geo.rotateX(-Math.PI / 2);
-  geo.translate(W / 2, 0, H / 2);
-  const pos = geo.attributes.position;
-  const lo = Math.min(...a.hs), hi = Math.max(...a.hs);
-  for (let k = 0; k < pos.count; k++) {
-    const x = pos.getX(k) / MM, y = pos.getZ(k) / MM;
-    pos.setY(k, heightAt(a, Math.round(x), Math.round(y)) * MM);
-  }
-  geo.computeVertexNormals();
-  const col = new Float32Array(pos.count * 3);
-  const nrm = geo.attributes.normal;
-  const c = new THREE.Color();
-  for (let k = 0; k < pos.count; k++) {
-    const h = pos.getY(k) / MM;
-    const t = hi > lo ? (h - lo) / (hi - lo) : 0.5;
-    const steep = 1 - nrm.getY(k);
-    // Low ground is cold slate, high ground warm sandstone, faces dark rock.
-    c.setRGB(0.20 + 0.34 * t, 0.19 + 0.27 * t, 0.21 + 0.17 * t);
-    if (h < a.median - 200) c.lerp(new THREE.Color(0x1a1030), 0.55);
-    c.multiplyScalar(1 - Math.min(0.65, steep * 1.3));
-    col.set([c.r, c.g, c.b], k * 3);
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const groundMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: groundTexture(), roughness: 0.92, metalness: 0.04 });
-  const ground = new THREE.Mesh(geo, groundMat);
-  ground.receiveShadow = true;
-  ground.castShadow = true;
-  ground.userData.pick = { kind: 'ground' };
-  scene.add(ground);
-
-  // Anything sunk well below the median -- a chasm, a pit -- glows from
-  // underneath, so a hole reads as a hazard rather than as a missing texture.
-  if (lo < a.median - 500) {
-    const glow = new THREE.Mesh(new THREE.PlaneGeometry(W - 0.02, H - 0.02),
-      new THREE.MeshBasicMaterial({ color: 0x6a2cff, transparent: true, opacity: 0.55 }));
-    glow.rotation.x = -Math.PI / 2;
-    glow.position.set(W / 2, lo * MM + 0.06, H / 2);
-    scene.add(glow);
-    // A handful of lights, spread along the low ground. Every point light
-    // costs every lit fragment in the scene, so this is capped hard.
-    const low = [];
-    for (let k = 0; k < a.hs.length; k++) if (a.hs[k] <= lo + 100) low.push(k);
-    for (let n = 0; n < Math.min(5, low.length); n++) {
-      const k = low[Math.floor(((n + 0.5) / Math.min(5, low.length)) * low.length)];
-      const l = new THREE.PointLight(0x8a4dff, 5, 5, 1.6);
-      l.position.set((k % a.nx) * a.node * MM, lo * MM + 0.6, Math.floor(k / a.nx) * a.node * MM);
-      scene.add(l);
-    }
+  /* ---------------------------------------------------------- post */
+  let composer = null;
+  if (quality !== 'low') {
+    composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.38, 0.55, 0.88);
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
   }
 
-  // A skirt down to the abyss, following the ground's own edge, so the arena
-  // reads as a slab of rock and nothing beneath the surface shows at the sides.
-  const skirtMat = new THREE.MeshStandardMaterial({ color: 0x15130f, roughness: 1, side: THREE.DoubleSide });
-  const edge = (pts) => {
-    const g = new THREE.BufferGeometry();
-    const v = [], idx = [];
-    pts.forEach(([x, y], k) => {
-      v.push(x * MM, heightAt(a, x, y) * MM, y * MM, x * MM, lo * MM - 6, y * MM);
-      if (k) idx.push(2 * k - 2, 2 * k - 1, 2 * k, 2 * k - 1, 2 * k + 1, 2 * k);
-    });
-    g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
-    g.setIndex(idx);
-    g.computeVertexNormals();
-    scene.add(new THREE.Mesh(g, skirtMat));
-  };
-  const along = (n, f) => Array.from({ length: n }, (_, k) => f(k));
-  edge(along(nx, (k) => [k * STEPMM, 0]));
-  edge(along(nx, (k) => [k * STEPMM, a.h]));
-  edge(along(ny, (k) => [0, k * STEPMM]));
-  edge(along(ny, (k) => [a.w, k * STEPMM]));
+  /* ---------------------------------------------------------- loading */
+  let world = null;
+  let gltfs = null;
+  let ready = false;
+  const whenReady = [];
+  const loading = document.createElement('div');
+  loading.className = 'loading3d';
+  loading.innerHTML = '<div class="lbar"><i></i></div><span>Raising the battlefield…</span>';
+  host.appendChild(loading);
+  const readyPromise = loadAll((p) => { loading.querySelector('i').style.width = `${Math.round(p * 100)}%`; }).then((g) => {
+    gltfs = g;
+    world = buildWorld(scene, renderer, a, a.seed, gltfs, { quality });
+    makeProp = createPropFactory({ gltfs, quality });
+    ready = true;
+    loading.classList.add('out');
+    setTimeout(() => loading.remove(), 600);
+    for (const f of whenReady) f();
+    whenReady.length = 0;
+  }).catch((e) => { console.error(e); loading.innerHTML = `<span>Could not load the battlefield: ${e.message}</span>`; });
 
-  // A low parapet and gothic pylons with braziers. Scenery: nothing in the
-  // engine knows these exist, and they stand outside the arena bounds.
-  const stone = new THREE.MeshStandardMaterial({ color: 0x3b3833, roughness: 0.95 });
-  const darkStone = new THREE.MeshStandardMaterial({ color: 0x22201d, roughness: 1 });
-  const parapet = (x, z, w, d) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.45, d), stone);
-    m.position.set(x, 0.2, z); m.castShadow = m.receiveShadow = true; scene.add(m);
-  };
-  parapet(W / 2, -0.2, W + 0.8, 0.4); parapet(W / 2, H + 0.2, W + 0.8, 0.4);
-  parapet(-0.2, H / 2, 0.4, H); parapet(W + 0.2, H / 2, 0.4, H);
-  const flames = [];
-  const pylon = (x, z) => {
-    const g = new THREE.Group();
-    const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.9), darkStone);
-    base.position.y = 0.25;
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 3.4, 8), stone);
-    shaft.position.y = 2.2;
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.28, 0.35, 8), darkStone);
-    cap.position.y = 4.05;
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.7, 6), darkStone);
-    spike.position.y = 0.9; spike.position.x = 0;
-    const fire = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffa040 }));
-    fire.position.y = 4.4; fire.scale.y = 1.6;
-    const light = new THREE.PointLight(0xff8a30, 6, 9, 1.6);
-    light.position.y = 4.6;
-    for (const m of [base, shaft, cap]) { m.castShadow = true; m.receiveShadow = true; }
-    g.add(base, shaft, cap, fire, light);
-    g.position.set(x, 0, z);
-    scene.add(g);
-    flames.push({ fire, light, seed: Math.random() * 10 });
-  };
-  for (const [x, z] of [[W + 1.2, -1.2], [W + 1.2, H + 1.2], [W / 2, -1.4], [W / 2, H + 1.4], [-1.6, -1.6], [-1.6, H + 1.6]]) pylon(x, z);
+  // Ground height anywhere: the engine's inside the ward, the landscape's outside.
+  const groundY = (x, y) => (world ? world.heightAt(x * MM, y * MM) : heightAt(a, Math.round(Math.min(a.w, Math.max(0, x))), Math.round(Math.min(a.h, Math.max(0, y)))) * MM);
 
-  // The abyss floor and distant ruins, swallowed by fog.
-  const abyss = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x0b0a0d, roughness: 1 }));
-  abyss.rotation.x = -Math.PI / 2; abyss.position.y = -7;
-  scene.add(abyss);
-  for (let i = 0; i < 26; i++) {
-    const ang = (i / 26) * Math.PI * 2, r = 17 + (i * 7919 % 9);
-    const h = 4 + (i * 104729 % 9);
-    const m = new THREE.Mesh(new THREE.BoxGeometry(1.2 + (i % 3), h, 1.2), darkStone);
-    m.position.set(W / 2 + Math.cos(ang) * r, -7 + h / 2, H / 2 + Math.sin(ang) * r);
-    m.rotation.y = ang;
-    scene.add(m);
-  }
-
-  // Spawn circles.
+  /* ---------------------------------------------------------- spawn circles */
+  const spawnRings = [];
   a.spawns.forEach((s, p) => {
-    const ring = new THREE.Mesh(new THREE.RingGeometry(s.r * MM - 0.06, s.r * MM, 48),
-      new THREE.MeshBasicMaterial({ color: TEAM[p], transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(s.r * MM - 0.05, s.r * MM, 64),
+      new THREE.MeshBasicMaterial({ color: TEAM[p], transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2;
-    ring.position.set(s.x * MM, heightAt(a, s.x, s.y) * MM + 0.015, s.y * MM);
+    ring.position.set(s.x * MM, heightAt(a, s.x, s.y) * MM + 0.02, s.y * MM);
     scene.add(ring);
-    const inner = new THREE.Mesh(new THREE.RingGeometry(s.r * MM * 0.55, s.r * MM * 0.58, 4),
-      new THREE.MeshBasicMaterial({ color: TEAM[p], transparent: true, opacity: 0.3, side: THREE.DoubleSide }));
-    inner.rotation.x = -Math.PI / 2; inner.rotation.z = Math.PI / 4;
-    inner.position.copy(ring.position);
-    scene.add(inner);
+    const sig = new THREE.Mesh(new THREE.RingGeometry(s.r * MM * 0.5, s.r * MM * 0.54, 6),
+      new THREE.MeshBasicMaterial({ color: TEAM[p], transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }));
+    sig.rotation.x = -Math.PI / 2; sig.rotation.z = Math.PI / 6;
+    sig.position.copy(ring.position);
+    scene.add(sig);
+    spawnRings.push(sig);
   });
 
   /* ---------------------------------------------------------- props */
   const propMeshes = new Map();
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x6b645a, roughness: 0.9, flatShading: true });
-  const pillarMat = new THREE.MeshStandardMaterial({ color: 0x57524a, roughness: 0.85 });
-  const crystalMat = new THREE.MeshStandardMaterial({ color: 0x6fe3ff, emissive: 0x1b8fb8, emissiveIntensity: 1.2, roughness: 0.2, metalness: 0.1, transparent: true, opacity: 0.92, flatShading: true });
-  const floatMat = new THREE.MeshStandardMaterial({ color: 0x5d5868, roughness: 0.85, flatShading: true });
-
-  function makeProp(pr) {
-    const spec = propSpec(pr.kind);
-    const r = spec.r * MM, h = spec.h * MM;
-    const g = new THREE.Group();
-    let m;
-    if (pr.kind === 'boulder') {
-      m = new THREE.Mesh(new THREE.DodecahedronGeometry(1, 1), rockMat);
-      jitter(m.geometry, 0.13, hashStr(pr.id));
-      m.scale.set(r, h / 2, r * 0.9); m.position.y = h / 2;
-    } else if (pr.kind === 'pillar') {
-      m = new THREE.Group();
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.78, r, h, 10), pillarMat);
-      shaft.position.y = h / 2;
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(r * 2.1, 0.2, r * 2.1), pillarMat);
-      cap.position.y = h - 0.1;
-      const foot = new THREE.Mesh(new THREE.BoxGeometry(r * 2.2, 0.25, r * 2.2), pillarMat);
-      foot.position.y = 0.12;
-      m.add(shaft, cap, foot);
-    } else if (pr.kind === 'shard') {
-      m = new THREE.Group();
-      const s = hashStr(pr.id);
-      for (let i = 0; i < 3; i++) {
-        const k = i === 0 ? 1 : 0.55;
-        const cr = new THREE.Mesh(new THREE.OctahedronGeometry(1, 0), crystalMat);
-        cr.scale.set(r * 0.6 * k, h / 2 * k, r * 0.6 * k);
-        cr.position.set(i ? Math.cos(s + i * 2.1) * r * 0.7 : 0, h / 2 * k, i ? Math.sin(s + i * 2.1) * r * 0.7 : 0);
-        cr.rotation.z = i ? (i === 1 ? 0.35 : -0.3) : 0;
-        m.add(cr);
-      }
-      const glow = new THREE.PointLight(0x5fd8ff, 2.2, 3.5, 2);
-      glow.position.y = h * 0.6;
-      m.add(glow);
-    } else if (pr.kind === 'wall') {
-      m = new THREE.Group();
-      const wallMat = new THREE.MeshStandardMaterial({ color: 0x625b50, roughness: 0.95, flatShading: true });
-      const main = new THREE.Mesh(new THREE.BoxGeometry(r * 2, h, 0.45), wallMat);
-      main.position.y = h / 2;
-      const broken = new THREE.Mesh(new THREE.BoxGeometry(r * 0.7, h * 0.35, 0.5), wallMat);
-      broken.position.set(r * 0.55, h + h * 0.17, 0);
-      m.add(main, broken);
-      m.rotation.y = (hashStr(pr.id) % 4) * 0.5;
-    } else if (pr.kind === 'floater') {
-      m = new THREE.Group();
-      const top = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.85, h * 0.45, 9), floatMat);
-      top.position.y = h * 0.78;
-      const under = new THREE.Mesh(new THREE.ConeGeometry(r * 0.85, h * 1.4, 9), floatMat);
-      under.rotation.x = Math.PI; under.position.y = h * 0.55 - h * 0.7 + h * 0.0;
-      jitter(under.geometry, 0.08, hashStr(pr.id));
-      const sigil = new THREE.Mesh(new THREE.RingGeometry(r * 0.5, r * 0.62, 6),
-        new THREE.MeshBasicMaterial({ color: 0xb88bff, transparent: true, opacity: 0.8, side: THREE.DoubleSide }));
-      sigil.rotation.x = Math.PI / 2; sigil.position.y = -h * 0.7;
-      const glow = new THREE.PointLight(0xa070ff, 3, 4, 2);
-      glow.position.y = -h * 0.4;
-      m.add(top, under, sigil, glow);
-      m.userData.bob = true;
-    }
-    m.traverse?.((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-    if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; }
-    g.add(m);
-    // An invisible hitbox for picking.
-    const hit = new THREE.Mesh(new THREE.CylinderGeometry(r, r, Math.max(h, 0.4), 8), new THREE.MeshBasicMaterial({ visible: false }));
-    hit.position.y = Math.max(h, 0.4) / 2;
-    hit.userData.pick = { kind: 'prop', id: pr.id };
-    g.add(hit);
-    g.userData.h = h;
-    scene.add(g);
-    return g;
-  }
-
+  let makeProp = null;
+  const charMat = new THREE.MeshStandardMaterial({ color: 0x120e0b, roughness: 1 });
   /* ---------------------------------------------------------- units */
-  const unitMeshes = new Map();
+  const actors = new Map();     // unit id -> {actor, label, unit}
+  const dying = [];
 
-  function makeMage(owner) {
-    const g = new THREE.Group();
-    const cloth = new THREE.MeshStandardMaterial({ color: owner ? 0x5a1418 : 0x13314f, roughness: 0.8 });
-    const trim = new THREE.MeshStandardMaterial({ color: 0xb08a4a, roughness: 0.4, metalness: 0.7 });
-    const skin = new THREE.MeshStandardMaterial({ color: 0x8a6a55, roughness: 0.7 });
-    const robe = new THREE.Mesh(new THREE.ConeGeometry(0.34, 1.25, 12, 1, true), cloth);
-    robe.position.y = 0.62;
-    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.03, 6, 16), trim);
-    belt.rotation.x = Math.PI / 2; belt.position.y = 1.02;
-    const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.22, 0.42, 10), cloth);
-    chest.position.y = 1.28;
-    const pauldL = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), trim);
-    pauldL.position.set(-0.2, 1.46, 0); pauldL.scale.y = 0.7;
-    const pauldR = pauldL.clone(); pauldR.position.x = 0.2;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10), skin);
-    head.position.y = 1.62;
-    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.42, 12), cloth);
-    hood.position.y = 1.72;
-    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, 1.95, 6), new THREE.MeshStandardMaterial({ color: 0x3a2716, roughness: 0.9 }));
-    staff.position.set(0.32, 0.98, 0.06);
-    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 10), new THREE.MeshBasicMaterial({ color: TEAM[owner] }));
-    orb.position.set(0.32, 2.0, 0.06);
-    const orbLight = new THREE.PointLight(TEAM[owner], 2.5, 3.5, 2);
-    orbLight.position.copy(orb.position);
-    for (const m of [robe, belt, chest, pauldL, pauldR, head, hood, staff]) { m.castShadow = true; }
-    g.add(robe, belt, chest, pauldL, pauldR, head, hood, staff, orb, orbLight);
-    g.userData.orb = orb;
-    return { g, height: 2.05 };
-  }
-
-  function makeGolem(owner, def) {
-    const g = new THREE.Group();
-    const s = def?.tier === 'A' ? 1.45 : def?.tier === 'B' ? 1.1 : 0.8;
-    const rock = new THREE.MeshStandardMaterial({ color: def?.id === 'IRON_COLOSSUS' ? 0x55585e : 0x7a6a55, roughness: 0.9, flatShading: true, metalness: def?.id === 'IRON_COLOSSUS' ? 0.5 : 0 });
-    const eye = new THREE.MeshBasicMaterial({ color: TEAM[owner] });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 0.4), rock);
-    body.position.y = 0.85; body.rotation.y = 0.05;
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.24, 0.26), rock);
-    head.position.y = 1.3;
-    const e1 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.02), eye);
-    e1.position.set(-0.06, 1.32, 0.135);
-    const e2 = e1.clone(); e2.position.x = 0.06;
-    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.07), eye);
-    core.position.set(0, 0.9, 0.21);
-    const armL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.62, 0.2), rock);
-    armL.position.set(-0.38, 0.78, 0); armL.rotation.z = 0.12;
-    const armR = armL.clone(); armR.position.x = 0.38; armR.rotation.z = -0.12;
-    const legL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.55, 0.22), rock);
-    legL.position.set(-0.14, 0.28, 0);
-    const legR = legL.clone(); legR.position.x = 0.14;
-    for (const m of [body, head, armL, armR, legL, legR]) m.castShadow = true;
-    g.add(body, head, e1, e2, core, armL, armR, legL, legR);
-    g.scale.setScalar(s);
-    return { g, height: 1.45 * s };
-  }
-
-  function makeUnit(u) {
-    const made = u.kind === 'mage' ? makeMage(u.owner) : makeGolem(u.owner, state.defs[u.def]);
-    const root = new THREE.Group();
-    root.add(made.g);
-    const base = new THREE.Mesh(new THREE.RingGeometry(0.27, 0.34, 32),
-      new THREE.MeshBasicMaterial({ color: TEAM[u.owner], transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
-    base.rotation.x = -Math.PI / 2; base.position.y = 0.02;
-    root.add(base);
-    const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, made.height, 8), new THREE.MeshBasicMaterial({ visible: false }));
-    hit.position.y = made.height / 2;
+  function makeUnitActor(u) {
+    const actor = u.kind === 'mage'
+      ? makeMageActor(gltfs.mage, { team: TEAM[u.owner], teamDark: TEAM_DARK[u.owner] })
+      : makeGolemActor(gltfs, u.def, { team: TEAM[u.owner] });
+    const base = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.37, 40),
+      new THREE.MeshBasicMaterial({ color: TEAM[u.owner], transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+    base.rotation.x = -Math.PI / 2; base.position.y = 0.03;
+    actor.root.add(base);
+    const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, actor.height, 8), new THREE.MeshBasicMaterial({ visible: false }));
+    hit.position.y = actor.height / 2;
     hit.userData.pick = { kind: 'unit', id: u.id };
-    root.add(hit);
-    // Face the enemy end of the arena.
-    made.g.rotation.y = u.owner === 0 ? Math.PI / 2 : -Math.PI / 2;
+    actor.root.add(hit);
+    actor.root.position.set(u.x * MM, u.z * MM, u.y * MM);
+    actor.facing = actor.facingTarget = u.owner === 0 ? Math.PI / 2 : -Math.PI / 2;
     const label = document.createElement('div');
     label.className = `ulabel p${u.owner}`;
     labels.appendChild(label);
-    root.userData = { base, label, height: made.height, model: made.g };
-    root.position.set(u.x * MM, u.z * MM, u.y * MM);
-    scene.add(root);
-    return root;
+    scene.add(actor.root);
+    return { actor, base, label, unit: u, target: new THREE.Vector3(u.x * MM, u.z * MM, u.y * MM), vy: 0, airborne: false };
   }
 
   /* ---------------------------------------------------------- sync */
   let cur = state;
   function sync(s) {
     cur = s;
+    if (!ready) { whenReady.push(() => sync(cur)); return; }
     const seen = new Set();
     for (const u of s.field.units) {
-      if (u.dead) continue;
+      let rec = actors.get(u.id);
+      if (u.dead) {
+        if (rec && !rec.actor.dead) {
+          rec.actor.die();
+          const kept = rec;
+          actors.delete(u.id);
+          dying.push({ rec: kept, t: 0 });
+          kept.label.classList.add('gone');
+        }
+        continue;
+      }
       seen.add(u.id);
-      let m = unitMeshes.get(u.id);
-      if (!m) { m = makeUnit(u); unitMeshes.set(u.id, m); }
-      m.userData.target = new THREE.Vector3(u.x * MM, u.z * MM, u.y * MM);
+      if (!rec) {
+        // A dead actor coming back is a respawn; a brand-new one a summon.
+        const back = dying.find((d) => d.rec.unit.id === u.id);
+        if (back) { dying.splice(dying.indexOf(back), 1); rec = back.rec; rec.actor.revive(); rec.label.classList.remove('gone'); rec.actor.root.position.set(u.x * MM, u.z * MM, u.y * MM); fx.sigil(u.x * MM, u.z * MM, u.y * MM, TEAM[u.owner], { dur: 1.4, r: 1.1 }); }
+        else { rec = makeUnitActor(u); if (u.kind === 'golem') { rec.actor.rise?.(); fx.dust(u.x * MM, u.z * MM, u.y * MM, { n: 26, size: 0.6 }); } }
+        actors.set(u.id, rec);
+      }
+      rec.unit = u;
+      rec.target.set(u.x * MM, u.z * MM, u.y * MM);
       const name = handlers.unitLabel ? handlers.unitLabel(u) : u.kind === 'mage' ? 'Mage' : (s.defs[u.def]?.name || 'Golem');
       const pips = Array.from({ length: u.maxHp }, (_, i) => `<i class="${i < u.hp ? 'f' : ''}"></i>`).join('');
-      m.userData.label.innerHTML = `<b>${name}</b><span class="hp">${pips}</span>${u.poison ? `<em>☠${u.poison}</em>` : ''}${u.acted && s.active === u.owner && s.phase === 'unit' ? '<em>done</em>' : ''}`;
-      m.userData.label.classList.toggle('acted', !!u.acted && s.active === u.owner);
+      const html = `<b>${name}</b><span class="hp">${pips}</span>${u.poison ? `<em class="poi">☠${u.poison}</em>` : ''}${u.acted && s.active === u.owner && s.phase === 'unit' ? '<em>done</em>' : ''}`;
+      if (rec.label.innerHTML !== html) rec.label.innerHTML = html;
+      rec.label.classList.toggle('acted', !!u.acted && s.active === u.owner);
     }
-    for (const [id, m] of unitMeshes) {
-      if (!seen.has(id)) { scene.remove(m); m.userData.label.remove(); unitMeshes.delete(id); }
+    for (const [id, rec] of actors) {
+      if (!seen.has(id)) { scene.remove(rec.actor.root); rec.label.remove(); rec.actor.dispose(); actors.delete(id); }
     }
     for (const pr of s.field.props) {
       let m = propMeshes.get(pr.id);
-      if (!m) { m = makeProp(pr); propMeshes.set(pr.id, m); m.position.set(pr.x * MM, pr.z * MM, pr.y * MM); }
+      if (!m) {
+        m = makeProp(pr);
+        scene.add(m);
+        propMeshes.set(pr.id, m);
+        m.position.set(pr.x * MM, pr.z * MM, pr.y * MM);
+        if (pr.raised) { m.scale.y = 0.01; fx.tween(0.7, (t) => { m.scale.y = 0.01 + fx.ease.out(t) * 0.99; }); fx.dust(pr.x * MM, pr.z * MM, pr.y * MM, { n: 30, size: 0.8 }); fx.shake(0.05, 0.4); }
+      }
       m.userData.target = new THREE.Vector3(pr.x * MM, pr.z * MM, pr.y * MM);
-      m.visible = propOnBoard(s, pr);
+      const on = propOnBoard(s, pr);
+      if (m.visible && !on && pr.destroyed && !m.userData.shattered) {
+        m.userData.shattered = true;
+        fx.debris(pr.x * MM, pr.z * MM, pr.y * MM, { n: pr.kind === 'shard' ? 8 : 12, colour: pr.kind === 'shard' ? 0x7fdcff : pr.kind === 'tree' ? 0x2a1d12 : 0x6b6358, size: m.userData.r * 0.45, spread: m.userData.r, up: 3 + m.userData.h });
+        fx.shake(0.06, 0.35);
+        fx.unburn(pr.id);
+        if (pr.kind === 'tree') {
+          // A burnt tree leaves a charred stump.
+          const stump = menhir(0.55, 0.22, charMat, hashStr(pr.id));
+          stump.position.copy(m.position);
+          scene.add(stump);
+          stumps.push(stump);
+        }
+      }
+      m.visible = on;
+      // Fire.
+      const burning = propBurning(s, pr);
+      if (burning && !m.userData.burning) {
+        m.userData.burning = true;
+        fx.burn(pr.id, pr.x * MM, pr.z * MM, pr.y * MM, m.userData.r * 0.9, m.userData.h, { rate: 1 });
+        fx.flash(pr.x * MM, pr.z * MM + 1, pr.y * MM, 0xff8a30, 14, 0.5, 6);
+        m.userData.setBurning?.(true);
+      } else if (!burning && m.userData.burning) {
+        m.userData.burning = false;
+        fx.unburn(pr.id);
+        m.userData.setBurning?.(false);
+      }
+      // Cracks, leans and dimming glows as the hit points go.
+      const maxHp = propSpec(pr.kind).hp;
+      const dmg = maxHp > 0 ? 1 - Math.max(0, pr.hp) / maxHp : 0;
+      if (m.userData.damage !== dmg) { m.userData.damage = dmg; m.userData.setDamage?.(dmg); }
+      if (pr.kind === 'floater' || pr.levitated) {
+        if (!m.userData.lev) { m.userData.lev = true; fx.levitating(pr.id + ':lev', pr.x * MM, pr.z * MM - m.userData.h * 0.9, pr.y * MM, m.userData.r); }
+      }
     }
   }
+  const stumps = [];
 
   /* ---------------------------------------------------------- markers */
   const markerGroup = new THREE.Group();
   scene.add(markerGroup);
   let markers = [];
-  const highlights = new Map();   // unit id -> colour
+  const highlights = new Map();
 
   function clearMarkers() {
     for (const m of markers) { markerGroup.remove(m.obj); m.label?.remove(); }
     markers = [];
   }
 
-  /**
-   * Clickable spots on the ground. Each is {x, y, z (mm), label, data, from?}.
-   * `from` draws a line from a unit to the spot -- a move preview.
-   */
   function setMarkers(list, colour = 0x7fe0ff) {
     clearMarkers();
     for (const mk of list) {
       const g = new THREE.Group();
-      const disc = new THREE.Mesh(new THREE.CircleGeometry(0.26, 24),
-        new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.35, depthWrite: false }));
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(0.3, 24),
+        new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.3, depthWrite: false }));
       disc.rotation.x = -Math.PI / 2;
-      const ring = new THREE.Mesh(new THREE.RingGeometry(0.26, 0.32, 32),
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.37, 32),
         new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false }));
       ring.rotation.x = -Math.PI / 2;
-      const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.6, 12), new THREE.MeshBasicMaterial({ visible: false }));
-      hit.position.y = 0.3;
+      const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.8, 12), new THREE.MeshBasicMaterial({ visible: false }));
+      hit.position.y = 0.4;
       hit.userData.pick = { kind: 'marker', index: -1 };
       g.add(disc, ring, hit);
-      g.position.set(mk.x * MM, mk.z * MM + 0.03, mk.y * MM);
+      g.position.set(mk.x * MM, (mk.z ?? groundY(mk.x, mk.y) / MM) * MM + 0.04, mk.y * MM);
       markerGroup.add(g);
-      if (mk.from) {
-        const pts = [];
-        const A = new THREE.Vector3(mk.from.x * MM, mk.from.z * MM + 0.08, mk.from.y * MM);
-        const B = g.position.clone().setY(g.position.y + 0.05);
-        for (let i = 0; i <= 16; i++) {
-          const t = i / 16;
-          const p = A.clone().lerp(B, t);
-          p.y += Math.sin(t * Math.PI) * 0.35;
-          pts.push(p);
-        }
-        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
-          new THREE.LineDashedMaterial({ color: colour, dashSize: 0.12, gapSize: 0.08, transparent: true, opacity: 0.8 }));
-        line.computeLineDistances();
-        markerGroup.add(line);
-        markers.push({ obj: line, data: null, isLine: true });
-      }
       let label = null;
       if (mk.label) {
         label = document.createElement('div');
@@ -439,9 +267,6 @@ export function createArena(host, state, handlers = {}) {
         label.textContent = mk.label;
         labels.appendChild(label);
       }
-      // The index is taken HERE, after any preview line was pushed: taken at
-      // creation it pointed at the line, whose data is null, and every move
-      // marker in the game silently did nothing when clicked.
       hit.userData.pick.index = markers.length;
       markers.push({ obj: g, data: mk.data, label, pos: g.position.clone(), ring });
     }
@@ -462,24 +287,172 @@ export function createArena(host, state, handlers = {}) {
     floaters.push({ el, p: new THREE.Vector3(x * MM, z * MM + 2.1, y * MM), t0: performance.now() });
   }
   function floatAtUnit(id, text, cls) {
-    const m = unitMeshes.get(id);
-    if (m) floaters.push({ el: Object.assign(document.createElement('div'), { className: `float3d ${cls || ''}`, textContent: text }), p: m.position.clone().setY(m.position.y + m.userData.height + 0.3), t0: performance.now() }), labels.appendChild(floaters.at(-1).el);
+    const rec = actors.get(id) || dying.find((d) => d.rec.unit.id === id)?.rec;
+    if (!rec) return;
+    const el = Object.assign(document.createElement('div'), { className: `float3d ${cls || ''}`, textContent: text });
+    labels.appendChild(el);
+    floaters.push({ el, p: rec.actor.root.position.clone().setY(rec.actor.root.position.y + rec.actor.height + 0.3), t0: performance.now() });
   }
 
-  // A shockwave ring on the ground: a hit, a push, a fall.
-  const pulses = [];
-  function pulse(x, y, z, colour = 0xffffff, size = 1.2) {
-    const m = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.28, 40),
-      new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 1, side: THREE.DoubleSide, depthWrite: false }));
-    m.rotation.x = -Math.PI / 2;
-    m.position.set(x * MM, z * MM + 0.05, y * MM);
-    scene.add(m);
-    pulses.push({ m, t0: performance.now(), size });
-  }
+  function pulse(x, y, z, colour = 0xffffff, size = 1.2) { fx.ring(x * MM, z * MM, y * MM, size * 1.6, colour, { dur: 0.6 }); }
   function pulseUnit(id, colour, size) {
-    const m = unitMeshes.get(id);
-    if (m) pulse(m.position.x / MM, m.position.z / MM, m.position.y / MM, colour, size);
+    const rec = actors.get(id);
+    if (rec) fx.ring(rec.actor.root.position.x, rec.actor.root.position.y, rec.actor.root.position.z, (size || 1) * 1.4, colour, { dur: 0.55 });
   }
+
+  /* ---------------------------------------------------------- cues */
+  // What the engine's notes become. main.js decides WHEN; these decide HOW.
+  const unitPos = (id) => { const rec = actors.get(id) || dying.find((d) => d.rec.unit.id === id)?.rec; return rec ? rec.actor.root.position.clone() : null; };
+  const unitTop = (id) => { const rec = actors.get(id); const p = unitPos(id); if (p && rec) p.y += rec.actor.height * 0.55; return p; };
+  const mageOf = (p) => [...actors.values()].find((r) => r.unit.owner === p && r.unit.kind === 'mage');
+
+  const cues = {
+    /** A spell resolving at the caster. */
+    cast(p, colour, { big = false } = {}) {
+      const m = mageOf(p);
+      if (!m) return;
+      const pos = m.actor.root.position;
+      fx.sigil(pos.x, pos.y, pos.z, colour, { dur: big ? 1.6 : 1.1, r: big ? 1.3 : 0.9 });
+      m.actor.cast(big ? 'raise' : 'shoot');
+    },
+    /** A bolt from the caster's hand to a unit. `onArrive` runs when it lands. */
+    bolt(p, targetId, { element = 'fire', colour = null, onArrive = null, big = false } = {}) {
+      const m = mageOf(p);
+      const to = unitTop(targetId);
+      if (!to) { onArrive?.(); return; }
+      const from = m ? m.actor.handPoint() : to.clone().add(new THREE.Vector3(0, 3, 0));
+      if (m) m.actor.lookAt(to.x, to.z);
+      const col = colour ?? (element === 'fire' ? 0xff8a2a : element === 'lightning' ? 0xbfe8ff : element === 'force' ? 0x9fd8ff : 0xc98bff);
+      if (element === 'lightning') { fx.lightning(from, to, { colour: col }); onArrive?.(); return; }
+      fx.bolt(from, to, { colour: col, dur: big ? 0.55 : 0.4, size: big ? 0.3 : 0.18, trail: element === 'fire' ? 'fire' : 'soft', onArrive: () => {
+        if (element === 'fire') fx.explosion(to.x, to.y - 0.6, to.z, { r: big ? 1.4 : 0.7 });
+        else { fx.flash(to.x, to.y, to.z, col, 10, 0.3, 5); fx.ring(to.x, to.y - 0.6, to.z, 1.2, col, { dur: 0.4 }); }
+        onArrive?.();
+      } });
+    },
+    lightning(fromId, toId) {
+      const a = fromId !== null && fromId !== undefined ? unitTop(fromId) : null;
+      const b = unitTop(toId);
+      if (!b) return;
+      fx.lightning(a || b.clone().add(new THREE.Vector3(0, 4, 0)), b);
+    },
+    hit(id, amount, cause = 'spell') {
+      const rec = actors.get(id);
+      if (!rec) return;
+      rec.actor.hit();
+      const p = rec.actor.root.position;
+      const col = cause === 'fire' ? 0xff7a20 : cause === 'poison' ? 0x7fe04a : cause === 'fall' || cause === 'crush' || cause === 'rock' ? 0xd9c9a8 : 0xff4040;
+      fx.pools.sparks.emit({ x: p.x, y: p.y + rec.actor.height * 0.5, z: p.z, n: 14, spread: 0.2, vspread: 3, vy: 1.5, life: 0.5, size: 0.1, sizeEnd: 0.02, color: 0xffffff, colorEnd: col, gravity: -8 });
+      floatAtUnit(id, `−${amount}`, cause === 'fire' ? 'dmg fire' : 'dmg');
+      if (cause === 'fall' || cause === 'crush' || cause === 'rock') fx.shake(0.05, 0.3);
+    },
+    heal(id, amount) { const p = unitPos(id); if (p) fx.motes(p.x, p.y, p.z, 0x6cf09a, { n: 28 }); floatAtUnit(id, `+${amount}`, 'heal'); },
+    poison(id) { const p = unitPos(id); if (p) fx.motes(p.x, p.y + 1.2, p.z, 0x86e03a, { n: 18, up: 0.6, size: 0.18, drip: true }); },
+    kill(id) {
+      const p = unitPos(id);
+      if (p) { fx.motes(p.x, p.y, p.z, 0xffffff, { n: 40, up: 2.2, r: 0.5, life: 1.8, size: 0.16 }); fx.flash(p.x, p.y + 1, p.z, 0xffffff, 10, 0.5, 6); }
+      floatAtUnit(id, 'SLAIN', 'kill');
+    },
+    strike(fromId, toId) {
+      const f = actors.get(fromId), t = unitPos(toId);
+      if (f && t) { f.actor.lookAt(t.x, t.z); f.actor.strike(); }
+    },
+    push(id, body, mm, from) {
+      if (body === 'unit') { const rec = actors.get(id); if (rec) { rec.actor.hit(); rec.pushed = true; } }
+      const p = body === 'unit' ? unitPos(id) : propMeshes.get(id)?.position.clone();
+      if (p) fx.dust(p.x, p.y, p.z, { n: 14, size: 0.45 });
+    },
+    fall(id, drop) {
+      const rec = actors.get(id);
+      if (rec && drop > 300) floatAtUnit(id, `fell ${(drop / 1000).toFixed(1)}m`, 'fall');
+    },
+    hurl(id, mm) {
+      const rec = actors.get(id);
+      if (!rec) return;
+      rec.actor.jump();
+      const h = mm * MM;
+      rec.airborne = true;
+      fx.tween(0.95, (t) => { rec.airY = Math.sin(t * Math.PI) * h; }, () => {
+        rec.airY = 0; rec.airborne = false;
+        const p = rec.actor.root.position;
+        fx.dust(p.x, p.y, p.z, { n: 30, size: 0.7 }); fx.ring(p.x, p.y, p.z, 1.6, 0xd9c9a8, { dur: 0.5 }); fx.shake(0.08, 0.35);
+      });
+      const p = rec.actor.root.position;
+      fx.motes(p.x, p.y, p.z, 0xb98bff, { n: 24, up: 3, r: 0.4 });
+    },
+    dropRock(propId, from, to, ontoId) {
+      const m = propMeshes.get(propId);
+      if (!m) return;
+      const A = new THREE.Vector3(from.x * MM, m.position.y, from.y * MM);
+      const B = new THREE.Vector3(to.x * MM, groundY(to.x, to.y), to.y * MM);
+      m.userData.flying = true;
+      fx.levitating(propId + ':fly', A.x, A.y, A.z, m.userData.r);
+      fx.tween(1.1, (t) => {
+        const k = t < 0.45 ? t / 0.45 : 1;
+        const lift = t < 0.45 ? fx.ease.out(k) * 3.2 : 3.2 * (1 - fx.ease.in((t - 0.45) / 0.55));
+        m.position.lerpVectors(A, B, t < 0.45 ? 0 : fx.ease.inOut((t - 0.45) / 0.55));
+        m.position.y = (t < 0.45 ? A.y : B.y) + lift;
+        m.rotation.y += 0.02;
+        fx.moveEmitter(propId + ':fly', m.position.x, m.position.y - m.userData.h * 0.5, m.position.z);
+      }, () => {
+        m.userData.flying = false;
+        fx.unburn(propId + ':fly');
+        fx.dust(B.x, B.y, B.z, { n: 36, size: 0.9, colour: 0x8a7b62 });
+        fx.ring(B.x, B.y, B.z, 2.2, 0xd9c9a8, { dur: 0.5, width: 0.15 });
+        fx.shake(0.14, 0.45);
+        const rec = actors.get(ontoId);
+        if (rec) rec.actor.hit();
+      });
+    },
+    swap(aId, bId) {
+      for (const id of [aId, bId]) { const p = unitPos(id); if (p) { fx.sigil(p.x, p.y, p.z, 0x52b6ff, { dur: 0.9, r: 0.8 }); fx.motes(p.x, p.y, p.z, 0x9fd8ff, { n: 30, up: 2.5 }); } }
+    },
+    levitate(propId, mm) {
+      const m = propMeshes.get(propId);
+      if (!m) return;
+      fx.motes(m.position.x, m.position.y, m.position.z, 0xb98bff, { n: 30, up: 1.2, r: m.userData.r });
+      fx.levitating(propId + ':lev', m.position.x, m.position.y - 0.1, m.position.z, m.userData.r);
+      m.userData.lev = true;
+    },
+    terrainRemoved(propId) {
+      const m = propMeshes.get(propId);
+      if (m) { fx.motes(m.position.x, m.position.y, m.position.z, 0xc98bff, { n: 40, up: 2, r: m.userData.r, size: 0.2 }); fx.flash(m.position.x, m.position.y + 1, m.position.z, 0xc98bff, 10, 0.4, 6); }
+    },
+    ignite(propId) {
+      const m = propMeshes.get(propId);
+      if (m) fx.explosion(m.position.x, m.position.y, m.position.z, { r: 0.6 });
+    },
+    propHit(propId, amount) {
+      const m = propMeshes.get(propId);
+      if (!m) return;
+      fx.debris(m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, { n: 3, colour: m.userData.kind === 'shard' ? 0x7fdcff : 0x6b6358, size: 0.08, spread: m.userData.r, up: 2 });
+      const inner = m.userData.inner;
+      fx.tween(0.35, (t) => { const k = Math.sin(t * Math.PI * 3) * (1 - t) * 0.06; inner.rotation.z = k; }, () => { inner.rotation.z = 0; });
+    },
+    nova(p, r, colour = 0xffb347) {
+      const m = mageOf(p);
+      if (!m) return;
+      const pos = m.actor.root.position;
+      fx.ring(pos.x, pos.y, pos.z, r * MM, colour, { dur: 0.7, width: 0.08 });
+      fx.dust(pos.x, pos.y, pos.z, { n: 40, size: 0.7, spread: 0.8, up: 1.5 });
+      fx.flash(pos.x, pos.y + 1, pos.z, colour, 24, 0.4, r * MM * 1.5);
+      m.actor.cast('raise');
+      fx.shake(0.07, 0.4);
+    },
+    quake(p, r) {
+      const m = mageOf(p);
+      if (!m) return;
+      const pos = m.actor.root.position;
+      fx.quake(pos.x, pos.y, pos.z, { r: r * MM });
+      m.actor.cast('raise');
+    },
+    summon(id) { const p = unitPos(id); if (p) { fx.sigil(p.x, p.y, p.z, 0xe0a46a, { dur: 1.2, r: 0.9 }); } const m = mageOf(actors.get(id)?.unit.owner ?? 0); m?.actor.summon(); },
+    score(p) { const m = mageOf(p); if (m) { const pos = m.actor.root.position; fx.burst(pos.x, pos.y + 0.5, pos.z, 0xffcf5a, { n: 50, r: 0.6, up: 2.5 }); fx.flash(pos.x, pos.y + 1.5, pos.z, 0xffcf5a, 14, 0.6, 7); } },
+    /** A link between two spells' casters: Spell Splice, Confluence, keyword copies. */
+    link(p, colour = 0xc98bff) { const m = mageOf(p); if (m) { const a = m.actor.handPoint(); fx.beam(a, a.clone().add(new THREE.Vector3(0, 1.6, 0)), colour, { dur: 0.6, width: 0.1 }); } },
+    cheer(p) { mageOf(p)?.actor.cheer(); },
+    fireTick(id) { cues.hit(id, 1, 'fire'); },
+  };
 
   /* ---------------------------------------------------------- picking */
   const ray = new THREE.Raycaster();
@@ -508,14 +481,12 @@ export function createArena(host, state, handlers = {}) {
     ray.setFromCamera(ndc, camera);
     const objs = [];
     markerGroup.traverse((o) => { if (o.userData.pick) objs.push(o); });
-    for (const m of unitMeshes.values()) m.traverse((o) => { if (o.userData.pick) objs.push(o); });
+    for (const rec of actors.values()) rec.actor.root.traverse((o) => { if (o.userData.pick) objs.push(o); });
     for (const m of propMeshes.values()) if (m.visible) m.traverse((o) => { if (o.userData.pick) objs.push(o); });
-    objs.push(ground);
+    if (world) objs.push(world.terrain);
     const hits = ray.intersectObjects(objs, false);
-    // Markers win over the unit standing behind them; anything wins over the
-    // bare ground.
-    const mk = hits.find((h) => h.object.userData.pick.kind === 'marker');
-    const solid = hits.find((h) => h.object.userData.pick.kind !== 'ground');
+    const mk = hits.find((h) => h.object.userData.pick?.kind === 'marker');
+    const solid = hits.find((h) => h.object.userData.pick && h.object.userData.pick.kind !== 'ground');
     const h = mk || solid || hits[0];
     if (!h) return null;
     if (h.object.userData.pick.kind === 'ground') {
@@ -525,8 +496,6 @@ export function createArena(host, state, handlers = {}) {
   }
 
   /* ---------------------------------------------------------- rings */
-  // A ring drawn ON the terrain: sampled round the circle, each point lifted to
-  // the ground height there, so a range reads true over a plateau or a pit.
   function terrainRing(cx, cy, r, colour, { opacity = 0.95, fill = 0.10, dashed = false } = {}) {
     const g = new THREE.Group();
     const pts = [];
@@ -534,8 +503,7 @@ export function createArena(host, state, handlers = {}) {
     for (let i = 0; i <= n; i++) {
       const t = (i / n) * Math.PI * 2;
       const x = cx + Math.cos(t) * r, y = cy + Math.sin(t) * r;
-      const cxl = Math.min(a.w, Math.max(0, x)), cyl = Math.min(a.h, Math.max(0, y));
-      pts.push(new THREE.Vector3(x * MM, heightAt(a, Math.round(cxl), Math.round(cyl)) * MM + 0.05, y * MM));
+      pts.push(new THREE.Vector3(x * MM, groundY(x, y) + 0.06, y * MM));
     }
     const mat = dashed
       ? new THREE.LineDashedMaterial({ color: colour, dashSize: 0.18, gapSize: 0.1, transparent: true, opacity })
@@ -544,11 +512,14 @@ export function createArena(host, state, handlers = {}) {
     if (dashed) line.computeLineDistances();
     g.add(line);
     if (fill > 0) {
-      const disc = new THREE.Mesh(new THREE.CircleGeometry(r * MM, 64),
-        new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: fill, depthWrite: false, side: THREE.DoubleSide }));
-      disc.rotation.x = -Math.PI / 2;
-      disc.position.set(cx * MM, heightAt(a, Math.round(Math.min(a.w, Math.max(0, cx))), Math.round(Math.min(a.h, Math.max(0, cy)))) * MM + 0.03, cy * MM);
-      g.add(disc);
+      // A filled disc draped on the ground: a fan of triangles, each vertex at its own ground height.
+      const v = [cx * MM, groundY(cx, cy) + 0.04, cy * MM];
+      const idx = [];
+      for (let i = 0; i <= n; i++) { const p = pts[i]; v.push(p.x, p.y - 0.02, p.z); if (i) idx.push(0, i, i + 1); }
+      const dg = new THREE.BufferGeometry();
+      dg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+      dg.setIndex(idx);
+      g.add(new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: fill, depthWrite: false, side: THREE.DoubleSide })));
     }
     return g;
   }
@@ -556,7 +527,6 @@ export function createArena(host, state, handlers = {}) {
   const rangeGroup = new THREE.Group();
   scene.add(rangeGroup);
   let rangeLabels = [];
-  /** Range rings: [{x, y, r, label, colour}] in mm. */
   function setRanges(list) {
     rangeGroup.clear();
     for (const l of rangeLabels) l.el.remove();
@@ -568,23 +538,21 @@ export function createArena(host, state, handlers = {}) {
         el.className = 'rlabel';
         el.textContent = rg.label;
         labels.appendChild(el);
-        rangeLabels.push({ el, p: new THREE.Vector3(rg.x * MM, heightAt(a, rg.x, Math.max(0, rg.y - rg.r)) * MM, Math.max(0, rg.y - rg.r) * MM) });
+        rangeLabels.push({ el, p: new THREE.Vector3(rg.x * MM, groundY(rg.x, rg.y - rg.r), (rg.y - rg.r) * MM) });
       }
     }
   }
 
-  // The move circle: where the selected unit may be told to walk. The ghost is
-  // where it would actually END -- the engine's answer, walls and all.
   let moveCircle = null;
   const moveGroup = new THREE.Group();
   scene.add(moveGroup);
   const ghost = new THREE.Group();
   {
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.3, 32),
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.26, 0.34, 32),
       new THREE.MeshBasicMaterial({ color: 0x7fe0ff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2;
-    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.22, 24),
-      new THREE.MeshBasicMaterial({ color: 0x7fe0ff, transparent: true, opacity: 0.35, depthWrite: false }));
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.26, 24),
+      new THREE.MeshBasicMaterial({ color: 0x7fe0ff, transparent: true, opacity: 0.3, depthWrite: false }));
     dot.rotation.x = -Math.PI / 2;
     ghost.add(ring, dot);
     ghost.visible = false;
@@ -597,16 +565,16 @@ export function createArena(host, state, handlers = {}) {
     moveCircle = c;
     showGhost(null);
     if (!c) return;
-    moveGroup.add(terrainRing(c.x, c.y, c.r, 0x7fe0ff, { fill: 0.12 }));
+    moveGroup.add(terrainRing(c.x, c.y, c.r, 0x7fe0ff, { fill: 0.1 }));
   }
   function showGhost(p, from) {
     if (ghostLine) { scene.remove(ghostLine); ghostLine = null; }
     if (!p) { ghost.visible = false; return; }
     ghost.visible = true;
-    ghost.position.set(p.x * MM, p.z * MM + 0.04, p.y * MM);
+    ghost.position.set(p.x * MM, p.z * MM + 0.05, p.y * MM);
     if (from) {
-      const A = new THREE.Vector3(from.x * MM, from.z * MM + 0.08, from.y * MM);
-      const B = ghost.position.clone().setY(ghost.position.y + 0.04);
+      const A = new THREE.Vector3(from.x * MM, from.z * MM + 0.1, from.y * MM);
+      const B = ghost.position.clone().setY(ghost.position.y + 0.05);
       const pts = [];
       for (let i = 0; i <= 16; i++) { const t = i / 16; const q = A.clone().lerp(B, t); q.y += Math.sin(t * Math.PI) * 0.3; pts.push(q); }
       ghostLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
@@ -618,21 +586,25 @@ export function createArena(host, state, handlers = {}) {
 
   /* ---------------------------------------------------------- frame */
   const v = new THREE.Vector3();
+  const shakeV = new THREE.Vector3();
+  // The clear rectangle of the host, in CSS px, that the arena should be framed in.
+  let viewport = null;
+  function setViewport(vp) { viewport = vp; resize(); }
   function resize() {
     const w = host.clientWidth, h = host.clientHeight;
     if (!w || !h) return;
     renderer.setSize(w, h, false);
+    composer?.setSize(w, h);
     renderer.domElement.style.width = w + 'px';
     renderer.domElement.style.height = h + 'px';
-    // The action tray covers the bottom of the stage, so the picture is
-    // rendered as the lower part of a taller frame: the arena sits up out of
-    // the way without the camera having to look somewhere else. The aspect is
-    // the TALLER frame's -- given the visible one, the picture stretched.
-    const lift = Math.min(130, h * 0.2);
-    camera.aspect = w / (h + lift);
-    camera.setViewOffset(w, h + lift, 0, lift, w, h);
-    // A narrow stage needs the camera further back to keep all 9m in frame.
-    camera.fov = camera.aspect < 1.0 ? 46 + (1.0 - camera.aspect) * 30 : 46;
+    // The HUD covers parts of the canvas. The picture is framed for the clear
+    // part: the camera's natural frame IS that rectangle, and the canvas shows
+    // the frame plus whatever lies around it.
+    const vp = viewport || { left: 0, top: 0, width: w, height: h };
+    const cw = Math.max(200, vp.width), ch = Math.max(200, vp.height);
+    camera.aspect = cw / ch;
+    camera.setViewOffset(cw, ch, -vp.left, -vp.top, w, h);
+    camera.fov = camera.aspect < 1.1 ? 44 + (1.1 - camera.aspect) * 28 : 44;
     camera.updateProjectionMatrix();
   }
   new ResizeObserver(resize).observe(host);
@@ -650,38 +622,74 @@ export function createArena(host, state, handlers = {}) {
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    const k = 1 - Math.pow(0.0008, dt);
-    for (const m of unitMeshes.values()) {
-      if (m.userData.target) {
-        // A short hop when a unit travels, so a move reads as a move.
+    if (world) world.update(dt, now);
+    fx.update(dt, now);
+
+    for (const [id, rec] of actors) {
+      const { actor } = rec;
+      const pos = actor.root.position;
+      const tgt = rec.target;
+      // Walk toward the engine's point on the ground plane; height follows
+      // the ground or falls.
+      const dx = tgt.x - pos.x, dz = tgt.z - pos.z;
+      const dist = Math.hypot(dx, dz);
+      const speed = rec.pushed ? 7 : actor.speed;
+      if (dist > 0.02) {
+        const step = Math.min(dist, speed * dt);
+        pos.x += dx / dist * step; pos.z += dz / dist * step;
+        actor.facingTarget = Math.atan2(dx, dz);
+        actor.moving = !rec.pushed;
+        if (rec.pushed && Math.random() < 0.5) fx.dust(pos.x, pos.y, pos.z, { n: 2, size: 0.35 });
+      } else { actor.moving = false; rec.pushed = false; }
+      const dy = tgt.y - pos.y;
+      if (dy < -0.35 && !rec.airborne) {
+        // A drop: gravity, then a thump.
+        rec.vy -= 9.8 * dt;
+        pos.y = Math.max(tgt.y, pos.y + rec.vy * dt);
+        if (pos.y <= tgt.y + 0.001) { pos.y = tgt.y; if (rec.vy < -3) { fx.dust(pos.x, pos.y, pos.z, { n: 22, size: 0.6 }); fx.shake(0.04, 0.25); } rec.vy = 0; }
+      } else if (!rec.airborne) {
+        rec.vy = 0;
+        pos.y += dy * Math.min(1, dt * 10);
+      }
+      actor.airY = rec.airY || 0;
+      actor.root.position.y = pos.y + actor.airY;
+      actor.update(dt, now);
+      const hl = highlights.get(id);
+      if (hl !== undefined) { rec.base.material.color.setHex(hl); rec.base.scale.setScalar(1.25 + Math.sin(now / 160) * 0.18); rec.base.material.opacity = 1; }
+      else { rec.base.material.color.setHex(TEAM[rec.unit.owner]); rec.base.scale.setScalar(1); rec.base.material.opacity = 0.75; }
+      place(rec.label, actor.root.position, actor.height + 0.3);
+    }
+    for (let i = dying.length - 1; i >= 0; i--) {
+      const d = dying[i];
+      d.t += dt;
+      d.rec.actor.update(dt, now);
+      if (d.rec.actor.kind === 'golem' && !d.rec.actor.ownsDeath) {
+        // Rocks tumble apart.
+        for (const part of d.rec.actor.parts) {
+          if (!part.userData.v) { part.userData.v = new THREE.Vector3((Math.random() - 0.5) * 2, 2 + Math.random() * 2, (Math.random() - 0.5) * 2); part.userData.w = (Math.random() - 0.5) * 6; }
+          part.userData.v.y -= 9.8 * dt;
+          part.position.addScaledVector(part.userData.v, dt / Math.max(0.3, d.rec.actor.body.scale.x));
+          part.rotation.x += part.userData.w * dt;
+          if (part.position.y < -0.6) { part.position.y = -0.6; part.userData.v.set(0, 0, 0); part.userData.w = 0; }
+        }
+      }
+      d.rec.label.style.display = 'none';
+      if (d.t > 2.6 && !d.rec.actor.ownsDeath) {
+        d.rec.actor.root.traverse((o) => { if (o.material && !o.userData.pick) { o.material = o.material.clone?.() || o.material; o.material.transparent = true; o.material.opacity = Math.max(0, 1 - (d.t - 2.6) / 0.8); } });
+      }
+      if (d.t > 3.5) { scene.remove(d.rec.actor.root); d.rec.label.remove(); d.rec.actor.dispose(); dying.splice(i, 1); }
+    }
+    for (const [pid, m] of propMeshes) {
+      if (m.userData.target && !m.userData.flying) {
         const d = m.position.distanceTo(m.userData.target);
-        m.position.lerp(m.userData.target, k);
-        m.userData.model.position.y = Math.min(0.25, d * 0.12);
+        if (d > 0.01) { m.position.lerp(m.userData.target, 1 - Math.pow(0.0005, dt)); if (d > 0.3 && Math.random() < 0.4) fx.dust(m.position.x, m.position.y, m.position.z, { n: 2, size: 0.4 }); }
       }
-      const hl = highlights.get([...unitMeshes.entries()].find(([, x]) => x === m)?.[0]);
-      const base = m.userData.base;
-      if (hl !== undefined) {
-        base.material.color.setHex(hl);
-        base.scale.setScalar(1.25 + Math.sin(now / 160) * 0.18);
-      } else {
-        base.scale.setScalar(1);
-      }
-      place(m.userData.label, m.position, m.userData.height + 0.35);
-    }
-    for (const [id, m] of unitMeshes) {
-      if (!highlights.has(id)) {
-        const u = cur.field.units.find((x) => x.id === id);
-        if (u) m.userData.base.material.color.setHex(TEAM[u.owner]);
-      }
-      if (m.userData.model.userData.orb) m.userData.model.userData.orb.scale.setScalar(1 + Math.sin(now / 300 + id) * 0.15);
-    }
-    for (const m of propMeshes.values()) {
-      if (m.userData.target) m.position.lerp(m.userData.target, k);
-      const inner = m.children[0];
-      if (inner?.userData.bob) inner.position.y = Math.sin(now / 900 + m.position.x) * 0.06;
+      const inner = m.userData.inner;
+      if (inner?.userData.bob) inner.position.y = Math.sin(now / 900 + m.position.x) * 0.07;
+      if (m.visible) m.userData.update?.(dt, now);
+      if (m.userData.lev) fx.moveEmitter(pid + ':lev', m.position.x, m.position.y - m.userData.h * 0.9, m.position.z);
     }
     for (const mk of markers) {
-      if (mk.isLine) continue;
       mk.ring.scale.setScalar(1 + Math.sin(now / 220) * 0.08);
       if (mk.label) place(mk.label, mk.pos, 0.55);
     }
@@ -689,25 +697,17 @@ export function createArena(host, state, handlers = {}) {
     if (ghost.visible) ghost.children[0].scale.setScalar(1 + Math.sin(now / 200) * 0.1);
     for (let i = floaters.length - 1; i >= 0; i--) {
       const f = floaters[i];
-      const t = (now - f.t0) / 1400;
+      const t = (now - f.t0) / 1500;
       if (t >= 1) { f.el.remove(); floaters.splice(i, 1); continue; }
       place(f.el, f.p, t * 0.9);
       f.el.style.opacity = String(1 - t * t);
     }
-    for (let i = pulses.length - 1; i >= 0; i--) {
-      const p = pulses[i];
-      const t = (now - p.t0) / 700;
-      if (t >= 1) { scene.remove(p.m); pulses.splice(i, 1); continue; }
-      p.m.scale.setScalar(1 + t * p.size * 4);
-      p.m.material.opacity = 1 - t;
-    }
-    for (const f of flames) {
-      const n = Math.sin(now / 90 + f.seed) * 0.5 + Math.sin(now / 37 + f.seed * 3) * 0.3;
-      f.light.intensity = 6 + n * 1.5;
-      f.fire.scale.set(1 + n * 0.08, 1.6 + n * 0.2, 1 + n * 0.08);
-    }
+    spawnRings.forEach((r, i) => { r.rotation.z += dt * 0.15 * (i ? -1 : 1); });
     controls.update();
-    renderer.render(scene, camera);
+    fx.shakeOffset(shakeV);
+    camera.position.add(shakeV);
+    if (composer) composer.render(); else renderer.render(scene, camera);
+    camera.position.sub(shakeV);
     requestAnimationFrame(frame);
   }
   sync(state);
@@ -715,15 +715,22 @@ export function createArena(host, state, handlers = {}) {
 
   return {
     sync, setMarkers, clearMarkers, highlightUnits, floatText, floatAtUnit, pulse, pulseUnit,
-    setRanges, setMoveCircle, showGhost, insideMove: (x, y) => insideMove(x, y),
-    camera, controls, renderer,
+    setRanges, setMoveCircle, showGhost, insideMove: (x, y) => insideMove(x, y), setViewport,
+    camera, controls, renderer, scene, fx, cues,
+    get ready() { return ready; }, whenReady: readyPromise,
     project(x, y, z) {
       v.set(x * MM, z * MM, y * MM).project(camera);
       return [((v.x + 1) / 2) * host.clientWidth, ((1 - v.y) / 2) * host.clientHeight];
     },
-    /** Screen positions of the clickable markers, for a harness to click. */
+    /** Where a unit's head is on screen, for a popover. */
+    unitScreen(id) {
+      const rec = actors.get(id);
+      if (!rec) return null;
+      v.copy(rec.actor.root.position); v.y += rec.actor.height + 0.4; v.project(camera);
+      return [((v.x + 1) / 2) * host.clientWidth, ((1 - v.y) / 2) * host.clientHeight];
+    },
     markerScreens() {
-      return markers.filter((m) => !m.isLine).map((m) => {
+      return markers.map((m) => {
         v.copy(m.pos).project(camera);
         return [((v.x + 1) / 2) * host.clientWidth, ((1 - v.y) / 2) * host.clientHeight];
       });
@@ -735,55 +742,6 @@ export function createArena(host, state, handlers = {}) {
 
 /* ------------------------------------------------------------ helpers */
 
-function hashStr(s) { let h = 7; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) | 0; return Math.abs(h); }
-
-function jitter(geo, amt, seed) {
-  const p = geo.attributes.position;
-  let s = seed || 1;
-  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647 - 0.5; };
-  const key = new Map();
-  for (let i = 0; i < p.count; i++) {
-    const k = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
-    if (!key.has(k)) key.set(k, 1 + rnd() * amt * 2);
-    const f = key.get(k);
-    p.setXYZ(i, p.getX(i) * f, p.getY(i) * f, p.getZ(i) * f);
-  }
-  geo.computeVertexNormals();
-}
-
-/** Flagstone texture with a faint metre grid, so distance is legible. */
-function groundTexture() {
-  const cv = document.createElement('canvas');
-  cv.width = 1536; cv.height = 1152;
-  const g = cv.getContext('2d');
-  g.fillStyle = '#9a958c';
-  g.fillRect(0, 0, cv.width, cv.height);
-  let s = 12345;
-  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
-  // Flagstones: half-metre slabs with jittered tone.
-  const slab = 64;
-  for (let y = 0; y < cv.height; y += slab) {
-    const off = (y / slab) % 2 ? slab / 2 : 0;
-    for (let x = -off; x < cv.width; x += slab) {
-      const t = 120 + rnd() * 60;
-      g.fillStyle = `rgb(${t},${t - 4},${t - 10})`;
-      g.fillRect(x + 2, y + 2, slab - 4, slab - 4);
-    }
-  }
-  for (let i = 0; i < 9000; i++) {
-    const t = rnd() * 255;
-    g.fillStyle = `rgba(${t},${t},${t},0.05)`;
-    g.fillRect(rnd() * cv.width, rnd() * cv.height, 2 + rnd() * 3, 2 + rnd() * 3);
-  }
-  // The metre grid: the board-game half of the look.
-  g.strokeStyle = 'rgba(210,190,140,0.55)';
-  g.lineWidth = 2;
-  for (let x = 0; x <= cv.width; x += 128) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, cv.height); g.stroke(); }
-  for (let y = 0; y <= cv.height; y += 128) { g.beginPath(); g.moveTo(0, y); g.lineTo(cv.width, y); g.stroke(); }
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
-  return tex;
-}
+function hashStr(s) { let h = 7; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) | 0; return Math.abs(h); }
 
 export { TEAM_CSS };

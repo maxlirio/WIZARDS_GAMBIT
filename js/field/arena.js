@@ -58,12 +58,13 @@ export const FALL_SAFE = 1000;
 export const BODY_R = 250;
 
 export const CHALLENGES = Object.freeze([
-  'none',            // bare ground and rocks
+  'none',            // open ground: rocks, a few trees
   'spires',          // tall climbable pillars; height advantage everywhere
   'chasm',           // a trench across the middle; falls are lethal
   'levitation',      // several floating rocks, the push-them-out game
   'ruins',           // low walls; line of sight is the puzzle
   'causeway',        // one raised road between two pits
+  'grove',           // a stand of trees; fire is the game
 ]);
 
 /**
@@ -195,15 +196,30 @@ export const aboveMedian = (a, x, y) => heightAt(a, x, y) - a.median;
 
 /* ------------------------------------------------------------ props */
 
+/**
+ * EVERYTHING ON THE FIELD CAN BE AFFECTED. Every kind is pushable -- a wall
+ * slides a hand's width where a crystal flies -- every kind has hit points and
+ * shatters at zero, and anything made of wood burns. `mass` divides a push
+ * (see push.js), `hp` is what a smash takes off, `burnable` is what fire looks
+ * for. Nothing here is scenery: a pillar is something a quake can topple onto
+ * you, and a tree is something a fireball turns into a hazard.
+ */
 const PROP_KINDS = Object.freeze({
-  boulder: { r: 450, h: 700, mass: 2, climbable: true, platform: true, pushable: true },
-  pillar:  { r: 350, h: 2200, mass: 4, climbable: true, platform: false, pushable: false },
-  shard:   { r: 250, h: 1400, mass: 1, climbable: false, platform: false, pushable: true },
-  wall:    { r: 700, h: 1100, mass: 6, climbable: true, platform: true, pushable: false },
-  floater: { r: 500, h: 400, mass: 1, climbable: false, platform: true, pushable: true, floating: true },
+  boulder: { r: 450, h: 700, mass: 2, hp: 4, climbable: true, platform: true, pushable: true },
+  pillar:  { r: 350, h: 2200, mass: 4, hp: 5, climbable: true, platform: false, pushable: true },
+  shard:   { r: 250, h: 1400, mass: 1, hp: 2, climbable: false, platform: false, pushable: true },
+  wall:    { r: 700, h: 1100, mass: 6, hp: 6, climbable: true, platform: true, pushable: true },
+  floater: { r: 500, h: 400, mass: 1, hp: 3, climbable: false, platform: true, pushable: true, floating: true },
+  tree:    { r: 300, h: 3200, mass: 3, hp: 3, climbable: false, platform: false, pushable: true, burnable: true },
 });
 
 export const propSpec = (kind) => PROP_KINDS[kind];
+/** How long a lit piece burns: it bites at the start of this many turns, then is ash. */
+export const BURN_TURNS = 2;
+/** A burning piece hurts anything standing this far beyond its own edge. */
+export const FIRE_REACH = 900;
+/** Fire crosses to another burnable piece whose edge is within this. */
+export const FIRE_SPREAD = 1200;
 
 /**
  * Scatter the terrain pieces. Mutable, so these live on state.field.
@@ -217,9 +233,10 @@ export function makeProps(arena, seed) {
   const out = [];
   const want = arena.challenge === 'levitation'
     ? { floater: 5, boulder: 3, shard: 2 }
-    : arena.challenge === 'spires' ? { pillar: 6, boulder: 2 }
-    : arena.challenge === 'ruins' ? { wall: 5, shard: 3, boulder: 2 }
-    : { boulder: 4, pillar: 2, shard: 3, floater: 1 };
+    : arena.challenge === 'spires' ? { pillar: 6, boulder: 2, tree: 1 }
+    : arena.challenge === 'ruins' ? { wall: 5, shard: 3, boulder: 2, tree: 2 }
+    : arena.challenge === 'grove' ? { tree: 7, boulder: 2, shard: 1 }
+    : { boulder: 4, pillar: 2, shard: 2, floater: 1, tree: 3 };
 
   const midLo = idiv(arena.w, 5), midHi = arena.w - idiv(arena.w, 5);
   for (const kind of Object.keys(want).sort()) {
@@ -254,6 +271,11 @@ export function makeProps(arena, seed) {
         // whoever is standing on it, which is the interesting half.
         z: spec.floating ? base + range(r, 2, 4) * 500 : base,
         removedUntil: null,
+        // Hit points, and the fire bookkeeping. `burning` is the last turn
+        // number the piece still burns on; `litBy` is who gets the credit for
+        // what the fire does; `destroyed` is permanent and is the one way a
+        // piece leaves the field for good.
+        hp: spec.hp, burning: null, litBy: null, destroyed: false,
       });
     }
   }
@@ -263,5 +285,9 @@ export function makeProps(arena, seed) {
 export const propR = (prop) => PROP_KINDS[prop.kind].r;
 export const propH = (prop) => PROP_KINDS[prop.kind].h;
 export const propTop = (prop) => prop.z + PROP_KINDS[prop.kind].h;
+export const propMass = (prop) => PROP_KINDS[prop.kind].mass;
+export const propBurnable = (prop) => !!PROP_KINDS[prop.kind].burnable;
 export const propOnBoard = (state, prop) =>
-  prop.removedUntil === null || prop.removedUntil < state.turn;
+  !prop.destroyed && (prop.removedUntil === null || prop.removedUntil < state.turn);
+export const propBurning = (state, prop) =>
+  propOnBoard(state, prop) && prop.burning !== null && prop.burning >= state.turn;

@@ -6,8 +6,15 @@
 // file only draws the question and hands the answer back.
 //
 // Everything the player SEES happening comes from `state.fx`, the engine's note
-// stream, read after each step: the log, the floating damage, the flashing
-// match. The board itself is redrawn from the state every time.
+// stream, read after each step and turned into a short TIMELINE of cues for
+// the battlefield: a bolt leaves the staff, lands, and only then does the
+// damage number float up. The board itself is redrawn from the state every
+// time.
+//
+// The HUD is laid out so that every control sits next to the thing it acts
+// on: a selected spell gets a popover beside its cell with rotate / shift /
+// destroy; a selected unit gets one over its head with strike / summon / hold;
+// the only free-standing buttons are the turn-flow ones (skip, end turn).
 
 import { createGame, legalActions, apply, choose, cloneState } from '../engine.js';
 import { chooseAction, answerFor } from '../ai/ai.js';
@@ -25,7 +32,7 @@ import { makeCtx } from '../rules/resolve.js';
 import { moveBudget, canMoveTo } from '../rules/units.js';
 import { rangeOrigins } from '../field/query.js';
 import { cardSVG, centreSVG, faceListHTML, SCHOOL_INK, runeGlyphInline } from './cards.js';
-import { createArena } from './arena3d.js';
+import { createArena, SCHOOL_HEX } from './arena3d.js';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -46,9 +53,12 @@ let busy = false;
 let someChosen = [];     // a multi-select prompt's picks so far
 let matchOver = false;
 let gameId = 0;
+let timers = [];         // scheduled cues, cleared on a new match
 
 function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool = false, policy = 'oneply' } = {}) {
   gameId++;
+  for (const t of timers) clearTimeout(t);
+  timers = [];
   const rng = seedRng(seed ^ 0xdeed);
   const decks = pool ? [randomDeck(rng, pick), randomDeck(rng, pick)] : null;
   S = createGame({ seed, decks });
@@ -61,19 +71,21 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   arena?.dispose();
   arena = createArena($('#arena'), S, {
     onPickUnit, onPickMarker, onPickProp, onPickGround, onHover: onArenaHover,
-    onPickNothing: () => { if (sel?.kind === 'unit') return; },
+    onPickNothing: () => {},
     isPickable: () => true,
     unitLabel: (u) => { const n = unitName(u.id); return n.charAt(0).toUpperCase() + n.slice(1); },
+    quality: profile.setting('quality') || 'high',
   });
   $('#seed').textContent = `seed ${seed} · ${S.arena.challenge}`;
   history.replaceState(null, '', `?seed=${seed}${watch ? '&watch' : ''}${pool ? '&pool' : ''}${FAST ? '&fast' : ''}`);
   logLine(`<b>A new duel.</b> Arena: <i>${esc(S.arena.challenge)}</i>. First to 15 VP.`, 'sys');
   flushFx();
   render();
+  updateViewport();
+  arena.whenReady.then(() => { if (S) { render(); updateViewport(); } });
   drive();
 }
 
-const opp = (p) => 1 - p;
 const whoseTurnName = (p) => (HUMAN === null ? `Player ${p + 1}` : p === HUMAN ? 'You' : 'Enemy');
 
 /* ================================================================ driving */
@@ -104,9 +116,9 @@ async function drive() {
         if (!a) break;
         apply(S, a);
       } else break;
-      const weight = flushFx();
+      const ms = flushFx();
       render();
-      await sleep(FAST ? 0 : Math.min(2400, 250 + weight * 200));
+      await sleep(FAST ? 0 : Math.min(2600, 250 + ms));
     }
   } catch (e) {
     console.error(e);
@@ -160,53 +172,101 @@ function unitName(id) {
   if (u.kind === 'mage') return `${who} mage`;
   return `${who} ${CARDS[u.def]?.name || 'golem'} ${golemNumber(u)}`;
 }
-/** Golems of one card are told apart by a number that stays with the body. */
 function golemNumber(u) {
   const same = S.field.units.filter((x) => x.owner === u.owner && x.def === u.def && !x.dead).sort((a, b) => a.id - b.id);
   return same.length > 1 ? `#${same.indexOf(u) + 1}` : '';
 }
 const pName = (p) => (HUMAN === null ? `P${p + 1}` : p === HUMAN ? 'You' : 'Enemy');
 const pCls = (p) => `p${p}`;
+const propName = (id) => { const pr = S.field.props.find((x) => x.id === id); return pr ? ({ boulder: 'boulder', pillar: 'standing stone', shard: 'crystal', wall: 'wall', floater: 'floating rock', tree: 'tree' }[pr.kind] || pr.kind) : 'terrain'; };
 
 /* ================================================================ fx */
 
 /**
- * Read the notes the engine left since last time: write the log, fire the
- * effects, and return how much happened so the AI's pause can match it.
+ * Read the notes the engine left since last time: write the log and turn
+ * each into a cue on a timeline. Returns the timeline's length in ms, so the
+ * AI's pause can match it.
  */
 function flushFx() {
-  let weight = 0;
+  let t = 0;
   const flash = new Map();
+  const later = (ms, fn) => { const my = gameId; timers.push(setTimeout(() => { if (my === gameId && arena) fn(); }, FAST ? 0 : ms)); };
+  let castCtx = null;        // the face resolving right now: {p, element, big, face}
+  let holdDamage = 0;        // ms to delay the next damage cue (a rock still falling)
+  const cues = () => arena.cues;
   for (const f of S.fx.slice(fxSeen)) {
     const line = narrate(f);
     if (line) logLine(line, f.kind);
     switch (f.kind) {
-      case 'match': weight += 2; for (const u of f.uids) flash.set(u, 'match'); break;
-      case 'resolveStart': weight += 2; if (f.uid) flash.set(f.uid, 'resolve'); break;
-      case 'rotate': weight += 1; break;
-      case 'play': case 'golemCard': weight += 1; break;
-      case 'destroy': weight += 1; break;
-      case 'damage': weight += 1; arena.floatAtUnit(f.id, `−${f.amount}`, 'dmg'); arena.pulseUnit(f.id, 0xff4040, 0.6); break;
-      case 'strike': weight += 1; break;
-      case 'kill': weight += 3; arena.floatAtUnit(f.id, 'SLAIN', 'kill'); break;
-      case 'push': weight += 1; if (f.body === 'unit') arena.pulseUnit(f.id, 0x9fd8ff, 0.8); break;
-      case 'falls': weight += 2; for (const l of f.landed || []) if (l.key[0] === 'u' && l.drop > 0) arena.floatAtUnit(Number(l.key.slice(1)), `fell ${(l.drop / 1000).toFixed(1)}m`, 'fall'); break;
-      case 'move': weight += 0.6; break;
-      case 'summon': weight += 1; break;
-      case 'score': weight += 3; toast(`${pName(f.p)} +${f.amount} VP — ${SOURCE[f.source] || esc(f.source)}`, f.p === HUMAN ? 'good' : HUMAN === null ? 'good' : 'bad'); break;
-      case 'found': weight += 2; if (f.p === HUMAN) toast(`Learned <b>${esc(CARDS[f.defId]?.name || f.defId)}</b> — it goes to your discard`, 'learn'); break;
+      case 'match': t += 350; for (const u of f.uids) flash.set(u, 'match'); break;
+      case 'resolveStart': {
+        const sp = findSpell(S, f.uid);
+        const d = CARDS[f.def];
+        const face = d?.faces?.[NUMERALS.indexOf(f.numeral)];
+        const p = sp ? sp.owner : S.active;
+        const colour = SCHOOL_HEX[d?.school] ?? 0xc98bff;
+        castCtx = { p, element: face?.element || null, big: f.numeral === 'IV', face, def: d };
+        if (f.uid) flash.set(f.uid, 'resolve');
+        later(t, () => cues().cast(p, colour, { big: f.numeral === 'IV' }));
+        // Area faces get their own ground effect.
+        if (face?.element === 'force' && face.reach) {
+          const quake = /quake/i.test(face.text);
+          const pp = p, r = face.reach;
+          later(t + 200, () => (quake ? cues().quake(pp, r) : cues().nova(pp, r, 0x9fd8ff)));
+        }
+        t += 300;
+        break;
+      }
+      case 'rotate': t += 120; break;
+      case 'play': case 'golemCard': t += 150; break;
+      case 'destroy': t += 150; break;
+      case 'damage': {
+        const { id, amount, cause } = f;
+        const ctx = castCtx;
+        const delay = t + holdDamage;
+        holdDamage = 0;
+        if ((cause === 'spell' || cause === 'unstable') && ctx) {
+          const el = ctx.element || 'arcane';
+          const big = ctx.big;
+          later(delay, () => cues().bolt(ctx.p, id, { element: el, big, onArrive: () => cues().hit(id, amount, cause) }));
+          t += el === 'lightning' ? 220 : 450;
+        } else if (cause === 'strike') {
+          later(delay + 320, () => cues().hit(id, amount, cause));
+          t += 200;
+        } else {
+          later(delay, () => cues().hit(id, amount, cause));
+          t += 160;
+        }
+        break;
+      }
+      case 'strike': { const { from, to } = f; later(t - 200, () => cues().strike(from ?? f.id, to)); t += 300; break; }
+      case 'kill': { const id = f.id; later(t + 150, () => cues().kill(id)); t += 500; break; }
+      case 'push': { const { id, body, mm, from } = f; later(t, () => cues().push(id, body, mm, from)); t += 160; break; }
+      case 'falls': for (const l of f.landed || []) if (l.key[0] === 'u' && l.drop > 0) { const id = Number(l.key.slice(1)), drop = l.drop; later(t + 250, () => cues().fall(id, drop)); } t += 350; break;
+      case 'hurl': { const { id, mm } = f; later(t, () => cues().hurl(id, mm)); holdDamage = 900; t += 1000; break; }
+      case 'dropRock': { const { id, from, to, onto } = f; later(t, () => cues().dropRock(id, from, to, onto)); holdDamage = 1050; t += 1200; break; }
+      case 'swap': { const { a, b } = f; later(t, () => cues().swap(a, b)); t += 500; break; }
+      case 'raiseWall': t += 500; break;
+      case 'heal': { const { id, amount } = f; later(t, () => cues().heal(id, amount)); t += 250; break; }
+      case 'poisoned': { const id = f.id; later(t, () => cues().poison(id)); t += 150; break; }
+      case 'levitate': { const id = f.id; later(t, () => cues().levitate(id, f.mm)); t += 400; break; }
+      case 'terrainRemoved': { const id = f.id; later(t, () => cues().terrainRemoved(id)); t += 300; break; }
+      case 'ignite': { const id = f.id; later(t, () => cues().ignite(id)); t += 200; break; }
+      case 'propHit': { const id = f.id; later(t, () => cues().propHit(id, f.amount)); t += 120; break; }
+      case 'shatter': t += 400; break;
+      case 'summon': { const id = f.id; later(t + 60, () => cues().summon(id)); t += 500; break; }
+      case 'score': { const p = f.p; later(t, () => cues().score(p)); toast(`${pName(f.p)} +${f.amount} VP — ${SOURCE[f.source] || esc(f.source)}`, f.p === HUMAN ? 'good' : HUMAN === null ? 'good' : 'bad'); t += 500; break; }
+      case 'found': if (f.p === HUMAN) toast(`Learned <b>${esc(CARDS[f.defId]?.name || f.defId)}</b> — it goes to your discard`, 'learn'); t += 300; break;
       case 'turnStart': banner(f.p); break;
-      case 'respawn': weight += 1; break;
-      case 'hurl': weight += 2; arena.floatAtUnit(f.id, 'HURLED', 'fall'); break;
-      case 'dropRock': weight += 2; arena.floatAtUnit(f.onto, 'CRASH', 'kill'); break;
-      case 'heal': weight += 1; arena.floatAtUnit(f.id, `+${f.amount}`, 'heal'); break;
-      case 'raiseWall': case 'swap': weight += 1.5; break;
+      case 'respawn': t += 400; break;
+      case 'win': { const p = f.p; later(t + 300, () => cues().cheer(p)); break; }
+      case 'move': t += 120; break;
       default: break;
     }
   }
   fxSeen = S.fx.length;
   pendingFlash = flash;
-  return weight;
+  return t;
 }
 let pendingFlash = new Map();
 const SOURCE = { objective: 'an objective completed', mage: 'a mage slain', golem: 'a golem slain' };
@@ -214,6 +274,7 @@ const SOURCE = { objective: 'an objective completed', mage: 'a mage slain', gole
 function narrate(f) {
   const P = (p) => `<span class="${pCls(p)}">${pName(p)}</span>`;
   const N = (uid) => `<b>${esc(cardName(uid))}</b>`;
+  const m = (mm) => `${(mm / 1000).toFixed(1)}m`;
   switch (f.kind) {
     case 'turnStart': return `<hr><span class="turn">Turn ${f.turn}</span> — ${P(f.p)}`;
     case 'play': return `${P(f.p)} play${f.p === HUMAN ? '' : 's'} ${N(f.uid)} to the ${CELL_COLOR[f.cell]} cell`;
@@ -234,8 +295,8 @@ function narrate(f) {
     case 'keywordCopy': return `&nbsp;&nbsp;&nbsp;&nbsp;copies <span class="kw">[${esc(f.kw)}]</span> onto ${N(f.to)}`;
     case 'keywordGrant': return `&nbsp;&nbsp;&nbsp;&nbsp;grants <span class="kw">[${esc(f.kw)}]</span> to ${N(f.uid)}`;
     case 'damage': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">${f.amount} damage</span> to ${esc(unitName(f.id))}${f.cause && f.cause !== 'spell' ? ` (${esc(f.cause)})` : ''}`;
-    case 'push': return f.body === 'unit' ? `&nbsp;&nbsp;&nbsp;&nbsp;pushes ${esc(unitName(f.id))} ${(f.mm / 1000).toFixed(1)}m` : `&nbsp;&nbsp;&nbsp;&nbsp;shoves a ${esc(S.field.props.find((p) => p.id === f.id)?.kind || 'rock')} ${(f.mm / 1000).toFixed(1)}m`;
-    case 'falls': return `&nbsp;&nbsp;&nbsp;&nbsp;<b>falls</b>: ${(f.landed || []).map((l) => `${(l.drop / 1000).toFixed(1)}m`).join(', ')}`;
+    case 'push': return f.body === 'unit' ? `&nbsp;&nbsp;&nbsp;&nbsp;pushes ${esc(unitName(f.id))} ${m(f.mm)}` : `&nbsp;&nbsp;&nbsp;&nbsp;shoves a ${esc(propName(f.id))} ${m(f.mm)}`;
+    case 'falls': return `&nbsp;&nbsp;&nbsp;&nbsp;<b>falls</b>: ${(f.landed || []).map((l) => m(l.drop)).join(', ')}`;
     case 'kill': return `<span class="red">☠ ${esc(unitName(f.id))} slain</span>${f.by !== null && f.by !== undefined ? ` by ${P(f.by)}` : ''}`;
     case 'score': return `<span class="gold">+${f.amount} VP</span> to ${P(f.p)} — ${SOURCE[f.source] || esc(f.source)}`;
     case 'summon': return `${P(f.p)} summon${f.p === HUMAN ? '' : 's'} a ${N(f.uid)}`;
@@ -244,14 +305,14 @@ function narrate(f) {
     case 'respawn': return `${P(f.p)} mage respawns`;
     case 'found': return `${P(f.p)} <span class="green">learn${f.p === HUMAN ? '' : 's'} ${esc(CARDS[f.defId]?.name || f.defId)}</span> — ${esc(FINDS[f.why]?.text || f.why)}`;
     case 'golemSpent': return `${N(f.uid)} is spent and goes to the discard`;
-    case 'terrainRemoved': return `&nbsp;&nbsp;&nbsp;&nbsp;removes terrain until end of turn`;
-    case 'levitate': return `&nbsp;&nbsp;&nbsp;&nbsp;raises terrain ${(f.mm / 1000).toFixed(1)}m`;
+    case 'terrainRemoved': return `&nbsp;&nbsp;&nbsp;&nbsp;banishes a ${esc(propName(f.id))} until end of turn`;
+    case 'levitate': return `&nbsp;&nbsp;&nbsp;&nbsp;lifts a ${esc(propName(f.id))} ${m(f.mm)}`;
     case 'relocate': return `&nbsp;&nbsp;&nbsp;&nbsp;relocates ${esc(unitName(f.id))}`;
     case 'reshuffle': return `${P(f.p)} shuffle${f.p === HUMAN ? '' : 's'} the discard back into the deck`;
     case 'prohibited': return `&nbsp;&nbsp;&nbsp;&nbsp;${N(f.uid)} may not rotate again this turn`;
     case 'chainEnd': return f.resolutions > 1 ? `<i>a chain of ${f.resolutions}</i>` : null;
     case 'hurl': return `&nbsp;&nbsp;&nbsp;&nbsp;hurls ${esc(unitName(f.id))} ${(f.mm / 1000).toFixed(0)}m into the air`;
-    case 'dropRock': return `&nbsp;&nbsp;&nbsp;&nbsp;drops a rock on ${esc(unitName(f.onto))}`;
+    case 'dropRock': return `&nbsp;&nbsp;&nbsp;&nbsp;drops a ${esc(propName(f.id))} on ${esc(unitName(f.onto))}`;
     case 'swap': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.a))} and ${esc(unitName(f.b))} swap places`;
     case 'raiseWall': return `&nbsp;&nbsp;&nbsp;&nbsp;a stone wall rises out of the ground`;
     case 'heal': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="green">${esc(unitName(f.id))} regains ${f.amount}</span>`;
@@ -259,6 +320,10 @@ function narrate(f) {
     case 'reanimate': return `&nbsp;&nbsp;&nbsp;&nbsp;${N(f.uid)} rises from the discard`;
     case 'poisoned': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is poisoned (${f.n})`;
     case 'mageLife': return `${P(f.p)} mage now has ${f.maxHp} life`;
+    case 'ignite': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">a ${esc(propName(f.id))} catches fire</span>`;
+    case 'burntOut': return `&nbsp;&nbsp;&nbsp;&nbsp;a ${esc(f.kind)} burns away to ash`;
+    case 'propHit': return `&nbsp;&nbsp;&nbsp;&nbsp;a ${esc(propName(f.id))} cracks (${f.amount})${f.hp <= 0 ? '' : `, ${f.hp} left`}`;
+    case 'shatter': return `&nbsp;&nbsp;&nbsp;&nbsp;<b>a ${esc(f.kind === 'pillar' ? 'standing stone' : f.kind === 'shard' ? 'crystal' : f.kind)} shatters</b>`;
     case 'win': return `<span class="gold big">★ ${P(f.p)} win${f.p === HUMAN ? '' : 's'} — ${esc(f.reason)}</span>`;
     case 'draw': return `<b>a draw at the turn cap</b>`;
     default: return null;
@@ -353,10 +418,12 @@ function cellSigil(colour) {
 function renderTable(p) {
   const pl = S.players[p];
   const cells = document.querySelectorAll(`#table${p} .cell`);
+  const la = p === HUMAN ? myActions() : [];
   cells.forEach((cell, c) => {
     const sp = topOf(S, p, c);
     const slot = cell.querySelector('.slot');
     const badges = cell.querySelector('.badges');
+    cell.classList.toggle('actable', !!sp && la.some((a) => a.uid === sp.uid && a.type !== 'play'));
     if (!sp) {
       if (cell.dataset.uid) { slot.innerHTML = ''; cell.dataset.uid = ''; }
       badges.innerHTML = '';
@@ -412,6 +479,13 @@ function renderHand() {
   const playable = new Set(la.filter((a) => a.type === 'play').map((a) => a.uid));
   const ask = humanToAnswer() && S.pending.request.kind === 'hand' ? S.pending.request : null;
   el.innerHTML = '';
+  // Cards keep their size; when there are too many for the strip they fan
+  // over one another instead of shrinking into something unreadable.
+  const n = pl.hand.length;
+  const size = el.clientHeight - 20;
+  const avail = el.clientWidth - 32;
+  const ov = n > 1 ? Math.min(8, (avail - n * size) / (n - 1)) : 8;
+  el.style.setProperty('--ov', `${Math.max(-size * 0.55, ov)}px`);
   if (HUMAN === null) {
     el.innerHTML = `<div class="watching">Watching two AIs — <button id="takeover">play a new match yourself</button></div>`;
     $('#takeover').onclick = () => newMatch({});
@@ -427,7 +501,7 @@ function renderHand() {
     if (sel?.kind === 'hand' && sel.uid === c.uid) div.classList.add('selected');
     if (ask && ask.options.includes(c.uid)) div.classList.add('askable');
     if (someChosen.includes(c.uid)) div.classList.add('chosen');
-    div.innerHTML = cardSVG(d);
+    div.innerHTML = cardSVG(d) + (playable.has(c.uid) && S.phase === 'spell' ? '<span class="ptag">PLAY</span>' : '');
     div.addEventListener('mouseenter', () => inspectDef(d, 0, null, c));
     div.addEventListener('mouseleave', hideInspector);
     div.addEventListener('click', () => onHandClick(c.uid));
@@ -479,11 +553,20 @@ function inspectUnit(u) {
   showInspector();
 }
 
+function inspectProp(pr) {
+  const spec = { boulder: 'A boulder. Can be climbed and stood on; pushed, it rolls two thirds as far as a body would.', pillar: 'A standing stone. Heavy; a quake can crack it.', shard: 'A crystal shard. Flies when pushed; lightning bursts it.', wall: 'A ruined wall. Can be stood on. Slides a little when shoved.', floater: 'A floating rock, held up by magic. Shove it out from under whoever stands on it.', tree: 'A tree. It burns — and a burning tree bites everyone beside it at the start of every turn, then spreads.' }[pr.kind] || '';
+  $('#inspector').innerHTML = `
+    <div class="ihead">${esc(propName(pr.id))} <small>${pr.hp} hp${pr.burning !== null && pr.burning >= S.turn ? ' · <span class="red">burning</span>' : ''}</small></div>
+    <div class="dim">${spec}</div>`;
+  showInspector();
+}
+
 let hoverUnit = null;
 function onArenaHover(hit) {
   const u = hit?.kind === 'unit' ? S.field.units.find((x) => x.id === hit.id) : null;
-  if (u) inspectUnit(u); else if (hoverUnit !== null) hideInspector();
-  hoverUnit = u ? u.id : null;
+  const pr = hit?.kind === 'prop' ? S.field.props.find((x) => x.id === hit.id) : null;
+  if (u) inspectUnit(u); else if (pr) inspectProp(pr); else if (hoverUnit !== null) hideInspector();
+  hoverUnit = u ? u.id : pr ? pr.id : null;
   if (hit?.kind === 'ground') previewMove(hit.x, hit.y); else if (!u) arena.showGhost(null);
 }
 
@@ -493,7 +576,7 @@ function onHandClick(uid) {
   if (humanToAnswer()) { promptPick(uid); return; }
   if (!humanToMove()) return;
   const plays = myActions().filter((a) => a.type === 'play' && a.uid === uid);
-  if (!plays.length) { toast('That card has nowhere to go right now.', ''); return; }
+  if (!plays.length) { toast(S.phase === 'spell' ? 'That card has nowhere to go right now.' : 'Cards are played in the spell phase.', ''); return; }
   sel = sel?.kind === 'hand' && sel.uid === uid ? null : { kind: 'hand', uid };
   render();
 }
@@ -554,19 +637,12 @@ function onPickProp(id) {
   }
 }
 
-/** The selected unit, if the player is choosing where it walks. */
 function movingUnit() {
   if (!humanToMove() || S.phase !== 'unit' || sel?.kind !== 'unit') return null;
   const u = S.field.units.find((x) => x.id === sel.id);
   return u && !u.dead && !u.acted ? u : null;
 }
 
-/**
- * Where would the unit END if told to walk to (x, y)? Asked of the engine on a
- * copy -- a wall, a ledge or another body can stop it short, and those are
- * rules. Throttled, because a copy is a few milliseconds and the mouse moves
- * every frame.
- */
 let lastPreview = 0, previewKey = '';
 function previewMove(x, y) {
   const u = movingUnit();
@@ -597,12 +673,11 @@ function onPickMarker(data) {
 /* ================================================================ prompts */
 
 function optionLabel(r, o, i) {
-  // A place on the field is named by the number on its marker.
   if (r.show?.[i] && r.show[i].x !== undefined) return `Spot ${i + 1}`;
   if (r.labels && r.labels[i] !== undefined && r.kind !== 'target' && !String(r.labels[i]).startsWith('junction')) return String(r.labels[i]);
   if (r.show?.[i]?.uids) return r.show[i].uids.map(cardName).join(' + ');
   if (r.kind === 'unit') return unitName(o);
-  if (r.kind === 'prop') { const pr = S.field.props.find((x) => x.id === o); return pr ? `${pr.kind} (${pr.id})` : String(o); }
+  if (r.kind === 'prop') return propName(o);
   if (r.kind === 'hand' || r.kind === 'target') {
     const sp = findSpell(S, o);
     if (sp && sp.cell !== null && sp.cell !== undefined) return `${cardName(o)} — ${sp.owner === HUMAN ? 'yours' : 'enemy'}, ${CELL_COLOR[sp.cell]} cell`;
@@ -632,11 +707,12 @@ function renderPrompt() {
   el.hidden = false;
   let html = `<div class="ptitle">${esc(r.prompt || 'Choose')}</div>`;
   if (r.type === 'confirm') {
-    html += `<div class="pbtns"><button data-v="yes">Yes</button><button data-v="no">No</button></div>`;
+    html += `<div class="pbtns"><button data-v="yes" class="primary">Yes</button><button data-v="no">No</button></div>`;
   } else {
     const hint = r.kind === 'unit' ? 'Click a glowing unit on the field, or pick below.'
       : r.kind === 'target' ? 'Click a glowing spell, or pick below.'
       : r.kind === 'hand' ? `Click ${r.count > 1 ? `${r.count} cards` : 'a card'} in your hand, or pick below.`
+      : r.kind === 'prop' ? 'Click a marked terrain piece, or pick below.'
       : r.show?.[0] && r.show[0].x !== undefined ? 'Click a marker on the field, or pick below.' : '';
     if (hint) html += `<div class="phint">${hint}</div>`;
     html += '<div class="pbtns">';
@@ -670,18 +746,29 @@ function markCell(uid, cls) {
   document.querySelector(`#table${sp.owner} .cell[data-cell="${sp.cell}"]`)?.classList.add(cls);
 }
 
-/* ================================================================ action tray */
+/* ================================================================ the flow strip */
 
-// The engine labels moves by compass point, which means nothing from behind
-// the mage's shoulder; the marker already shows where it goes.
-const describeMove = (a) => (a.label.endsWith('+') ? 'climb ' : '');
+function renderFlow() {
+  const el = $('#flow');
+  if (S.winner !== null) { el.innerHTML = `<span class="turnno">Turn <b>${S.turn}</b></span><span class="step now"><i></i><span>Match over</span></span>`; return; }
+  const mine = S.active === HUMAN;
+  if (!mine) {
+    el.innerHTML = `<span class="turnno">Turn <b>${S.turn}</b></span><span class="step enemy"><i></i><span>${HUMAN === null ? `Player ${S.active + 1}` : 'Enemy'}'s turn — ${S.phase === 'spell' ? 'spell action' : 'units'}</span></span>`;
+    return;
+  }
+  const steps = [
+    { k: 'draw', label: 'Draw', state: 'done' },
+    { k: 'spell', label: 'Spell action', state: S.phase === 'spell' ? 'now' : 'done' },
+    { k: 'unit', label: 'Units', state: S.phase === 'unit' ? 'now' : '' },
+    { k: 'end', label: 'End turn', state: '' },
+  ];
+  el.innerHTML = `<span class="turnno">Turn <b>${S.turn}</b></span>` + steps.map((s, i) => `${i ? '<span class="arrow">▸</span>' : ''}<span class="step ${s.state}"><i></i><span>${s.label}</span></span>`).join('');
+}
+
+/* ================================================================ the tray */
 
 function renderTray() {
   const el = $('#tray');
-  const head = $('#phase');
-  const phaseName = S.phase === 'spell' ? 'Spell phase' : S.phase === 'unit' ? 'Unit phase' : S.phase;
-  head.innerHTML = S.winner !== null ? '<b>Match over</b>'
-    : `<span class="${pCls(S.active)}">${whoseTurnName(S.active)}</span> · ${phaseName}`;
   if (HUMAN === null || S.winner !== null) { el.innerHTML = ''; return; }
   if (S.active !== HUMAN && !humanToAnswer()) {
     el.innerHTML = `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span> The enemy is ${S.pending ? 'choosing' : 'thinking'}…</div>`;
@@ -691,46 +778,22 @@ function renderTray() {
   const la = myActions();
   let html = '';
   if (S.phase === 'spell') {
-    html += '<div class="hintline">Take <b>one</b> spell action: play a card, or click one of your spells to <b>rotate</b> it (its new top face resolves), shift or destroy it.</div><div class="btns">';
-    if (la.some((a) => a.type === 'pass')) html += `<button data-a="skip" class="ghost" title="You drew at the start of your turn; you may take no spell action">Skip spell action</button>`;
-    if (sel?.kind === 'spell') {
-      const sp = findSpell(S, sel.uid);
-      const def = defOf(S, sp);
-      const rot = la.find((a) => a.type === 'rotate' && a.uid === sel.uid);
-      const des = la.find((a) => a.type === 'destroy' && a.uid === sel.uid);
-      const shifts = la.filter((a) => a.type === 'shift' && a.uid === sel.uid);
-      if (rot) {
-        const next = def.faces[(activeIndex(sp) + 1) & 3];
-        const r = reachOf(sp, (activeIndex(sp) + 1) & 3);
-        html += `<button data-a="rotate" class="primary" title="${esc(next.text)}">Rotate left → <b>${next.numeral}</b> resolves: ${esc(next.text)}${r ? ` <span class="reach">· reach ${(r.mm / 1000).toFixed(1)}m, ${r.targets.length} enemy in range</span>` : ''}</button>`;
-      } else html += `<span class="note">${esc(def.name)} cannot be rotated by you right now.</span>`;
-      if (des) html += `<button data-a="destroy" class="danger">Destroy ${esc(def.name)}</button>`;
-      if (shifts.length) html += `<span class="note">…or click a glowing cell to shift it.</span>`;
-      html += `<button data-a="cancel" class="ghost">Cancel</button>`;
-    } else if (sel?.kind === 'hand') {
+    if (sel?.kind === 'hand') {
       const plays = la.filter((a) => a.type === 'play' && a.uid === sel.uid);
-      html += `<span class="note">Click a glowing ${plays[0]?.slot !== undefined ? 'golem slot' : 'cell'} to play ${esc(cardName(sel.uid))}.</span>`;
-      if (plays.length === 1) html += `<button data-a="play1" class="primary">Play it</button>`;
-      html += `<button data-a="cancel" class="ghost">Cancel</button>`;
+      html += `<div class="hintline">Click a glowing ${plays[0]?.slot !== undefined ? 'golem slot' : 'cell'} to play <b>${esc(cardName(sel.uid))}</b>${plays.length === 1 ? '' : ''}.</div>`;
+      html += `<div class="units">${plays.length === 1 ? '<button data-a="play1" class="primary">Play it there</button>' : ''}<button data-a="cancel" class="ghost">Cancel</button></div>`;
+    } else if (sel?.kind !== 'spell') {
+      html += `<div class="hintline"><b>Spell action</b>: play a card from your hand, or click one of your spells to rotate, shift or destroy it.</div>`;
+      if (la.some((a) => a.type === 'pass')) html += `<div class="units"><button data-a="skip" class="ghost" title="You drew at the start of your turn; you may take no spell action">Skip spell action ▸</button></div>`;
     }
-    html += '</div>';
   } else if (S.phase === 'unit') {
     const mine = S.field.units.filter((u) => u.owner === HUMAN && !u.dead);
     const ready = mine.filter((u) => la.some((a) => a.type === 'unit' && a.id === u.id));
     if (sel?.kind !== 'unit' || !ready.some((u) => u.id === sel.id)) sel = ready[0] ? { kind: 'unit', id: ready[0].id } : null;
-    html += '<div class="hintline">Each unit may <b>move</b>, <b>strike</b> an adjacent enemy, or (the mage) <b>summon</b> a golem. Click anywhere inside the blue circle to move there; click a red-ringed enemy to strike.</div><div class="btns">';
-    for (const u of ready) {
-      html += `<button data-unit="${u.id}" class="${sel?.id === u.id ? 'on' : ''}">${esc(unitName(u.id))}</button>`;
-    }
-    if (sel?.kind === 'unit') {
-      for (const a of la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'summon')) {
-        html += `<button data-summon="${a.golem}" class="primary">Summon ${esc(cardName(a.golem))}</button>`;
-      }
-      const strikes = la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'strike');
-      for (const a of strikes) html += `<button data-strike="${a.target}" class="danger">Strike ${esc(unitName(a.target))}</button>`;
-      html += `<button data-a="pass" class="ghost">Hold this unit</button>`;
-    }
-    html += `<button data-a="endturn" class="end">End turn</button></div>`;
+    html += `<div class="hintline"><b>Units</b>: click inside the blue circle to move the selected unit, or a red-ringed enemy to strike it. ${ready.length} to go.</div>`;
+    html += '<div class="units">';
+    for (const u of ready) html += `<button data-unit="${u.id}" class="${sel?.id === u.id ? 'on' : ''}">${esc(unitName(u.id))}</button>`;
+    html += `<button data-a="endturn" class="end">End turn ▸</button></div>`;
   }
   el.innerHTML = html;
   el.querySelectorAll('button').forEach((b) => {
@@ -738,17 +801,89 @@ function renderTray() {
       const la2 = myActions();
       const A = b.dataset.a;
       if (A === 'skip') return act(la2.find((a) => a.type === 'pass'));
-      if (A === 'rotate') return act(la2.find((a) => a.type === 'rotate' && a.uid === sel.uid));
-      if (A === 'destroy') return act(la2.find((a) => a.type === 'destroy' && a.uid === sel.uid));
       if (A === 'play1') return act(la2.find((a) => a.type === 'play' && a.uid === sel.uid));
       if (A === 'cancel') { sel = null; return render(); }
-      if (A === 'pass') return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'pass'));
       if (A === 'endturn') return endTurn();
       if (b.dataset.unit) { sel = { kind: 'unit', id: Number(b.dataset.unit) }; return render(); }
+    };
+  });
+}
+
+/* ================================================================ the popover */
+
+// A control sits next to the thing it acts on. A selected spell gets its
+// actions beside its cell; a selected unit gets them over its head.
+let popTrack = null;   // () => [x, y] for a popover that follows a unit
+function renderPopover() {
+  const el = $('#popover');
+  popTrack = null;
+  if (!humanToMove()) { el.hidden = true; return; }
+  const la = myActions();
+  if (sel?.kind === 'spell') {
+    const sp = findSpell(S, sel.uid);
+    if (!sp) { el.hidden = true; return; }
+    const def = defOf(S, sp);
+    const rot = la.find((a) => a.type === 'rotate' && a.uid === sel.uid);
+    const des = la.find((a) => a.type === 'destroy' && a.uid === sel.uid);
+    const shifts = la.filter((a) => a.type === 'shift' && a.uid === sel.uid);
+    const cur = def.faces[activeIndex(sp)];
+    let html = `<div class="ptitle" style="color:${SCHOOL_INK[def.school]}">${esc(def.name)}</div><div class="psub">Showing <b>${cur.numeral}</b> — ${esc(cur.text)}</div><div class="acts">`;
+    if (rot) {
+      const next = def.faces[(activeIndex(sp) + 1) & 3];
+      const r = reachOf(sp, (activeIndex(sp) + 1) & 3);
+      html += `<button data-a="rotate" class="primary">↺ Rotate to <b>${next.numeral}</b> and resolve it<span class="sub">${esc(next.text)}${r ? ` · reach ${(r.mm / 1000).toFixed(1)}m, ${r.targets.length} enem${r.targets.length === 1 ? 'y' : 'ies'} in range` : ''}${next.cost?.length ? ' · has a cost' : ''}</span></button>`;
+    } else html += `<div class="psub">Cannot be rotated by you right now${CELL_COLOR[sp.cell] !== def.school && def.kind !== 'artifact' ? ' — it is off its colour' : ''}.</div>`;
+    if (shifts.length) html += `<div class="psub">⇄ Shift: click a glowing cell to move it there.</div>`;
+    html += '<div class="row">';
+    if (des) html += `<button data-a="destroy" class="danger">✕ Destroy</button>`;
+    html += `<button data-a="cancel" class="ghost">Cancel</button></div></div>`;
+    el.innerHTML = html;
+    el.className = '';
+    el.hidden = false;
+    const cell = document.querySelector(`#table${HUMAN} .cell[data-cell="${sp.cell}"]`);
+    const b = cell.getBoundingClientRect();
+    el.style.left = `${b.right + 14}px`;
+    el.style.top = `${Math.max(66, Math.min(window.innerHeight - el.offsetHeight - 12, b.top - 14))}px`;
+  } else if (sel?.kind === 'unit' && S.phase === 'unit') {
+    const u = S.field.units.find((x) => x.id === sel.id);
+    if (!u) { el.hidden = true; return; }
+    const summons = la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'summon');
+    const strikes = la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'strike');
+    const canMove = la.some((x) => x.type === 'unit' && x.id === sel.id && x.act === 'move');
+    let html = `<div class="ptitle ${pCls(u.owner)}">${esc(unitName(u.id))}</div><div class="psub">${canMove ? 'Click inside the blue circle to walk.' : 'Cannot move from here.'}</div><div class="acts">`;
+    for (const a of strikes) html += `<button data-strike="${a.target}" class="danger">⚔ Strike ${esc(unitName(a.target))}</button>`;
+    for (const a of summons) html += `<button data-summon="${a.golem}" class="primary">✦ Summon ${esc(cardName(a.golem))}<span class="sub">Spends the mage's action</span></button>`;
+    html += `<button data-a="pass" class="ghost">Hold position</button></div>`;
+    el.innerHTML = html;
+    el.className = 'below';
+    el.hidden = false;
+    popTrack = () => arena.unitScreen(u.id);
+    trackPopover();
+  } else { el.hidden = true; return; }
+  el.querySelectorAll('button').forEach((b) => {
+    b.onclick = () => {
+      const la2 = myActions();
+      const A = b.dataset.a;
+      if (A === 'rotate') return act(la2.find((a) => a.type === 'rotate' && a.uid === sel.uid));
+      if (A === 'destroy') return act(la2.find((a) => a.type === 'destroy' && a.uid === sel.uid));
+      if (A === 'cancel') { sel = null; return render(); }
+      if (A === 'pass') return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'pass'));
       if (b.dataset.summon) return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'summon' && String(a.golem) === b.dataset.summon));
       if (b.dataset.strike) return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'strike' && String(a.target) === b.dataset.strike));
     };
   });
+}
+
+function trackPopover() {
+  if (!popTrack) return;
+  const el = $('#popover');
+  const p = popTrack();
+  if (p) {
+    const w = el.offsetWidth;
+    el.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, p[0] - w / 2))}px`;
+    el.style.top = `${Math.max(66, p[1] - el.offsetHeight - 26)}px`;
+  }
+  requestAnimationFrame(() => { if (popTrack) trackPopover(); });
 }
 
 /** Hold every unit that has not acted. Each pass is a real engine action. */
@@ -794,7 +929,7 @@ function renderHighlights() {
     }
     if (r.kind === 'prop') {
       const pts = r.options.map((id) => S.field.props.find((p) => p.id === id)).filter(Boolean)
-        .map((pr) => ({ x: pr.x, y: pr.y, z: pr.z, label: pr.kind, data: { answer: pr.id } }));
+        .map((pr) => ({ x: pr.x, y: pr.y, z: pr.z, label: propName(pr.id), data: { answer: pr.id } }));
       arena.setMarkers(pts, 0xffe066);
     }
     return;
@@ -829,11 +964,6 @@ function renderHighlights() {
 
 /* ================================================================ range */
 
-/**
- * How far a face of this spell reaches right now, and which enemies are in it.
- * Built from the engine's own context, so [Reach], Focus Stone, [Ignore
- * Height] and every other modifier are already in -- the ring is the rule.
- */
 function reachOf(sp, index) {
   const def = defOf(S, sp);
   const face = def.faces[index];
@@ -843,14 +973,12 @@ function reachOf(sp, index) {
   return { mm: r.mm, numeral: face.numeral, targets: ctx.enemyUnits(face.reach) };
 }
 
-/** The rings to draw: the face a rotation would bring up, from every origin. */
 let hoverSpell = null;
 function rangePreview() {
   const out = [];
   const add = (sp, index, colour, when) => {
     const r = reachOf(sp, index);
     if (!r) return;
-    // A ring from EVERY origin -- golems project range too -- but one label.
     rangeOrigins(S, sp.owner).forEach((o, i) => {
       out.push({ x: o.x, y: o.y, r: r.mm, colour, label: i ? null : `${defOf(S, sp).name} ${r.numeral} · ${(r.mm / 1000).toFixed(1)}m ${when}` });
     });
@@ -875,12 +1003,28 @@ function renderTop() {
     return `<div class="vp ${pCls(p)}"><span class="vpn">${pName(p)}</span><div class="vpbar"><i style="width:${pct}%"></i>${Array.from({ length: 14 }, (_, k) => `<s style="left:${((k + 1) / 15) * 100}%"></s>`).join('')}</div><b>${S.vp[p]}</b></div>`;
   };
   $('#vps').innerHTML = vp(0) + vp(1);
-  $('#turn').textContent = `Turn ${S.turn}`;
   for (const p of [0, 1]) {
     const m = S.field.units.find((u) => u.owner === p && u.kind === 'mage');
     const dead = !m || m.dead;
     $(`#mage${p}`).innerHTML = dead ? `<span class="red">mage slain — returns turn ${S.players[p].mage.respawnOnTurn ?? '?'}</span>` : '';
   }
+  renderFlow();
+}
+
+/* ================================================================ viewport */
+
+/** The clear part of the screen, so the camera frames the arena there. */
+function updateViewport() {
+  if (!arena) return;
+  const hud = $('#hud');
+  if (hud.classList.contains('hidden')) { arena.setViewport({ left: 0, top: 58, width: window.innerWidth, height: window.innerHeight - 58 }); return; }
+  const mine = $('#mine').getBoundingClientRect();
+  const theirs = $('#theirs').getBoundingClientRect();
+  const hand = $('#hand').getBoundingClientRect();
+  const left = window.innerWidth > 820 ? mine.right + 8 : 0;
+  const right = window.innerWidth > 820 ? theirs.left - 8 : window.innerWidth;
+  const top = 58, bottom = hand.top - 4;
+  arena.setViewport({ left, top, width: Math.max(240, right - left), height: Math.max(200, bottom - top) });
 }
 
 /* ================================================================ render */
@@ -895,6 +1039,7 @@ function render() {
   renderTray();
   arena.sync(S);
   renderHighlights();
+  renderPopover();
   pendingFlash = new Map();
   window.WG.state = S;
 }
@@ -909,15 +1054,19 @@ function endMatch() {
   const prof = profile.load();
   const won = S.winner === HUMAN;
   const title = S.winner === -1 ? 'A draw' : HUMAN === null ? `Player ${S.winner + 1} wins` : won ? 'Victory' : 'Defeat';
-  modal(`<h2 class="${won ? 'gold' : ''}">${title}</h2>
+  setTimeout(() => modal(`<h2 class="${won ? 'gold' : ''}">${title}</h2>
     <p class="big">${S.vp[0]} – ${S.vp[1]} <small>after ${S.turn} turns · ${esc(S.reason || '')}</small></p>
     ${HUMAN !== null ? `<p>${learned ? `<b class="green">${learned} new way${learned > 1 ? 's' : ''} to find spells</b> written into your Spellbook.` : 'Nothing new for the Spellbook this time.'}<br>
       Spellbook: ${Object.keys(prof.learned).length}/${FIND_IDS.length} ways known · ${prof.matches} duel${prof.matches === 1 ? '' : 's'} · ${prof.wins} won</p>` : ''}
     ${ledgerTable()}
-    <div class="mbtns"><button id="again" class="primary">New duel</button><button id="sb">Open Spellbook</button><button id="close" class="ghost">Look at the board</button></div>`);
-  $('#again').onclick = () => { closeModal(); newMatch({ pool: params.has('pool'), policy: POLICY, watch: HUMAN === null }); };
-  $('#sb').onclick = openSpellbook;
-  $('#close').onclick = closeModal;
+    <div class="mbtns"><button id="again" class="primary">New duel</button><button id="sb">Open Spellbook</button><button id="close" class="ghost">Look at the battlefield</button></div>`), FAST ? 0 : 1800);
+  const hook = () => {
+    const again = $('#again'); if (!again) { setTimeout(hook, 100); return; }
+    again.onclick = () => { closeModal(); newMatch({ pool: params.has('pool'), policy: POLICY, watch: HUMAN === null }); };
+    $('#sb').onclick = openSpellbook;
+    $('#close').onclick = closeModal;
+  };
+  setTimeout(hook, FAST ? 10 : 1850);
 }
 
 function ledgerTable() {
@@ -930,6 +1079,8 @@ function ledgerTable() {
     ${row('Rotations', (p) => L(p).rotations)}
     ${row('Spells lost', (p) => L(p).spellsDestroyed)}
     ${row('Damage dealt', (p) => L(p).damageDealt)}
+    ${row('Terrain broken', (p) => L(p).propsBroken)}
+    ${row('Fires lit', (p) => L(p).firesLit)}
     ${row('Cards learned', (p) => L(p).cardsFound)}</table>`;
 }
 
@@ -964,11 +1115,14 @@ function openNewGame() {
     <label>Arena seed <input id="ng-seed" type="number" value="${Math.floor(Math.random() * 1e6)}"></label>
     <label>Opponent <select id="ng-ai"><option value="oneply">Adept (strongest)</option><option value="greedy">Apprentice</option><option value="random">Novice (random)</option></select></label>
     <label>Decks <select id="ng-deck"><option value="std">Standard ten-card deck</option><option value="pool">Random decks from all 60 cards</option></select></label>
+    <label>Graphics <select id="ng-q"><option value="high">High (bloom, 4k shadows)</option><option value="medium">Medium</option><option value="low">Low (laptops)</option></select></label>
     <label class="row"><input id="ng-watch" type="checkbox"> Just watch two AIs</label>
     <div class="mbtns"><button id="ng-go" class="primary">Begin</button><button id="close" class="ghost">Cancel</button></div>`);
   $('#ng-ai').value = POLICY;
+  $('#ng-q').value = profile.setting('quality') || 'high';
   $('#ng-go').onclick = () => {
     const seed = Number($('#ng-seed').value) || 1;
+    profile.setting('quality', $('#ng-q').value);
     closeModal();
     newMatch({ seed, policy: $('#ng-ai').value, pool: $('#ng-deck').value === 'pool', watch: $('#ng-watch').checked });
   };
@@ -980,15 +1134,16 @@ function openRules() {
   modal(`<h2>How to play</h2>
     <div class="rules">
     <p><b>Goal:</b> first to <b>15 VP</b>. Gold spells score by completing hard objectives (scoring sends the gold spell to your discard). Killing a mage is worth 2 VP; a golem, 1.</p>
-    <p><b>Your turn</b>: draw a card, take one <b>spell action</b>, then a <b>unit phase</b>.</p>
-    <p><b>Spell actions</b> (pick one): play a card onto its colour · <b>rotate</b> one of your spells left — <b>its new top face resolves</b> · shift a spell to an adjacent cell · destroy one of your spells · or skip. Artifacts go on the grey corners; golem cards go in the slots beneath.</p>
-    <p><b>The top face is active.</b> Cards land showing side I, and each left turn brings up the next face. <b>Side IV is every card's payoff</b>; sides I–III build toward it, and most make you pay something to get there. Select a spell to see the range of the face it would turn to. You can only rotate a spell yourself while it sits on its own colour.</p>
+    <p><b>Your turn</b> runs along the strip at the top: draw a card, take one <b>spell action</b>, then move your <b>units</b>, then end the turn.</p>
+    <p><b>Spell actions</b> (pick one): play a card from your hand onto its colour · click one of your spells and <b>rotate</b> it — <b>its new top face resolves</b> · shift it to an adjacent cell · destroy it · or skip. Artifacts go on the grey corners; golem cards go in the slots beneath.</p>
+    <p><b>The top face is active.</b> Cards land showing side I, and each left turn brings up the next face. <b>Side IV is every card's payoff</b>; sides I–III build toward it, and most make you pay something to get there. Selecting a spell draws the range of the face it would turn to. You can only rotate a spell yourself while it sits on its own colour.</p>
     <p><b>Matches:</b> wherever two of your cards meet at a corner showing the <b>same rune</b>, they match. You must choose one of them; it rotates left and its new top face <b>resolves</b>. That can set off another match, and another — a chain. Each junction resonates once per chain, and a spell turns at most four times per action. A chain is mandatory, so it can hurt you.</p>
     <p class="runes">${R('SPIRAL')} Spiral — turning &amp; shifting &nbsp; ${R('SHARD')} Shard — destruction &amp; damage &nbsp; ${R('WHEEL')} Wheel — pushing &amp; terrain &nbsp; ${R('LATTICE')} Lattice — cards, keywords, scoring</p>
     <p><b>[Keywords]</b> are copied onto the other card on a match — put [Ignore Height] on a push, [Poison] on a fireball.</p>
-    <p><b>Units:</b> each may move anywhere inside its blue move circle, strike an adjacent enemy, or (the mage) summon a golem beside itself. Mages have 5 life unless a passive raises it. Golem tiers cap how many are out at once: C three, B two, A one. A golem card that has deployed and then lost every unit is spent.</p>
-    <p><b>The field is real distance.</b> Climb walls slowly, fall off ledges for damage, shove rocks out from under people.</p>
+    <p><b>Units:</b> click a unit, then anywhere inside its blue circle to walk there; click a red-ringed enemy to strike; the mage can summon a golem beside itself. Mages have 5 life unless a passive raises it. Golem tiers cap how many are out at once: C three, B two, A one. A golem card that has deployed and then lost every unit is spent.</p>
+    <p><b>Everything on the field can be affected.</b> Every rock, stone, crystal, wall and tree has weight and hit points: force spells throw them and crack them, fire lights the trees — and a burning tree bites everyone beside it each turn, then spreads. Climb walls, fall off ledges, shove rocks out from under people.</p>
     <p><b>The Spellbook</b> remembers the ways you've found new spells, across every duel.</p>
+    <p class="dim">Camera: drag to orbit, wheel to zoom, right-drag to pan, <b>H</b> to go home. <b>Tab</b> hides the panels. <b>Esc</b> cancels.</p>
     </div>
     <div class="mbtns"><button id="close" class="primary">Got it</button></div>`);
   $('#close').onclick = closeModal;
@@ -1018,16 +1173,30 @@ function boot() {
   $('#btn-new').onclick = openNewGame;
   $('#btn-book').onclick = openSpellbook;
   $('#btn-rules').onclick = openRules;
+  $('#btn-log').onclick = () => { const w = $('#logwrap'); w.classList.toggle('collapsed'); $('#btn-log').textContent = w.classList.contains('collapsed') ? 'Expand' : 'Collapse'; $('#log').scrollTop = $('#log').scrollHeight; };
+  $('#btn-hide').onclick = toggleHud;
   document.addEventListener('click', (e) => {
     const d = e.target.closest('.discard');
     if (d) openDiscard(Number(d.dataset.p));
   });
   document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.key === 'Escape') { if (!$('#modal').hidden) closeModal(); else { sel = null; render(); } }
+    if (e.key === 'Tab') { e.preventDefault(); toggleHud(); }
+    if (e.key === 'h' || e.key === 'H') arena?.home();
+    if (e.key === 'Enter' && humanToMove()) { if (S.phase === 'unit') endTurn(); else { const a = myActions().find((x) => x.type === 'pass'); if (a && !sel) act(a); } }
   });
+  window.addEventListener('resize', () => { updateViewport(); render(); });
   const seed = params.has('seed') ? Number(params.get('seed')) : undefined;
   newMatch({ seed, watch: params.has('watch'), pool: params.has('pool'), policy: params.get('ai') || 'oneply' });
   if (!params.has('seed') && !profile.seen('rules')) openRules();
+}
+
+function toggleHud() {
+  const hud = $('#hud');
+  hud.classList.toggle('hidden');
+  $('#btn-hide').textContent = hud.classList.contains('hidden') ? 'Show HUD' : 'Hide HUD';
+  updateViewport();
 }
 
 boot();

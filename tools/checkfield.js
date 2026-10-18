@@ -128,7 +128,12 @@ const ok = (cond, msg) => { if (cond) pass++; else { fail++; console.log(`  FAIL
         // z must equal the surface recomputed from scratch at this position.
         // If z were accumulated rather than re-derived, a long path would end
         // somewhere the ground is not.
-        const fresh = surfaceAt(state, u.x, u.y);
+        // Capped at a climbable rise above the body's feet, exactly as the
+        // walk itself samples it: a floating rock overhead is not the
+        // surface a unit standing under it is on. Drift in either direction
+        // still shows -- a z that crept up finds the real ground below it,
+        // and one that sank finds the ground above it.
+        const fresh = surfaceAt(state, u.x, u.y, { maxZ: u.z + CLIMB_RATE });
         if (u.z !== fresh.z) { bad++; if (bad <= 3) console.log(`  FAIL seed ${seed} unit ${u.id} at ${u.x},${u.y} has z ${u.z}, surface says ${fresh.z}`); }
         if (!inBounds(state.arena, u.x, u.y)) { bad++; console.log(`  FAIL unit ${u.id} walked out of bounds`); }
         if (!supported(state, u)) { bad++; if (bad <= 3) console.log(`  FAIL seed ${seed} unit ${u.id} is unsupported at rest`); }

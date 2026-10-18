@@ -20,7 +20,7 @@ import { objectiveVp } from '../rules/objectives.js';
 import { vpConfig } from '../rules/score.js';
 import { unitsOf, enemiesOf, livingUnits, mageOf, onHighGround, rangeOrigins } from '../field/query.js';
 import { dist3, isqrt, idiv } from '../field/fixed.js';
-import { heightAt } from '../field/arena.js';
+import { heightAt, propR, propBurning, FIRE_REACH } from '../field/arena.js';
 
 export const WEIGHTS = Object.freeze({
   vp: 100,
@@ -42,6 +42,7 @@ export const WEIGHTS = Object.freeze({
   exposure: -26,        // VP the opponent would collect for killing your units
   golemCard: 7,
   golemSpent: -5,
+  nearFire: -9,         // a unit standing where a burning piece will bite it next turn
 });
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -144,6 +145,7 @@ export function evaluate(state, p) {
 
   s += matchPotential(state, p) - matchPotential(state, foe);
   s += goldOutlook(state, p) - goldOutlook(state, foe);
+  const burning = state.field.props.filter((pr) => propBurning(state, pr));
 
   for (const q of [p, foe]) {
     const sign = q === p ? 1 : -1;
@@ -164,6 +166,9 @@ export function evaluate(state, p) {
       s += sign * (WEIGHTS.unitAlive + (u.kind === 'mage' ? WEIGHTS.mageAlive : 0));
       s += sign * WEIGHTS.unitHp * u.hp;
       if (onHighGround(state, u)) s += sign * WEIGHTS.height;
+      // Fire bites at the start of every turn. A bot that cannot see a burning
+      // tree walks its mage up to one and stands there.
+      if (burning.some((pr) => (pr.x - u.x) ** 2 + (pr.y - u.y) ** 2 <= (propR(pr) + FIRE_REACH) ** 2)) s += sign * WEIGHTS.nearFire;
     }
   }
 
