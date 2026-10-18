@@ -203,9 +203,37 @@ one funnel, so a new Keyword works on every existing face the day it is register
 - `[Stun]` spends the target's action.
 - `[Channel]` marks a unit as a **range origin**.
 
-Starting vocabulary, from your printed cards: `Inevitable, Crush, Stun, Unstable N,
-Spell Mastery, Channel, Spell Bane, Counterspell, Consume, Reverse N, Ignore Height,
-Absorb, Impact N, Move +N, Speed Cast, Trap`.
+The implemented set is **fifteen**, each with exactly one hook and no exceptions:
+
+| Keyword | what it does | hook |
+|---|---|---|
+| `[Ignore Height]` | range ignores height | `range` |
+| `[Reach]` | range +1m | `range` |
+| `[Impact]` | damage +1 | `damage` |
+| `[Crush]` | a blocked push deals the travel it lost as damage | `push` |
+| `[Levitate]` | a push ignores terrain | `push` |
+| `[Stun]` | spends the target's action | `hit` |
+| `[Poison]` | 1 damage at the start of the target's turns | `hit` |
+| `[Absorb]` | takes 1 less damage | `incoming` |
+| `[Swift]` | moves 1m further | `unitMove` |
+| `[Channel]` | this unit is a range origin | `origin` |
+| `[Inevitable]` | resolves even with its gate unmet | `gate` |
+| `[Spell Mastery]` | may be rotated on any colour | `turnLock` |
+| `[Spell Bane]` | may target enemy Spells | `targets` |
+| `[Consume]` | destroying a friendly Spell for a cost also draws a card | `cost` |
+| `[Unstable]` | deals 1 damage to a unit in range when destroyed | `onDestroy` |
+
+The hook list is **closed**, and `tools/checkcorpus.js` checks every hook from
+both ends: registered by a Keyword that is actually on a card, **and** called by
+the engine. That second check is not decoration — three Keywords failed it on its
+first run and did nothing whatsoever.
+
+Printed Keywords not carried over, and why: `Counterspell` and `Trap` need a
+replacement effect that can ask a question, which the replacement path
+deliberately cannot do (it runs inside `hurt`, mid-mutation); `Speed Cast` and
+`Reverse N` belong to the mana economy that no longer exists; `Move +N` became
+`[Swift]` and `Unstable N` became `[Unstable]`, because a numeric parameter on a
+Keyword name is a second axis the matcher would have to understand.
 
 **Purple** reads the Keyword set as *input* rather than modifying it — scale by
 distinct Keyword count, fuse a neighbour's Keywords, require two at once. Printed
@@ -383,6 +411,25 @@ things from that one declaration:
 A **prohibition** (*"you may not rotate this Spell again this turn"*) is
 stronger: it stops the rotation itself, so the matched junction is spent and
 nothing at all happens.
+
+### The three questions the plan left open, now answered
+
+**Playing a golem card or an artifact is a full spell action.** `play` covers
+spells, artifacts and golem cards alike, which keeps the one-action-per-turn rule
+absolute and makes developing your golem line genuinely expensive.
+
+**Summoning spends the mage's whole Unit-Phase action.** It is one of the mage's
+three options, not a free extra, so a summoning mage neither moves nor strikes
+that turn.
+
+**Artifacts and golem cards sit inside the ten.** The standard deck is ten cards
+and that is the whole deck: eight spells, one artifact, one golem card. There are
+no separate piles. So choosing to spend your one action putting a golem card into
+a slot is also choosing not to develop your table that turn.
+
+**A found card arrives once per match, one copy.** The condition can only pay out
+once per duel, and the card goes to your discard — not your hand, so you still
+have to draw it.
 
 ### Golem cards are not four-sided
 

@@ -90,3 +90,36 @@ card({
   III: { text: 'Grant a Spell [Poison].', ...M.grantKeyword({ kw: 'Poison' }) },
   IV:  { text: 'Deal 1 damage to each enemy unit within 2.5m.', ...M.damageAll({ amount: 1, range: 2500 }) },
 });
+
+/* ------------------------------------------------------------ second tranche */
+// Designed against tools/checkcorpus.js, which reports every registry entry no
+// card uses. These cover the machinery the first pass left stranded -- a cost
+// that destroys the card paying it, a cost paid on the battlefield, and the one
+// keyword that does something when its carrier dies.
+
+card({
+  id: 'ASH_WRAITH', name: 'Ash Wraith', school: 'red',
+  keywords: ['Unstable'],
+  runes: [SHARD, SHARD, SHARD, WHEEL],
+  found: 'unstableEnd',
+  I:   { text: 'Deal 2 damage to an enemy unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
+  // The cost destroys the card that is paying it, which also sets off its own
+  // [Unstable] -- the blast is the point of the face, not a side effect.
+  II:  { text: 'Destroy this Spell. Deal 3 damage to an enemy unit within 4m.',
+         cost: [{ id: 'destroySelf' }], ...M.damage({ amount: 3, range: 4000 }) },
+  III: { text: 'Deal 1 damage to each enemy unit within 2.5m.', ...M.damageAll({ amount: 1, range: 2500 }) },
+  IV:  { text: 'Push an enemy unit within 3m 2m.', ...M.push({ mm: 2000, range: 3000 }) },
+});
+
+card({
+  id: 'SIEGE_BRAND', name: 'Siege Brand', school: 'red',
+  runes: [SHARD, SHARD, WHEEL, LATTICE],
+  found: 'besieged',
+  I:   { text: 'If your mage is alive, deal 3 damage to an enemy unit within 4m.',
+         gate: { id: 'mageAlive' }, ...M.damage({ amount: 3, range: 4000 }) },
+  // The only cost in the game paid on the battlefield rather than at the table.
+  II:  { text: "Spend a friendly unit's action. Deal 4 damage to an enemy unit within 4m.",
+         cost: [{ id: 'spendUnitAction' }], ...M.damage({ amount: 4, range: 4000 }) },
+  III: { text: 'Push an enemy unit within 3m 3m away.', ...M.pushAway({ mm: 3000, range: 3000 }) },
+  IV:  { text: 'Your damage is increased by 1.', ...M.passiveDamage({ n: 1 }) },
+});

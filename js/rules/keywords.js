@@ -73,8 +73,15 @@ export const KEYWORDS = Object.freeze({
 
   Swift: { text: 'Moves 1m further.', unitMove: (mv) => ({ ...mv, mm: mv.mm + 1000 }) },
 
-  /** A range origin. Read by query.js; nothing here to do but say so. */
-  Channel: { text: 'Spells may measure range from this unit.', origin: true },
+  /**
+   * A range origin -- which is what makes losing your mage cost more than a
+   * unit phase, and what a [Channel] golem buys back.
+   *
+   * Through the hook, not by name. query.js used to test `unitHas(u,
+   * 'Channel')`, which works right up until a second keyword wants to grant an
+   * origin and has to be added to a hard-coded list in another file.
+   */
+  Channel: { text: 'Spells may measure range from this unit.', origin: (o) => ({ ...o, isOrigin: true }) },
 
   /**
    * An unmet gate normally makes a face resolve inert. [Inevitable] is the

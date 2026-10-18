@@ -14,6 +14,7 @@ import {
   heightAt, inBounds, aboveMedian, propOnBoard, propR, propH, propTop, propSpec,
   BODY_R, STEP_UP, QUANT,
 } from './arena.js';
+import { applyFor } from '../rules/keywords.js';
 
 /** How tall a body is. Used for "can I walk under that floating rock". */
 export const BODY_H = 1800;
@@ -133,9 +134,13 @@ export const walkable = (state, x, y, feet, opts = {}) =>
  */
 export function rangeOrigins(state, p) {
   return livingUnits(state)
-    .filter((u) => u.owner === p && (u.kind === 'mage' || unitHas(state, u, 'Channel')))
+    .filter((u) => u.owner === p && isOrigin(state, u))
     .sort((a, b) => a.id - b.id);
 }
+
+/** Through the keyword funnel, so a second origin-granting keyword just works. */
+export const isOrigin = (state, u) =>
+  applyFor(unitKeywords(state, u), 'origin', { isOrigin: u.kind === 'mage' }).isOrigin;
 
 /**
  * Is `target` within `mm` of any of `p`'s origins?

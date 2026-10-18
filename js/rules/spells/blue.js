@@ -82,3 +82,30 @@ card({
   III: { text: 'Push a terrain piece within 4m 2m.', ...M.shoveTerrain({ mm: 2000, range: 4000 }) },
   IV:  { text: 'Your range is increased by 1m.', ...M.passiveRange({ mm: 1000 }) },
 });
+
+/* ------------------------------------------------------------ second tranche */
+
+card({
+  id: 'TIDE_CALLER', name: 'Tide Caller', school: 'blue',
+  runes: [SHARD, WHEEL, WHEEL, WHEEL],
+  found: 'tideTurn',
+  I:   { text: 'After a friendly unit moves, deal 1 damage to an enemy within 3m.',
+         ...M.onMoveDamage({ amount: 1, range: 3000 }) },
+  II:  { text: 'Pull an enemy unit within 4m 3m toward you.', ...M.pull({ mm: 3000, range: 4000 }) },
+  III: { text: 'Push a terrain piece within 4m 3m.', ...M.shoveTerrain({ mm: 3000, range: 4000 }) },
+  IV:  { text: 'Relocate a friendly unit up to 3m.', ...M.relocate({ mm: 3000, range: 4000 }) },
+});
+
+card({
+  id: 'SKY_ANCHOR', name: 'Sky Anchor', school: 'blue',
+  keywords: ['Ignore Height'],
+  runes: [WHEEL, WHEEL, WHEEL, LATTICE],
+  found: 'anchored',
+  // A gate on the TABLE rather than on the battlefield, which is the half of the
+  // gate vocabulary blue otherwise never touches.
+  I:   { text: 'If the cell above this one is empty, relocate a friendly unit up to 4m.',
+         gate: { id: 'neighbourEmpty', where: 'above' }, ...M.relocate({ mm: 4000, range: 4000 }) },
+  II:  { text: 'Raise a terrain piece within 4m by 2m.', ...M.liftTerrain({ mm: 2000, range: 4000 }) },
+  III: { text: 'Remove a terrain piece within 5m until end of turn.', ...M.banishTerrain({ range: 5000 }) },
+  IV:  { text: 'Grant a Spell [Levitate].', ...M.grantKeyword({ kw: 'Levitate' }) },
+});

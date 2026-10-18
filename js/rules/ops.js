@@ -22,6 +22,7 @@ import { shuffle } from './rng.js';
 // import into module-evaluation code.
 import { emit } from './triggers.js';
 import { ensureFresh } from './derive.js';
+import { keywordsOf, applyFor } from './keywords.js';
 
 /**
  * RULE B. NO SPELL MAY BE ROTATED MORE THAN FOUR TIMES IN ONE SPELL ACTION.
@@ -177,6 +178,10 @@ export function prohibited(state, spell) {
 export function canTurn(state, spell) {
   if (prohibited(state, spell)) return false;
   if (ensureFresh(state)?.freeTurn?.has(spell.uid)) return true;
+  // Through the keyword funnel as well, not only the derived bucket. [Spell
+  // Mastery] registers the `turnLock` hook and nothing called it, so the
+  // passive form of this worked and the keyword form silently did not.
+  if (applyFor(keywordsOf(state, spell), 'turnLock', { free: false }).free) return true;
   return onHomeColour(state, spell);
 }
 
@@ -234,6 +239,17 @@ export const markDirty = (state, p) => {
   // half-mutated board.
   state.derivedStale = true;
 };
+
+/**
+ * Which keywords have something to say when their carrier is destroyed.
+ *
+ * Computed from the registry rather than listed, so a new keyword with an
+ * `onDestroy` hook works without editing this file.
+ */
+import { KEYWORDS } from './keywords.js';
+const KEYWORDS_ON_DESTROY = new Set(
+  Object.keys(KEYWORDS).filter((k) => typeof KEYWORDS[k].onDestroy === 'function'),
+);
 
 /* ------------------------------------------------------------ actions */
 
@@ -323,6 +339,9 @@ export function shift(state, uid, cell) {
 export function destroy(state, uid, { by = null } = {}) {
   const at = locate(state, uid);
   if (!at || at.zone !== 'table') return null;
+  // Captured BEFORE the card leaves the table: copied keywords are cleared on
+  // the way out, and a derived grant stops applying the moment it is gone.
+  const parting = keywordsOf(state, at.card).filter((k) => KEYWORDS_ON_DESTROY.has(k));
   const card = extract(state, uid);
   card.cell = null;
   card.rot = 0;
@@ -333,6 +352,11 @@ export function destroy(state, uid, { by = null } = {}) {
   state.players[card.owner].ledger.spellsDestroyed++;
   markDirty(state, at.player);
   fx(state, 'destroy', { uid, p: at.player, cell: at.cell, by });
+  if (parting.length && state.queue) {
+    state.queue.push({
+      kind: 'onDestroy', uid, p: at.player, keywords: parting, seq: ++state.actionSeq,
+    });
+  }
   emit(state, 'afterDestroy', { uid, p: at.player, cell: at.cell, by });
   return card;
 }

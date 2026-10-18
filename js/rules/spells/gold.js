@@ -108,3 +108,34 @@ card({
          tag: 'draw', objective: { vp: { k: 'perKeyword', per: 1, cap: 3 } } },
   IV:  { text: 'Destroy this Spell. Draw 2 cards.', ...M.destroySelf({ then: 'draw' }) },
 });
+
+/* ------------------------------------------------------------ second tranche */
+
+card({
+  id: 'ARCHIVE', name: 'Archive', school: 'gold',
+  runes: [LATTICE, WHEEL, WHEEL, SPIRAL],
+  found: 'archived',
+  // Gold scoring off the TABLE rather than off history, which is the one shape
+  // the first seven gold cards never used: it pays most when you are developed
+  // and the chain is dangerous, so holding it is as much a decision as playing it.
+  I:   { text: 'Score 1 VP per Spell you control, up to 4.',
+         tag: 'draw', objective: { vp: { k: 'perSpell', per: 1, cap: 4 } } },
+  II:  { text: 'Move a friendly unit to the nearest elevated position.', ...M.toHighGround({ mm: 3000 }) },
+  III: { text: 'If you have 3 units on the battlefield, score 2 VP.',
+         tag: 'move',
+         objective: { gate: { id: 'unitsAtLeast', n: 3 }, vp: { k: 'flat', n: 2 } } },
+  IV:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+});
+
+card({
+  id: 'FIRST_LIGHT', name: 'First Light', school: 'gold',
+  runes: [LATTICE, SHARD, SPIRAL, WHEEL],
+  found: 'firstLight',
+  I:   { text: 'After you play a Spell, draw a card.', ...M.onPlayDraw({ n: 1 }) },
+  II:  { text: 'At the start of your turn, deal 1 damage to an enemy within 3m.',
+         ...M.onTurnStartDamage({ amount: 1, range: 3000 }) },
+  III: { text: 'If it is not the first turn, score 1 VP per 5 rotations you have made, up to 3.',
+         tag: 'turn',
+         objective: { gate: { id: 'notFirstTurn' }, vp: { k: 'perLedger', key: 'rotations', div: 5, per: 1, cap: 3 } } },
+  IV:  { text: 'Push a terrain piece within 4m 2m.', ...M.shoveTerrain({ mm: 2000, range: 4000 }) },
+});

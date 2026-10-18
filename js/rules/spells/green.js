@@ -82,3 +82,43 @@ card({
   III: { text: 'Shift a Spell to an adjacent cell.', ...M.shiftASpell() },
   IV:  { text: 'Spells either side of this one lose their Keywords.', ...M.passiveSilence() },
 });
+
+/* ------------------------------------------------------------ second tranche */
+
+card({
+  id: 'WEAVER', name: 'Weaver', school: 'green',
+  runes: [LATTICE, SPIRAL, SPIRAL, SPIRAL],
+  found: 'woven',
+  // Paying with a rotation is green paying in its own currency -- and the
+  // rotation it costs you can start a chain of its own.
+  I:   { text: 'Rotate another Spell you control left. Draw 2 cards.',
+         cost: [{ id: 'rotateFriendly' }], ...M.drawCards({ n: 2 }) },
+  II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  III: { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
+  IV:  { text: 'Rotate a Spell to any side. Trigger no effects from it.', ...M.setSideFreely() },
+});
+
+card({
+  id: 'SPIRE_WARD', name: 'Spire Ward', school: 'green',
+  runes: [SPIRAL, SHARD, SPIRAL, SPIRAL],
+  found: 'spired',
+  I:   { text: 'If you control 4 Spells, rotate a Spell you control left.',
+         gate: { id: 'spellsAtLeast', n: 4 }, ...M.turnASpell({ dir: 'left' }) },
+  II:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
+  III: { text: 'Rotate this Spell left.', ...M.turnSelf({ dir: 'left' }) },
+  IV:  { text: 'This Spell may be rotated on any colour.', ...M.passiveFreeTurn() },
+});
+
+card({
+  id: 'HOLLOW_RITE', name: 'Hollow Rite', school: 'green',
+  runes: [LATTICE, LATTICE, SHARD, SPIRAL],
+  found: 'hollowed',
+  I:   { text: 'After one of your Spells is destroyed, draw a card.', ...M.onDestroyedDraw({ n: 1 }) },
+  // The one gate that rewards an EMPTY table, which is a real position: every
+  // good face eats a friendly spell, so running on fumes happens by itself.
+  II:  { text: 'If you control 2 or fewer Spells, draw 2 cards.',
+         gate: { id: 'spellsAtMost', n: 2 }, ...M.drawCards({ n: 2 }) },
+  III: { text: 'Put the top 2 cards of your deck into your discard. Destroy a Spell you control.',
+         cost: [{ id: 'millSelf', n: 2 }], ...M.destroyASpell({ side: 'friendly' }) },
+  IV:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+});

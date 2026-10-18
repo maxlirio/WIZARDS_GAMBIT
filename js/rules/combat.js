@@ -11,6 +11,9 @@ import { fx, destroy, locate, extract, defOf } from './ops.js';
 import { emit, replaceEvent } from './triggers.js';
 import { awardKill } from './score.js';
 import { TIER_CAP } from './golems.js';
+import { applyFor } from './keywords.js';
+import { shieldOn } from './derive.js';
+import { unitKeywords } from '../field/query.js';
 
 /**
  * Take hit points off a unit.
@@ -19,12 +22,43 @@ import { TIER_CAP } from './golems.js';
  * [Absorb] and any future shield is one replacement handler rather than a
  * clause repeated at each damage site.
  */
-export function hurt(state, unit, amount, why = {}) {
+/**
+ * How many times damage may be redirected before it has to land.
+ *
+ * Two cards that each push damage onto the other's protector would otherwise
+ * hand it back and forth forever. A bound rather than a cleverer rule, because
+ * every cleverer rule ("not the same unit", "not the same owner") has a
+ * two-card cycle that defeats it.
+ */
+const MAX_REDIRECT = 3;
+
+export function hurt(state, unit, amount, why = {}, redirects = 0) {
   if (!unit || unit.dead || amount <= 0) return 0;
+
+  // The VICTIM's keywords get a say before the damage lands. [Absorb] takes a
+  // point off here, and a derived shield takes another -- both on the way IN,
+  // which is the only place that can work, because the alternative is every
+  // damage site remembering to ask.
+  const soak = applyFor(unitKeywords(state, unit), 'incoming', { amount });
+  const shielded = soak.amount - shieldOn(state, unit);
+  if (shielded <= 0) { fx(state, 'absorb', { id: unit.id, amount }); return 0; }
+
   const after = replaceEvent(state, 'afterDamage', {
-    targetId: unit.id, amount, cause: why.cause || 'spell', byP: why.byP ?? null,
+    targetId: unit.id, amount: shielded, cause: why.cause || 'spell', byP: why.byP ?? null,
   });
-  if (!after || after.amount <= 0) { fx(state, 'absorb', { id: unit.id }); return 0; }
+  if (!after || after.amount <= 0) { fx(state, 'absorb', { id: unit.id, amount }); return 0; }
+
+  // A replacement may REDIRECT the damage somewhere else. Re-dispatched rather
+  // than applied here, so the new target's own keywords and shields get their
+  // turn -- a redirect that bypassed [Absorb] on the body it landed on would be
+  // a protection that works only when nothing intervenes.
+  if (after.targetId !== unit.id && redirects < MAX_REDIRECT) {
+    const other = state.field.units.find((u) => u.id === after.targetId);
+    if (other && !other.dead) {
+      fx(state, 'redirect', { from: unit.id, to: other.id, amount: after.amount });
+      return hurt(state, other, after.amount, { ...why, cause: after.cause }, redirects + 1);
+    }
+  }
 
   const dealt = after.amount;
   unit.hp -= dealt;

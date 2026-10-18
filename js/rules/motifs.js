@@ -493,6 +493,74 @@ export const onKillDraw = ({ n = 1 } = {}) => ({
   on: { afterKill: function* (ctx, payload) { if (payload.by === ctx.p) ctx.draw(n); } },
 });
 
+export const onPlayDraw = ({ n = 1 } = {}) => ({
+  tag: 'draw',
+  on: {
+    afterPlay: function* (ctx, payload) {
+      // Only YOUR plays, and not this card's own arrival -- a face that drew
+      // when it was itself played would draw on every copy every time, which is
+      // a card that reads "draw a card" with extra steps.
+      if (payload.p !== ctx.p || payload.uid === ctx.spell.uid) return;
+      ctx.draw(n);
+    },
+  },
+});
+
+export const onTurnStartDamage = ({ amount = 1, range = 3000 } = {}) => ({
+  tag: 'break',
+  on: {
+    turnStart: function* (ctx, payload) {
+      if (payload.p !== ctx.p) return;
+      const ids = ctx.enemyUnits(range);
+      if (ids.length) ctx.hit(ids[0], amount);
+    },
+  },
+});
+
+export const onChainEndDraw = ({ n = 1, minLinks = 1 } = {}) => ({
+  tag: 'draw',
+  on: {
+    chainEnd: function* (ctx, payload) {
+      if (payload.p !== ctx.p || payload.resolutions < minLinks) return;
+      ctx.draw(n);
+    },
+  },
+});
+
+export const onMoveDamage = ({ amount = 1, range = 3000 } = {}) => ({
+  tag: 'break',
+  on: {
+    afterMove: function* (ctx, payload) {
+      if (payload.p !== ctx.p) return;
+      const ids = ctx.enemyUnits(range);
+      if (ids.length) ctx.hit(ids[0], amount);
+    },
+  },
+});
+
+/**
+ * A REPLACEMENT effect: damage aimed at your mage lands on a golem instead.
+ *
+ * A pure function, not a generator, and it cannot ask a question -- it runs
+ * inside `hurt`, where the board is mid-mutation and the driver may already be
+ * parked on something else. That restriction is the reason the whole
+ * replacement path exists separately from the trigger bus.
+ */
+export const replaceMageDamage = () => ({
+  tag: 'draw',
+  replace: {
+    afterDamage: ({ state, p }, payload) => {
+      const target = state.field.units.find((u) => u.id === payload.targetId);
+      if (!target || target.owner !== p || target.kind !== 'mage') return payload;
+      const shield = state.field.units
+        .filter((u) => !u.dead && u.owner === p && u.kind === 'golem')
+        .sort((a, b) => a.id - b.id)[0];
+      if (!shield) return payload;
+      return { ...payload, targetId: shield.id, cause: 'redirected' };
+    },
+  },
+});
+
 /* ------------------------------------------------------------ helpers */
 
 const leftNeighbour = (state, spell) => {

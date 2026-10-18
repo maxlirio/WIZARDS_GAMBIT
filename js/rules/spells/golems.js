@@ -51,3 +51,11 @@ card({
   text: 'Tier B. [Channel]. 4 hit points, 2m move, 2 damage.',
   found: 'secondOrigin',
 });
+
+card({
+  id: 'EMBER_HOUND', name: 'Ember Hound', school: 'golem', kind: 'golem', tier: 'C',
+  unit: { hp: 2, move: 2800, atk: 2, reach: 800 },
+  keywords: ['Unstable', 'Swift'],
+  text: 'Tier C. [Unstable] [Swift]. 2 hit points, 2.8m move, 2 damage.',
+  found: 'houndPack',
+});

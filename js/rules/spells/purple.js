@@ -79,3 +79,34 @@ card({
   IV:  { text: 'If this Spell has 3 Keywords, your damage is increased by 1.',
          gate: { id: 'keywordsAtLeast', n: 3 }, ...M.passiveDamage({ n: 1 }) },
 });
+
+/* ------------------------------------------------------------ second tranche */
+
+card({
+  id: 'KEY_OF_MANY', name: 'Key of Many', school: 'purple',
+  keywords: ['Consume'],
+  runes: [LATTICE, LATTICE, LATTICE, SPIRAL],
+  found: 'consumed',
+  // [Consume] turns the cost into a second draw, which is the keyword funnel
+  // doing its job: the face says nothing about Consume and never will.
+  I:   { text: 'Destroy a Spell you control. Draw a card.',
+         cost: [{ id: 'destroyFriendly', n: 1 }], ...M.drawCards({ n: 1 }) },
+  II:  { text: 'Grant a Spell [Consume].', ...M.grantKeyword({ kw: 'Consume' }) },
+  III: { text: "Resolve a friendly Spell's face, adding adjacent Keywords.", ...M.spliceResolve() },
+  IV:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+});
+
+card({
+  id: 'CHORUS', name: 'Chorus', school: 'purple',
+  runes: [LATTICE, SHARD, LATTICE, LATTICE],
+  found: 'chorused',
+  I:   { text: 'At the end of one of your chains of 2 or more, draw a card.',
+         ...M.onChainEndDraw({ n: 1, minLinks: 2 }) },
+  // The only gate that reads the chain you are standing in the middle of, which
+  // makes it the one face that is worth more the deeper a chain has gone.
+  II:  { text: 'If this chain has resolved 3 links, deal 3 damage within 4m.',
+         gate: { id: 'chainAtLeast', n: 3 }, ...M.damage({ amount: 3, range: 4000 }) },
+  III: { text: "Resolve a friendly Spell's face, adding adjacent Keywords.", ...M.spliceResolve() },
+  IV:  { text: 'If you have 4 cards in hand, grant a Spell [Reach].',
+         gate: { id: 'handAtLeast', n: 4 }, ...M.grantKeyword({ kw: 'Reach' }) },
+});

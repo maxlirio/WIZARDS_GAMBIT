@@ -78,14 +78,48 @@ card({
 
 card({
   id: 'SEALSTONE', name: 'Sealstone', school: 'grey', kind: 'artifact',
-  runes: [LATTICE, SPIRAL, SPIRAL, SHARD],
+  runes: [LATTICE, SPIRAL, SHARD, SPIRAL],
   found: 'sealed',
   I:   { text: 'Your opponent may not choose your Spells.', ...M.passiveWard() },
   II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  III: { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
   // A PROHIBITION rather than a gate, and it is permanent: rotate onto this face
   // and the card is anchored there for the rest of the duel, immune even to a
-  // match. Its corners therefore never change again, which is either a reliable
-  // junction or a dead one depending on what you parked it next to.
-  III: { text: 'This Artifact may not be rotated.', ...M.passiveLocked() },
-  IV:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
+  // match. Its corners never change again, which is either a reliable junction
+  // or a dead one depending on what you parked it beside.
+  //
+  // On IV rather than III on purpose. A card lands showing I and a match rotates
+  // LEFT, so a lock on III would make IV unreachable by any ordinary means --
+  // and a 400-game sweep duly reported SEALSTONE:IV as the one face in the
+  // whole corpus that never resolved once. On IV, the lock is where the card
+  // ENDS UP.
+  IV:  { text: 'This Artifact may not be rotated.', ...M.passiveLocked() },
+});
+
+card({
+  id: 'TITHE_BELL', name: 'Tithe Bell', school: 'grey', kind: 'artifact',
+  runes: [LATTICE, LATTICE, SPIRAL, WHEEL],
+  found: 'tithed',
+  I:   { text: 'Grant a Spell [Unstable].', ...M.grantKeyword({ kw: 'Unstable' }) },
+  II:  { text: 'If you have 3 units on the battlefield, your damage is increased by 1.',
+         gate: { id: 'unitsAtLeast', n: 3 }, ...M.passiveDamage({ n: 1 }) },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Relocate a friendly unit up to 3m.', ...M.relocate({ mm: 3000, range: 4000 }) },
+});
+
+card({
+  id: 'AEGIS_SIGIL', name: 'Aegis Sigil', school: 'grey', kind: 'artifact',
+  runes: [LATTICE, LATTICE, SPIRAL, WHEEL],
+  found: 'aegis',
+  // The only REPLACEMENT effect in the corpus. It intercepts damage before it
+  // lands rather than reacting to it afterwards, which is why it has to be a
+  // pure function: it runs inside `hurt`, where the board is mid-mutation.
+  //
+  // And it is a genuine trade, not a shield: your mage keeps its hit points and
+  // its range, and the golem that ate the blow is one death from taking its
+  // card with it.
+  I:   { text: 'Damage to your mage is dealt to a friendly golem unit instead.', ...M.replaceMageDamage() },
+  II:  { text: 'Your units take 1 less damage.', ...M.passiveShield({ n: 1 }) },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Push an enemy unit within 3m 2m away.', ...M.pushAway({ mm: 2000, range: 3000 }) },
 });

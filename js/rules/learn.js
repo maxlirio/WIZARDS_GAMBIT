@@ -81,6 +81,22 @@ export const FINDS = Object.freeze({
   colossal:     { text: 'Kill eight enemy units.', test: (s, p) => L(s, p).golemsKilled + L(s, p).magesKilled >= 8 },
   reachOut:     { text: 'Measure range from a golem unit.', test: (s, p) => rangeOrigins(s, p).some((u) => u.kind === 'golem') },
   secondOrigin: { text: 'Have a mage and three golem units alive at once.', test: (s, p) => unitsOf(s, p).length >= 4 },
+
+  /* ------------------------------------------- the second card tranche */
+  unstableEnd:  { text: 'Have four of your own Spells destroyed by an opponent.', test: (s, p) => L(s, p).spellsDestroyed - L(s, p).spellsSacrificed >= 4 },
+  besieged:     { text: 'Deal 20 damage with your Spells and units.', test: (s, p) => L(s, p).damageDealt >= 20 },
+  tideTurn:     { text: 'Move your units 40 times.', test: (s, p) => L(s, p).moves >= 40 },
+  anchored:     { text: 'Remove terrain from the battlefield twice.', test: (s, p) => L(s, p).terrainRemoved >= 2 },
+  woven:        { text: 'Be forced into 30 rotations by matches.', test: (s, p) => L(s, p).forcedRotations >= 30 },
+  spired:       { text: 'Control five Spells at once.', test: (s, p) => spellsOn(s, p).length >= 5 },
+  hollowed:     { text: 'Reshuffle your discard into your deck twice.', test: (s, p) => L(s, p).reshuffles >= 2 },
+  consumed:     { text: 'Draw 30 cards in one duel.', test: (s, p) => L(s, p).cardsDrawn >= 30 },
+  chorused:     { text: 'Resolve 25 chain links in one duel.', test: (s, p) => L(s, p).chainLinks >= 25 },
+  archived:     { text: 'Score 6 Victory Points.', test: (s, p) => s.vp[p] >= 6 },
+  firstLight:   { text: 'Play eight Spells in one duel.', test: (s, p) => L(s, p).spellsPlayed >= 8 },
+  tithed:       { text: 'Have a golem card spent by attrition.', test: (s, p) => L(s, p).golemCardsLost >= 1 },
+  aegis:        { text: 'Let your mage be killed twice.', test: (s, p) => L(s, p).mageDeaths >= 2 },
+  houndPack:    { text: 'Summon eight golem units in one duel.', test: (s, p) => L(s, p).summons >= 8 },
 });
 
 export const FIND_IDS = Object.freeze(Object.keys(FINDS).sort());

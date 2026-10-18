@@ -110,8 +110,15 @@ export function claimsOf(def, face) {
   if (/(Spell|Artifact)s? you control|friendly Spell/.test(t) && !def.keywords.includes('Spell Bane')) {
     c.push({ kind: 'friendlySpellsOnly' });
   }
-  if (/friendly unit/.test(t)) c.push({ kind: 'friendlyUnitsOnly' });
-  if (/enemy unit|enemy within|an enemy/.test(t)) c.push({ kind: 'enemyUnitsOnly' });
+  // A face that names BOTH sides -- "spend a friendly unit's action, deal 4
+  // damage to an enemy" -- cannot have either side claim extracted from its
+  // text, because the parser has no way to tell which clause belongs to the
+  // cost and which to the effect. Claiming both failed the card for doing
+  // exactly what it prints. Reported as unextractable rather than guessed.
+  const saysFriendly = /friendly unit/.test(t);
+  const saysEnemy = /enemy unit|enemy within|an enemy/.test(t);
+  if (saysFriendly && !saysEnemy) c.push({ kind: 'friendlyUnitsOnly' });
+  if (saysEnemy && !saysFriendly) c.push({ kind: 'enemyUnitsOnly' });
   if (/[Dd]estroy a (Spell|Artifact)/.test(t)) c.push({ kind: 'destroysSpell' });
   // Every face with an effect claims, at minimum, to DO something. A face that
   // asks a question, gets an answer, and leaves the board exactly as it was is
@@ -283,6 +290,12 @@ function snapshotOf(st) {
     foeSpells: spellsOn(state, 1).map((s) => `${s.uid}@${s.cell}:${s.def}:${s.rot}`),
     units: Object.fromEntries(state.field.units.map((u) => [u.id, `${u.hp}:${u.x},${u.y},${u.z}:${u.dead ? 'D' : ''}`])),
     hp: Object.fromEntries(state.field.units.map((u) => [u.id, u.hp])),
+    // `acted` and `poison` are part of the record because they are the only
+    // trace some effects leave: the `spendUnitAction` cost spends an action and
+    // touches nothing else, and [Stun] and [Poison] work the same way. Without
+    // them, "declares a cost but nothing was spent" fired on a cost that was
+    // paid perfectly.
+    acted: Object.fromEntries(state.field.units.map((u) => [u.id, `${u.acted ? 'A' : ''}${u.poison || 0}`])),
     pos: Object.fromEntries(state.field.units.map((u) => [u.id, `${u.x},${u.y}`])),
     rots: Object.fromEntries(spellsOn(state, 0).concat(spellsOn(state, 1)).map((s) => [s.uid, s.rot])),
     scored: state.scoreLog.length,
@@ -443,7 +456,9 @@ function judge(st, run, claim) {
       const spent = before.hand !== after.hand
         || before.mySpells.length !== after.mySpells.length
         || before.hp[mine.id] !== after.hp[mine.id]
-        || before.deck !== after.deck;
+        || before.deck !== after.deck
+        || JSON.stringify(before.acted) !== JSON.stringify(after.acted)
+        || JSON.stringify(before.rots) !== JSON.stringify(after.rots);
       // A face whose cost could not be paid fizzles, which is correct; the
       // stage is built so every cost in the corpus IS payable, so a fizzle here
       // means the pre-check and the payment disagree.
@@ -467,7 +482,7 @@ function judge(st, run, claim) {
     case 'effectful': {
       // `fx` is deliberately NOT part of the comparison: a face that leaves a
       // note for the view and changes nothing else has still done nothing.
-      const keys = ['vp', 'hand', 'deck', 'mySpells', 'foeSpells', 'hp', 'pos', 'rots', 'scored', 'props'];
+      const keys = ['vp', 'hand', 'deck', 'mySpells', 'foeSpells', 'hp', 'pos', 'rots', 'scored', 'props', 'acted'];
       const changed = keys.some((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
       if (changed) return [PASS, ''];
       // Answering null means the player declined, and declining must be

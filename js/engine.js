@@ -37,6 +37,9 @@ import { emptyLedger, bump } from './rules/ledger.js';
 import { VP_DEFAULTS } from './rules/score.js';
 import { emit, EVENTS } from './rules/triggers.js';
 import { hurt, checkGolemAttrition } from './rules/combat.js';
+import { fireFor } from './rules/keywords.js';
+import { unitTargets } from './field/candidates.js';
+import { findUnit } from './field/query.js';
 import { TIER_CAP, SLOTS } from './rules/golems.js';
 import { beginTurn, endTurn } from './rules/turn.js';
 import { makeMage, unitActions, doUnitAction, pendingUnits } from './rules/units.js';
@@ -45,7 +48,7 @@ import { CARDS, STANDARD_DECK, FINDABLE } from './rules/spells/index.js';
 import { checkFinds } from './rules/learn.js';
 import { makeArena, makeProps } from './field/arena.js';
 import { resolveFalls, recheckSupport } from './field/move.js';
-import { livingUnits, mageOf, unitKeywords } from './field/query.js';
+
 
 /**
  * Which actions check for a match afterwards.
@@ -283,7 +286,32 @@ function runWork(state, item) {
   if (item.kind === 'chain') return runChain(state, item.p, item.cause);
   if (item.kind === 'unit') return doUnitAction(state, item.action);
   if (item.kind === 'trigger') return runTrigger(state, item);
+  if (item.kind === 'onDestroy') return runOnDestroy(state, item);
   throw new Error(`unknown work item '${item.kind}'`);
+}
+
+/**
+ * A destroyed card's parting keywords -- [Unstable]'s blast.
+ *
+ * QUEUED by ops.destroy rather than fired there, for the same reason a trigger
+ * may only queue: `destroy` runs in the middle of a cost being paid or a chain
+ * link resolving, and the board is half-mutated. By the time this runs the card
+ * is in the discard, so the context is built around the OWNER rather than
+ * around the card.
+ */
+function* runOnDestroy(state, item) {
+  const ctx = {
+    state, p: item.p, spell: { uid: item.uid, owner: item.p, cell: null, keywords: [] },
+    draw: (n) => draw(state, item.p, n),
+    blast: (amount) => {
+      const ids = unitTargets(state, item.p, 4000, { side: 'enemy' });
+      if (!ids.length) return 0;
+      const u = findUnit(state, ids[0]);
+      return u ? hurt(state, u, amount, { cause: 'unstable', byP: item.p }) : 0;
+    },
+  };
+  fireFor(item.keywords, 'onDestroy', ctx, {});
+  return true;
 }
 
 function* runTrigger(state, item) {

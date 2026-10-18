@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// Watch two AIs play a whole match, in the terminal.
+// Play a match, or watch two AIs play one, in the terminal.
 //
-//   node tools/duel.js [--seed N] [--a oneply] [--b oneply] [--pool]
-//                      [--quiet] [--board] [--to TURN]
+//   node tools/duel.js                        two AIs, narrated
+//   node tools/duel.js --human 0              YOU play player 0 against the AI
+//   node tools/duel.js --seed N --pool        a random corpus deck each
+//   node tools/duel.js --quiet --to 20        just the result, or stop at a turn
 //
 // This is the first playable. There is no renderer yet and will not be one until
 // the rules are finished, so this is how the game is read: the two spell tables
@@ -39,6 +41,7 @@ const TO = Number(arg('to', 0));
 const QUIET = flag('quiet');
 const BOARD = flag('board') || !QUIET;
 const POOL = flag('pool');
+const HUMAN = process.argv.includes('--human') ? Number(arg('human', 0)) : null;
 
 const C = {
   red: '\x1b[38;5;203m', blue: '\x1b[38;5;75m', green: '\x1b[38;5;114m',
@@ -230,6 +233,124 @@ function narrate(state, f) {
   }
 }
 
+/* ------------------------------------------------------------ playing it */
+
+/**
+ * The human seat.
+ *
+ * It goes through `legalActions` and `choose` like the AI does, which is the
+ * whole point: there is no second copy of the rules anywhere, so a human cannot
+ * be offered a move the engine would refuse, and the engine cannot have a move
+ * it forgot to offer.
+ */
+import { createInterface } from 'node:readline';
+
+const rl = HUMAN === null ? null : createInterface({ input: process.stdin, output: process.stdout });
+const ask1 = (q) => new Promise((res) => rl.question(q, res));
+
+/** Legal actions, grouped and numbered, with the reason each one is interesting. */
+function describeAction(state, a) {
+  if (a.type === 'play') {
+    const c = state.players[state.active].hand.find((x) => x.uid === a.uid);
+    const d = defOf(state, c);
+    if (a.slot !== undefined) return `set ${paint(d.name, C.golem)} (tier ${d.tier}) into slot ${a.slot}`;
+    return `play ${paint(d.name, C[d.school])} onto ${CELL_COLOR[a.cell]} cell ${a.cell}`;
+  }
+  if (a.type === 'rotate') {
+    const sp = spellsOn(state, state.active).find((x) => x.uid === a.uid);
+    const d = defOf(state, sp);
+    const next = NUMERALS[(activeIndex(sp) + 1) & 3];
+    return `rotate ${paint(d.name, C[d.school])} left (cell ${sp.cell}) -> ${paint(next, C.bold)}: ${d.faces[(activeIndex(sp) + 1) & 3].text}`;
+  }
+  if (a.type === 'shift') {
+    const sp = spellsOn(state, state.active).find((x) => x.uid === a.uid);
+    return `shift ${defOf(state, sp).name} from cell ${sp.cell} to ${a.cell} (${CELL_COLOR[a.cell]})`;
+  }
+  if (a.type === 'destroy') {
+    const sp = spellsOn(state, state.active).find((x) => x.uid === a.uid);
+    return `destroy your own ${defOf(state, sp).name} (cell ${sp.cell})`;
+  }
+  if (a.type === 'draw') return 'draw a card';
+  if (a.type === 'unit') {
+    const u = state.field.units.find((x) => x.id === a.id);
+    const who = u.kind === 'mage' ? 'your mage' : (CARDS[u.def]?.name || 'golem') + ` #${u.id}`;
+    if (a.act === 'move') return `${who}: move ${a.label} up to ${a.mm}mm`;
+    if (a.act === 'strike') return `${who}: strike ${unitName(state, a.target)}`;
+    if (a.act === 'summon') return `${who}: summon ${name(state, a.golem)}`;
+    return `${who}: pass`;
+  }
+  return JSON.stringify(a);
+}
+
+function showHand(state, p) {
+  const pl = state.players[p];
+  if (!pl.hand.length) { console.log(paint('  (hand empty)', C.dim)); return; }
+  console.log(paint(`  your hand (${pl.hand.length}):`, C.dim));
+  for (const c of pl.hand) {
+    const d = defOf(state, c);
+    const kws = d.keywords.length ? paint(` [${d.keywords.join('] [')}]`, C.purple) : '';
+    console.log(`    ${paint(d.name.padEnd(16), C[d.school])}${paint(d.school.padEnd(7), C.dim)}${kws}`);
+    if (d.kind === 'golem') { console.log(paint(`      ${d.text}`, C.dim)); continue; }
+    for (const f of d.faces) {
+      console.log(paint(`      ${f.numeral.padEnd(4)}${RUNE_CH[d.runes[f.index]]}  ${f.text}`, C.dim));
+    }
+  }
+}
+
+async function humanAction(state) {
+  const la = legalActions(state);
+  if (!la.length) return null;
+  showHand(state, state.active);
+  console.log(paint(`\n  your ${state.phase === 'spell' ? 'SPELL ACTION (one only)' : 'UNIT PHASE'}:`, C.bold));
+  la.forEach((a, i) => console.log(`   ${String(i).padStart(3)}) ${describeAction(state, a)}`));
+  for (;;) {
+    const line = (await ask1('  > ')).trim();
+    if (line === 'q') { console.log('resigning.'); process.exit(0); }
+    if (line === '?') { showHand(state, state.active); continue; }
+    const i = Number(line);
+    if (Number.isInteger(i) && i >= 0 && i < la.length) return la[i];
+    console.log(paint(`  pick a number from 0 to ${la.length - 1}, or ? for your hand, or q to quit`, C.dim));
+  }
+}
+
+async function humanAnswer(state) {
+  const r = state.pending.request;
+  console.log(paint(`\n  ${r.prompt || 'choose'}`, C.bold));
+  if (r.type === 'confirm') {
+    for (;;) {
+      const line = (await ask1('  y/n > ')).trim().toLowerCase();
+      if (line === 'y') return true;
+      if (line === 'n') return false;
+    }
+  }
+  const label = (o, i) => {
+    if (r.labels && r.labels[i] !== undefined) return r.labels[i];
+    if (r.kind === 'unit') return unitName(state, o);
+    if (r.kind === 'prop') return `terrain ${o}`;
+    if (r.kind === 'hand' || r.kind === 'target') return name(state, o);
+    return String(o);
+  };
+  r.options.forEach((o, i) => console.log(`   ${String(i).padStart(3)}) ${label(o, i)}`));
+  if (r.allowNone) console.log(`     -) decline`);
+  if (r.type === 'some') {
+    console.log(paint(`  choose ${r.count}, space-separated`, C.dim));
+    for (;;) {
+      const parts = (await ask1('  > ')).trim().split(/\s+/).map(Number);
+      if (parts.length === r.count && parts.every((i) => i >= 0 && i < r.options.length)) {
+        return parts.map((i) => r.options[i]);
+      }
+      console.log(paint(`  ${r.count} numbers, please`, C.dim));
+    }
+  }
+  for (;;) {
+    const line = (await ask1('  > ')).trim();
+    if (line === '-' && r.allowNone) return null;
+    const i = Number(line);
+    if (Number.isInteger(i) && i >= 0 && i < r.options.length) return r.options[i];
+    console.log(paint(`  pick a number from 0 to ${r.options.length - 1}`, C.dim));
+  }
+}
+
 /* ------------------------------------------------------------ the match */
 
 const rng = seedRng(SEED ^ 0xdeed);
@@ -281,9 +402,12 @@ while (state.winner === null && steps < 9000) {
     if (TO && state.turn > TO) break;
   }
   try {
-    if (state.pending) choose(state, answerFor(state, { policy: polFor(state.pending.request.player ?? state.active) }));
-    else {
-      const a = chooseAction(state, { policy: polFor(state.active) });
+    if (state.pending) {
+      const whose = state.pending.request.player ?? state.active;
+      const answer = whose === HUMAN ? await humanAnswer(state) : answerFor(state, { policy: polFor(whose) });
+      choose(state, answer);
+    } else {
+      const a = state.active === HUMAN ? await humanAction(state) : chooseAction(state, { policy: polFor(state.active) });
       if (!a) break;
       apply(state, a);
     }
@@ -293,8 +417,14 @@ while (state.winner === null && steps < 9000) {
     break;
   }
   flush();
+  // Between a human's action and the opponent's, redraw -- the board after your
+  // chain has resolved is the thing you need to see before deciding again.
+  if (HUMAN !== null && BOARD && !state.pending && state.active === HUMAN && state.phase === 'spell') {
+    header(); showBoard();
+  }
 }
 flush();
+rl?.close();
 
 console.log(paint('\n' + '─'.repeat(74), C.dim));
 console.log(` final  VP ${state.vp[0]} – ${state.vp[1]}   turn ${state.turn}   ${state.winner === -1 ? 'a draw' : state.winner === null ? 'unfinished' : `p${state.winner} wins`}   hash ${hashState(state)}`);

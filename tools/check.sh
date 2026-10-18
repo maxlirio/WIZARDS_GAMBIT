@@ -22,6 +22,7 @@ SUITE=(
   "checkmath||integer arithmetic, the direction table, the seeded rng"
   "checkrotate||the orientation algebra and the 16-vertex lattice"
   "checkrunes|--tables 60000|rune distribution and the chain-length curve"
+  "checkcorpus||every gate, cost, keyword, formula and motif is on a card"
   "checkchains|--fuzz 300|THE GATE: chains terminate, replay identically"
   "verify-faces|--selftest|THE GATE: every face against its printed text"
   "checkderived|--games 6|every derived bucket is both written and read"

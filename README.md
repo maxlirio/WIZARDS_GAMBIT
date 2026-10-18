@@ -40,6 +40,7 @@ tools/check.sh --quick                      # skips the long sweeps
 | `checkmath` | integer arithmetic, the 64-direction table, the seeded rng |
 | `checkrotate` | the orientation algebra and the 16-vertex lattice |
 | `checkrunes` | rune distribution, and the chain-length curve against table occupancy |
+| `checkcorpus` | every gate, cost, Keyword, VP formula, event and motif is on a card — or declared reserved with a reason |
 | `checkchains` | **the gate**: chains terminate under adversarial tables, and replay identically |
 | `verify-faces` | **the gate**: every face against its own printed text. `--selftest` plants 10 faults |
 | `checkderived` | every derived bucket is both written by a card and read by a rule |
@@ -80,8 +81,8 @@ js/rules/
   motifs.js            parameterised face behaviours; most faces are one line
   turn.js units.js     the turn structure; the unit phase
   combat.js golems.js  damage and death; the tier table and the attrition rule
-  learn.js             the Spellbook: 38 find conditions
-  spells/              the corpus, one file per school
+  learn.js             the Spellbook: 52 find conditions
+  spells/              the corpus, one file per school (60 cards, 216 faces)
 js/field/
   fixed.js             integer millimetres. THE ONLY FILE ALLOWED Math.*
   arena.js             seeded heightfield + terrain pieces
@@ -92,6 +93,49 @@ js/ai/                 eval.js answer.js ai.js -- one ply, but the whole chain
 js/profile.js          the only file allowed to persist anything
 tools/                 the harnesses, plus duel.js and selfplay.js
 ```
+
+## Adding a card
+
+Most faces are one line, which is the whole answer to scaling to hundreds of
+spells. A face is authored **by printed numeral**, never by array index.
+
+```js
+card({
+  id: 'ASH_VEIL', name: 'Ash Veil', school: 'red',
+  keywords: ['Crush'],
+  runes: [SHARD, SHARD, WHEEL, LATTICE],   // clockwise from TOP-LEFT
+  found: 'burnBright',                     // its Spellbook condition
+  I:   { text: 'Deal 2 damage to an enemy unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
+  II:  { text: 'Push an enemy unit within 3m 2m away.',     ...M.pushAway({ mm: 2000, range: 3000 }) },
+  III: { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
+  IV:  { text: 'Your damage is increased by 1.',            ...M.passiveDamage({ n: 1 }) },
+});
+```
+
+Then run `tools/check.sh --quick`. It will tell you, at load time or in a
+harness, if: a numeral is missing, a face key is misspelled, a non-gold face
+declares an objective, the four runes are identical (which means all four faces
+do the same kind of work — a card with one idea on it), the rune distribution
+has drifted off 25%, a gate names a counter that does not exist, the find
+condition is claimed by another card or by none, a passive writes a bucket it
+did not declare, the printed text and the code disagree, or a Keyword you used
+has a hook the engine never calls.
+
+Two things the harnesses taught about writing these, both from real failures:
+
+- **Say which side you mean.** "Deal 2 damage to a unit within 3m" cannot be
+  checked, because the checker cannot tell whether hitting your own side is a
+  bug. "to an **enemy** unit" can.
+- **Side IV is the end of the road.** A card lands showing I and a match rotates
+  left, so a permanent prohibition on III makes IV unreachable — a 400-game
+  sweep found exactly one face in the corpus that never resolved, and that was
+  why.
+
+Faces are authored **clockwise from the top edge** and runes **clockwise from
+the top-left corner**, matching the printed card. A spell lands showing side I,
+and a match rotates **left** — so side II is the first face a chain can reach
+and side I the last. Side I is the card's resting state, and the right place for
+a passive.
 
 ## The four decisions everything hangs off
 
