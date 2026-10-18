@@ -269,7 +269,13 @@ function narrate(state, f) {
 import { createInterface } from 'node:readline';
 
 const rl = HUMAN === null ? null : createInterface({ input: process.stdin, output: process.stdout });
-const ask1 = (q) => new Promise((res) => rl.question(q, res));
+// Lines are queued as they arrive rather than read with rl.question, which
+// drops every line that lands before the question is asked -- so piped input
+// (a scripted match) lost all but the first answer and the game hung.
+const lines = [], waiting = [];
+rl?.on('line', (l) => (waiting.length ? waiting.shift()(l) : lines.push(l)));
+rl?.on('close', () => { while (waiting.length) waiting.shift()('q'); lines.push('q'); });
+const ask1 = (q) => { process.stdout.write(q); return lines.length ? Promise.resolve(lines.shift()) : new Promise((res) => waiting.push(res)); };
 
 /** Legal actions, grouped and numbered, with the reason each one is interesting. */
 function describeAction(state, a) {
