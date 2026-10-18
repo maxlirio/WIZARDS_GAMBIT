@@ -257,6 +257,12 @@ that reintroduces loops); it makes chains dangerous, as intended; it needs no ex
 question at resolution time; and it hands the defender a real line, since resolving
 the inert card on purpose is how you defuse a chain.
 
+The second count is not theoretical. `tools/selfplay.js` counts how often a chain
+forces somebody onto a face whose gate is unmet: about **7 times a match** with
+sixty-card decks, against 0.3 with the gate-light standard deck. So the more
+gated your table, the more a mandatory chain costs you — which is the pressure
+the rule was written to create.
+
 An **objective** is a gold face's payout. Objectives are **repeatable**, but scoring
 **destroys the gold spell** and puts it in your discard — so you must wait to draw it
 again. That round trip is the VP throttle; there is no artificial per-turn cap.
@@ -285,6 +291,14 @@ mage is a range origin — the reach of much of your spell table. Feeding your m
 the enemy is a real strategy and the design treats it as a measurable question:
 `mageVp` and `mageVpDecay` are knobs and `tools/selfplay.js` reports VP from kills
 against VP from objectives.
+
+**Measured, over 150 games each.** With the standard ten-card deck it comes out
+**67% objectives / 19% mages / 14% golems**, which is the intended shape, and
+each mage dies about twice a match. With random sixty-card decks the same bot
+gets **51% / 38% / 11%** and mages die four times a match — so a wider card pool
+pushes the game toward killing, and `mageVpDecay` is the knob for it if a future
+format ever uses one. A real match always uses the standard deck, so the default
+stays at zero.
 
 ### Golems
 
