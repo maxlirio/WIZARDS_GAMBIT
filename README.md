@@ -19,7 +19,23 @@ node tools/duel.js --seed 7                 # two AIs, narrated, with the board 
 node tools/duel.js --seed 7 --pool          # random decks from the whole corpus
 node tools/duel.js --seed 7 --quiet         # just the result
 node tools/duel.js --seed 7 --to 20         # stop after turn 20
+node tools/duel.js --human 0                # YOU play, against the AI
 ```
+
+The human seat goes through `legalActions` and `choose` exactly as the bot does,
+which is the point: there is no second copy of the rules anywhere, so you cannot
+be offered a move the engine would refuse, and it cannot have one it forgot to
+offer. Type a number, `?` for your hand with all four faces of every card, `q`
+to resign.
+
+With `--human` it also keeps a **Spellbook** at
+`~/.wizards-gambit-spellbook.json` (or `--book <path>`): which find conditions
+you have discovered and what each one teaches. That file is the only thing that
+persists between matches — your starting deck is the same ten cards in your
+first match and your thousandth. It lives in the tool rather than the engine on
+purpose: if the engine knew about it, a replay could depend on what the player
+happens to have learned, and two machines in a lockstep game would diverge on a
+difference between their save files.
 
 The spell table is drawn with each card's **corner runes in its actual corners**
 and the active numeral in the middle, because a match is two cards showing the

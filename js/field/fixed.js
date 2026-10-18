@@ -39,7 +39,6 @@ export const iabs = (a) => (a < 0 ? -a : a);
 export const imin = (a, b) => (a < b ? a : b);
 export const imax = (a, b) => (a > b ? a : b);
 export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
-export const isign = (a) => (a > 0 ? 1 : a < 0 ? -1 : 0);
 
 /**
  * Nearest multiple of `q`, rounding halves UP (toward +inf) at every magnitude.

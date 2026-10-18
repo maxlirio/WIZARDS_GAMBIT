@@ -62,8 +62,5 @@ export const faceAt = (def, spell, p) => def.faces[indexAt(spell.rot, p)];
 export const runeAt = (def, spell, p) => def.runes[indexAt(spell.rot, p)];
 export const activeFace = (def, spell) => def.faces[activeIndex(spell)];
 
-/** Which authored corner index is showing at table corner position `p`. */
-export const cornerIndexAt = (spell, p) => indexAt(spell.rot, p);
-
 /** The rotation that would make authored face `i` active. */
 export const rotFor = (i) => i & 3;

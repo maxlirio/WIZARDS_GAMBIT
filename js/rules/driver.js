@@ -19,8 +19,6 @@
 // because every random choice goes through the seeded rng that lives on the
 // state, which is exactly why rng.js keeps its words as plain data.
 
-export const PENDING = Symbol('pending');
-
 /**
  * What a snapshot must NOT capture, and a restore must NOT roll back.
  *

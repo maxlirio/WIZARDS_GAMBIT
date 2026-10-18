@@ -111,7 +111,6 @@ export function createGame(opts = {}) {
     reason: null,
 
     fx: [],
-    log: [],
     derivationErrors: [],
     triggerErrors: [],
     resolveErrors: [],
@@ -141,7 +140,7 @@ export function createGame(opts = {}) {
     state.players[p] = {
       table: Array.from({ length: CELLS }, () => []),
       golems: [null, null, null],
-      hand: [], deck: [], discard: [], removed: [],
+      hand: [], deck: [], discard: [],
       mage: { respawnOnTurn: null },
       ledger: emptyLedger(),
       objectives: {},

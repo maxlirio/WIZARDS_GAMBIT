@@ -153,16 +153,6 @@ export function inRange(state, p, target, mmDist, heightK = 1) {
   return rangeOrigins(state, p).some((o) => dist3(o, target, heightK) <= r * r);
 }
 
-/** The closest origin, and the squared distance. For reporting and for the AI. */
-export function nearestOrigin(state, p, target, heightK = 1) {
-  let best = null, bd = Infinity;
-  for (const o of rangeOrigins(state, p)) {
-    const d = dist3(o, target, heightK);
-    if (d < bd) { bd = d; best = o; }
-  }
-  return best ? { origin: best, d2: bd, mm: isqrt(bd) } : null;
-}
-
 /** Melee: can `a` strike `b`? `reach` is in mm and comes from the unit. */
 export const canStrike = (state, a, b) =>
   !a.dead && !b.dead && a.owner !== b.owner && dist3(a, b, 1) <= a.reach * a.reach;
@@ -172,7 +162,6 @@ export const strikeTargets = (state, a) => enemiesOf(state, a.owner).filter((b) 
 /* ------------------------------------------------------------ height */
 
 export const onHighGround = (state, body) => aboveMedian(state.arena, body.x, body.y) >= 750;
-export const heightEdge = (state, a, b) => a.z - b.z;
 
 /* ------------------------------------------------------------ line of sight */
 

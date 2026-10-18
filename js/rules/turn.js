@@ -16,8 +16,6 @@ import {
 } from './units.js';
 import { mageOf } from '../field/query.js';
 
-export const PHASES = Object.freeze(['spell', 'unit', 'over']);
-
 export function beginTurn(state) {
   const p = state.active;
   state.phase = 'spell';
@@ -52,6 +50,3 @@ export function endTurn(state) {
   state.active = 1 - state.active;
   beginTurn(state);
 }
-
-/** Is the current player out of things they are obliged to do? */
-export const unitPhaseDone = (state) => pendingUnits(state, state.active).length === 0;

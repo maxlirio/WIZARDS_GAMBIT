@@ -111,6 +111,3 @@ export const MATCH_SITES = Object.freeze(
 export const INTERIOR_SITES = Object.freeze(
   VERTEX_CARDS.map((cards, v) => (cards.length === 4 ? v : -1)).filter((v) => v >= 0),
 );
-
-/** The vertices this cell shares with at least one other cell. */
-export const matchSitesOf = (c) => CORNER_OF[c].filter((v) => VERTEX_CARDS[v].length >= 2);

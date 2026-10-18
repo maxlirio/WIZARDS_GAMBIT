@@ -5,6 +5,7 @@
 //   node tools/duel.js --human 0              YOU play player 0 against the AI
 //   node tools/duel.js --seed N --pool        a random corpus deck each
 //   node tools/duel.js --quiet --to 20        just the result, or stop at a turn
+//   node tools/duel.js --human 0 --book mine.json   keep a Spellbook across matches
 //
 // This is the first playable. There is no renderer yet and will not be one until
 // the rules are finished, so this is how the game is read: the two spell tables
@@ -29,7 +30,10 @@ import { TIER_CAP } from '../js/rules/golems.js';
 import { heightAt, propR, propTop, propSpec, propOnBoard, ARENA_W, ARENA_H } from '../js/field/arena.js';
 import { livingUnits, mageOf } from '../js/field/query.js';
 import { seedRng, pick } from '../js/rules/rng.js';
-import { FINDS } from '../js/rules/learn.js';
+import { FINDS, FIND_IDS, spellbookPage } from '../js/rules/learn.js';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? process.argv[i + 1] : d; };
 const flag = (n) => process.argv.includes(`--${n}`);
@@ -42,6 +46,25 @@ const QUIET = flag('quiet');
 const BOARD = flag('board') || !QUIET;
 const POOL = flag('pool');
 const HUMAN = process.argv.includes('--human') ? Number(arg('human', 0)) : null;
+
+/**
+ * THE SPELLBOOK, persisted.
+ *
+ * `js/profile.js` is the engine-side home for this and it uses localStorage,
+ * because it has to work in a browser and must not reach for the filesystem.
+ * In a terminal there is no localStorage, so the file is kept HERE -- tools are
+ * node-only by definition, and the engine stays unaware that persistence
+ * exists at all. If it were not, a replay could depend on what the player
+ * happens to have learned, and two machines in a lockstep game would diverge
+ * on a difference between their save files.
+ */
+const BOOK = arg('book', HUMAN === null ? null : join(homedir(), '.wizards-gambit-spellbook.json'));
+const loadBook = () => {
+  if (!BOOK) return { learned: {}, matches: 0, wins: 0 };
+  try { return { learned: {}, matches: 0, wins: 0, ...JSON.parse(readFileSync(BOOK, 'utf8')) }; }
+  catch { return { learned: {}, matches: 0, wins: 0 }; }
+};
+const book = loadBook();
 
 const C = {
   red: '\x1b[38;5;203m', blue: '\x1b[38;5;75m', green: '\x1b[38;5;114m',
@@ -360,6 +383,17 @@ const polFor = (p) => (p === 0 ? A : B);
 
 console.log(paint(`\n WIZARD'S GAMBIT  seed ${SEED}  ${A} vs ${B}  arena: ${state.arena.challenge}`, C.bold));
 console.log(paint(` p0 deck: ${state.players[0].deck.concat(state.players[0].hand).map((c) => defOf(state, c).name).sort().join(', ')}`, C.dim));
+if (BOOK) {
+  const known = Object.keys(book.learned).length;
+  console.log(paint(` your Spellbook: ${known}/${FIND_IDS.length} ways known, ${book.matches} matches played, ${book.wins} won`, C.green));
+  if (known && known < FIND_IDS.length) {
+    // Three you already know, as a reminder of what you can aim this match at.
+    // The Spellbook is knowledge, so showing it is the whole point of keeping it.
+    const some = Object.entries(book.learned).slice(0, 3)
+      .map(([cond, id]) => `${FINDS[cond]?.text || cond} -> ${CARDS[id]?.name || id}`);
+    for (const line of some) console.log(paint(`   ${line}`, C.dim));
+  }
+}
 
 function header() {
   const bar = (p) => paint(`${state.vp[p]}`, C.bold + C.gold);
@@ -428,6 +462,29 @@ rl?.close();
 
 console.log(paint('\n' + '─'.repeat(74), C.dim));
 console.log(` final  VP ${state.vp[0]} – ${state.vp[1]}   turn ${state.turn}   ${state.winner === -1 ? 'a draw' : state.winner === null ? 'unfinished' : `p${state.winner} wins`}   hash ${hashState(state)}`);
+if (BOOK) {
+  // What this match taught you. Written AFTER the game, from the note stream,
+  // so a find that happened inside an effect that was later replayed is not
+  // recorded twice.
+  const fresh = [];
+  for (const f of state.fx) {
+    if (f.kind !== 'found' || f.p !== HUMAN || !f.why) continue;
+    if (book.learned[f.why] === f.defId) continue;
+    book.learned[f.why] = f.defId;
+    fresh.push(`${FINDS[f.why]?.text || f.why} -> ${CARDS[f.defId]?.name || f.defId}`);
+  }
+  book.matches++;
+  if (state.winner === HUMAN) book.wins++;
+  try {
+    writeFileSync(BOOK, JSON.stringify(book, null, 1));
+    console.log(paint(`\n your Spellbook (${BOOK}): ${Object.keys(book.learned).length}/${FIND_IDS.length} ways known`, C.green));
+    for (const line of fresh) console.log(paint(`   learned: ${line}`, C.green));
+    if (!fresh.length) console.log(paint('   nothing new this match', C.dim));
+  } catch (e) {
+    console.log(paint(` could not write the Spellbook to ${BOOK}: ${e.message}`, C.dim));
+  }
+}
+
 for (let p = 0; p < 2; p++) {
   const L = state.players[p].ledger;
   console.log(paint(`  p${p}  ${L.chainsResolved} chains (longest ${L.longestChain})  ${L.rotations} rotations  ${L.spellsDestroyed} spells lost  ${L.damageDealt} damage  ${L.summons} summons  ${L.cardsFound} cards learned`, p ? C.p1 : C.p0));

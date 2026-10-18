@@ -94,7 +94,3 @@ export function awardKill(state, killer, victimKind, victimOwner) {
   bump(state.players[killer].ledger, 'golemsKilled');
   return award(state, killer, cfg.golemUnit, { kind: 'golem' });
 }
-
-/** Re-sum the log. The harness has its own copy of this; they must agree. */
-export const resumLog = (state) =>
-  state.scoreLog.reduce((acc, e) => (acc[e.p] += e.amount, acc), [0, 0]);

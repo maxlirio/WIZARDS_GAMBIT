@@ -99,9 +99,6 @@ export function validateObjective(cardId, numeral, obj) {
 export const objectiveVp = (state, spell, obj) =>
   obj && obj.vp ? VP_FORMULAS[obj.vp.k].vp(state, spell, obj.vp) : 0;
 
-export const objectiveText = (obj) =>
-  obj ? `${VP_FORMULAS[obj.vp.k].text(obj.vp)}${obj.gate ? `, if ${gateText(obj.gate)}` : ''}` : '';
-
 /**
  * Score it.
  *

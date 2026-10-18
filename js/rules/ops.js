@@ -119,7 +119,7 @@ export function* everySpell(state) {
       const stack = pl.table[c] || [];
       for (let d = 0; d < stack.length; d++) yield { card: stack[d], zone: 'table', player: p, cell: c, depth: d };
     }
-    for (const zone of ['hand', 'deck', 'discard', 'removed']) {
+    for (const zone of ['hand', 'deck', 'discard']) {
       const list = pl[zone];
       for (let i = 0; i < list.length; i++) yield { card: list[i], zone, player: p, index: i };
     }
@@ -415,26 +415,15 @@ export function found(state, p, defId, why) {
   return card;
 }
 
-export function toHand(state, uid) {
-  const at = locate(state, uid);
-  if (!at) return null;
-  const card = extract(state, uid);
-  if (at.zone === 'table') { card.cell = null; card.rot = 0; card.keywords = []; }
-  state.players[card.owner].hand.push(card);
-  if (at.zone === 'table') markDirty(state, at.player);
-  return card;
-}
-
-export function toDeck(state, uid, { bottom = true } = {}) {
-  const at = locate(state, uid);
-  if (!at) return null;
-  const card = extract(state, uid);
-  if (at.zone === 'table') { card.cell = null; card.rot = 0; card.keywords = []; }
-  const deck = state.players[card.owner].deck;
-  if (bottom) deck.push(card); else deck.unshift(card);
-  if (at.zone === 'table') markDirty(state, at.player);
-  return card;
-}
+/**
+ * NOTE for the next person who wants a card that bounces a Spell.
+ *
+ * `toHand` and `toDeck` were written here and then deleted, because no card
+ * used them and tools/checksource.js reports a dead export. They belong with
+ * the card that needs them -- and when you write them, remember that a card
+ * leaving the table must have `cell` nulled, `rot` reset, copied keywords
+ * cleared and `markDirty` called, exactly as `destroy` does.
+ */
 
 export function mill(state, p, n = 1) {
   const pl = state.players[p];

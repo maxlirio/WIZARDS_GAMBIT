@@ -17,7 +17,7 @@ import { idiv, imin, imax, isqrt, dist2, dist3, DIR64, DIR_SCALE, COMPASS, beari
 import { inBounds, BODY_R, STEP, propSpec, propR } from './arena.js';
 import {
   surfaceAt, walkable, livingUnits, unitsOf, enemiesOf, rangeOrigins, propsOnBoard,
-  hasLos,
+  hasLos, inRange,
 } from './query.js';
 import { walk } from './move.js';
 
@@ -131,24 +131,26 @@ export function trialWalk(state, unit, dir, budget) {
 
 /* ------------------------------------------------------------ target lists */
 
+// Through query.js's `inRange`, not an inline dist3 comparison. There is ONE
+// range function in the game, which is the entire reason [Ignore Height] can be
+// a single coefficient; a second comparison here would be a keyword that works
+// on some cards and not others.
 export const unitTargets = (state, p, mmDist, { side = 'enemy', heightK = 1, needLos = false } = {}) => {
   const pool = side === 'enemy' ? enemiesOf(state, p) : side === 'friendly' ? unitsOf(state, p) : livingUnits(state);
   const origins = rangeOrigins(state, p);
   return pool
-    .filter((u) => origins.some((o) => dist3(o, u, heightK) <= mmDist * mmDist))
+    .filter((u) => inRange(state, p, u, mmDist, heightK))
     .filter((u) => !needLos || origins.some((o) => hasLos(state, o, u)))
     .map((u) => u.id)
     .sort((a, b) => a - b);
 };
 
-export const terrainTargets = (state, p, mmDist, { pushableOnly = false } = {}) => {
-  const origins = rangeOrigins(state, p);
-  return propsOnBoard(state)
+export const terrainTargets = (state, p, mmDist, { pushableOnly = false } = {}) =>
+  propsOnBoard(state)
     .filter((pr) => !pushableOnly || propSpec(pr.kind).pushable)
-    .filter((pr) => origins.some((o) => dist3(o, { x: pr.x, y: pr.y, z: pr.z }, 1) <= mmDist * mmDist))
+    .filter((pr) => inRange(state, p, { x: pr.x, y: pr.y, z: pr.z }, mmDist, 1))
     .map((pr) => pr.id)
     .sort();
-};
 
 /** Points adjacent to a unit where a new body could be set down. */
 export const summonPoints = (state, mage, mmDist = 1200) =>

@@ -203,7 +203,6 @@ const PROP_KINDS = Object.freeze({
   floater: { r: 500, h: 400, mass: 1, climbable: false, platform: true, pushable: true, floating: true },
 });
 
-export const PROP_TYPES = Object.freeze(Object.keys(PROP_KINDS).sort());
 export const propSpec = (kind) => PROP_KINDS[kind];
 
 /**

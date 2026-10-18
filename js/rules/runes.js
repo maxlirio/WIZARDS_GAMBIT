@@ -63,7 +63,6 @@ export const VERB_RUNE = Object.freeze({
   draw: LATTICE,
 });
 
-export const VERBS = Object.freeze(Object.keys(VERB_RUNE));
 
 /** The rune a face's work would suggest, or null if the face declares nothing. */
 export function suggestedRune(face) {
