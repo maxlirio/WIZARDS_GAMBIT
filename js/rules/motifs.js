@@ -70,6 +70,7 @@ export const shiftASpell = ({ side = 'friendly' } = {}) => ({
     const cells = orthoNeighbours(from);
     const cell = yield ctx.ask.pick(cells, {
       prompt: 'Shift it where?', labels: cells.map((c) => `cell ${c} (${CELL_COLOR[c]})`),
+      show: cells.map((c) => ({ cell: c, uid })),
     });
     if (cell === null) return;
     ctx.shiftSpell(uid, cell);
@@ -83,6 +84,7 @@ export const shiftSelf = () => ({
     if (!cells.length) return;
     const cell = yield ctx.ask.pick(cells, {
       prompt: 'Shift this Spell where?', labels: cells.map((c) => `cell ${c} (${CELL_COLOR[c]})`),
+      show: cells.map((c) => ({ cell: c, uid: ctx.spell.uid })),
     });
     if (cell === null) return;
     ctx.shiftSpell(ctx.spell.uid, cell);
@@ -224,6 +226,7 @@ export const relocate = ({ mm = 3000, range = 4000, side = 'friendly' } = {}) =>
     if (!pts.length) return;
     const i = yield ctx.ask.pick(pts.map((_, k) => k), {
       prompt: 'Where?', labels: pts.map((pt) => `${ctx.dirLabel(pt.dir)} (${pt.x},${pt.y}) z${pt.z}`),
+      show: pts.map(({ x, y, z }) => ({ x, y, z })),
     });
     ctx.relocate(id, pts[i ?? 0]);
   },

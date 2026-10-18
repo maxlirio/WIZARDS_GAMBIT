@@ -7,10 +7,35 @@ distances are real.
 **[RULES.md](RULES.md) is the authoritative spec.** It is the only place this
 game's rules exist as text, and the engine implements it.
 
-Nothing renders yet, by design. The build order puts every rule and every
-harness before the first pixel, because a four-sided card whose third face is
-implemented under the wrong numeral does not crash, violates no invariant, and
-leaves a perfectly legal game state — and it is invisible behind a renderer.
+## Play it in a browser
+
+```sh
+python3 tools/serve.py 8321        # then open http://localhost:8321
+```
+
+`index.html` + `js/view/` is the whole UI: your Spell Table on the left, the
+enemy's on the right, a 3D arena in the middle and your hand along the bottom.
+Click a card in your hand and then a glowing cell to play it; click one of your
+spells to rotate, shift or destroy it; in the unit phase click a marker to move
+and a red-ringed enemy to strike. When a card asks a question, the answers glow
+on the table or the field and are also listed as buttons. Hover anything to read
+it. URL options: `?seed=N`, `?watch` (two AIs), `?pool` (random 60-card decks),
+`?ai=greedy|random`, `?fast` (no pauses between enemy steps).
+
+The view drives the engine exactly as `tools/duel.js` does — `legalActions`,
+`apply`, `choose` — so it cannot offer a move the rules would refuse. Where a
+move ends is asked of the engine on a cloned state, never guessed. `js/view` is
+the one part of `js/` allowed `Math.*`: nothing it computes feeds back.
+
+`tools/browsercheck.mjs` drives the real page in headless Chrome: plays a card
+by clicking, moves by clicking a marker, answers a prompt, plays a whole match
+through the page, and fails on any page error or horizontal overflow.
+Screenshots land in `--shots DIR`.
+
+The engine was built before the first pixel on purpose, because a four-sided
+card whose third face is implemented under the wrong numeral does not crash,
+violates no invariant, and leaves a perfectly legal game state — and it is
+invisible behind a renderer.
 
 ## Watch a game
 

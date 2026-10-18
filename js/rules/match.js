@@ -192,6 +192,7 @@ export function* runChain(state, p, cause) {
       {
         prompt: 'Which match resonates?',
         labels: hits.map((h) => `junction ${h.vertex}${h.interior ? ' (interior)' : ''}: ${h.uids.join(', ')}`),
+        show: hits.map((h) => ({ uids: [...h.uids], vertex: h.vertex })),
       },
     );
     const hit = hits.find((h) => h.vertex === vertex) || hits[0];

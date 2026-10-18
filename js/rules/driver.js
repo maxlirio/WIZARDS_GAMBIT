@@ -150,8 +150,13 @@ export const ask = {
     }),
 
   /** A named choice from a fixed list -- a direction, a keyword, a formula. */
-  pick: (options, { prompt = '', labels = null } = {}) =>
-    ({ type: 'pick', kind: 'option', options, prompt, labels, required: true }),
+  /**
+   * `show` is for the VIEW only: per option, what it refers to -- a point on
+   * the field ({x, y, z}) or a set of cards ({uids}) -- so a choice of "where"
+   * can be drawn where it is instead of read off a coordinate in a label.
+   */
+  pick: (options, { prompt = '', labels = null, show = null } = {}) =>
+    ({ type: 'pick', kind: 'option', options, prompt, labels, show, required: true }),
 
   /** Yes or no -- "you may". */
   confirm: (prompt = '') => ({ type: 'confirm', kind: 'confirm', prompt, required: false }),

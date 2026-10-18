@@ -87,3 +87,18 @@ export function reset() {
 }
 
 export const known = () => Object.keys(load().learned).sort();
+
+/**
+ * A one-time UI note -- "has this browser seen the rules yet?". Returns whether
+ * it had, and records that it now has. Kept here so localStorage stays in one
+ * file; it is not part of the Spellbook and a reset leaves it alone.
+ */
+export function seen(what) {
+  const h = host();
+  const key = `wizards-gambit:seen:${what}`;
+  try {
+    if (h?.getItem(key)) return true;
+    h?.setItem(key, '1');
+  } catch { /* blocked: behave as if never seen, which only re-shows a note */ }
+  return false;
+}

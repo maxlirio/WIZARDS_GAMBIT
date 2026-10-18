@@ -183,7 +183,7 @@ export function* doUnitAction(state, action) {
     if (!pts.length) { u.acted = true; return false; }
     const i = pts.length === 1 ? 0 : yield ask.pick(
       pts.map((_, k) => k),
-      { prompt: 'Summon where?', labels: pts.map((pt) => `${dirLabel(pt.dir)} (${pt.x},${pt.y})`) },
+      { prompt: 'Summon where?', labels: pts.map((pt) => `${dirLabel(pt.dir)} (${pt.x},${pt.y})`), show: pts.map(({ x, y, z }) => ({ x, y, z })) },
     );
     u.acted = true;
     summon(state, u.owner, action.golem, pts[i ?? 0]);

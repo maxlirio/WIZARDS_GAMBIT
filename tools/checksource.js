@@ -20,7 +20,10 @@ const walk = (d) => readdirSync(d).flatMap((f) => {
 const RULES = [
   { // The determinism boundary.
     label: 'Math.* outside js/field/fixed.js',
-    files: (p) => p.includes('/js/') && !p.endsWith('js/field/fixed.js'),
+    // js/view is exempt: it draws, and nothing it computes feeds back into the
+    // game. The import direction (view -> engine, never back) is what keeps it
+    // out of the determinism boundary.
+    files: (p) => p.includes('/js/') && !p.endsWith('js/field/fixed.js') && !p.includes('/js/view/'),
     re: /\bMath\s*\.\s*(random|sqrt|sin|cos|tan|atan2?|hypot|pow|cbrt|log|exp)\b/g,
     why: 'not bit-identical across JS engines; use js/field/fixed.js',
   },
@@ -82,17 +85,11 @@ const PUBLIC = new Set([
 ]);
 
 /**
- * Whole files exempt, with the reason.
- *
- * js/profile.js is the BROWSER's Spellbook writer and nothing in node imports
- * it: tools/duel.js keeps its own file instead, because the terminal has no
- * localStorage and the engine must not learn that persistence exists. So the
- * whole module is unimported until the view arrives, and that is correct rather
- * than dead.
+ * Whole files exempt, with the reason. Empty since the view arrived: it was
+ * js/profile.js, the browser's Spellbook writer, which nothing imported until
+ * js/view/main.js did.
  */
-const EXEMPT_FILES = {
-  'js/profile.js': 'the browser Spellbook writer; the view layer will import it',
-};
+const EXEMPT_FILES = {};
 
 const exportsOf = (code) => {
   const names = [];
