@@ -28,6 +28,27 @@ export const mm = (metres) => Math.round(metres * M);
  */
 export const idiv = (a, b) => Math.floor(a / b);
 
+/* ----------------------------------------------------- integer housekeeping
+ * Re-exported from here rather than used in place, because the source gate
+ * forbids Math.* everywhere else and a blanket ban is the only kind anyone
+ * remembers. abs/min/max/floor are exact on integers and perfectly safe; the
+ * ban exists for sqrt, sin, cos, pow and atan, which are not specified
+ * bit-identical across engines. One door, so the gate can be a one-line grep.
+ */
+export const iabs = (a) => (a < 0 ? -a : a);
+export const imin = (a, b) => (a < b ? a : b);
+export const imax = (a, b) => (a > b ? a : b);
+export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+export const isign = (a) => (a > 0 ? 1 : a < 0 ? -1 : 0);
+
+/**
+ * Nearest multiple of `q`, rounding halves UP (toward +inf) at every magnitude.
+ *
+ * Deliberately not Math.round's "half away from zero": a rule that changes
+ * direction at the origin is the same bug `idiv` exists to avoid, one level up.
+ */
+export const snap = (v, q) => idiv(v + idiv(q, 2), q) * q;
+
 /** Squared distance. Exact, and never needs a root. */
 export const dist2 = (ax, ay, bx, by) => {
   const dx = ax - bx, dy = ay - by;
@@ -63,7 +84,6 @@ export function isqrt(n) {
   return x;
 }
 
-export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 export const sign = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
 
 /**

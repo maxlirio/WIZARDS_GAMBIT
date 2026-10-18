@@ -315,3 +315,71 @@ of the game, not an inventory and not a deck list.
 
 This is the system that took mana's place, so it is a first-class subsystem rather
 than a late addition.
+
+---
+
+## 11. Clarifications settled while building the engine
+
+These were not decided in advance. Each came out of the engine or a harness, and
+each is recorded here because it changes how cards should be designed.
+
+### Side I is the LAST face a chain reaches, not the first
+
+A spell is played at `rot = 0`, so **side I is what it shows when it lands**, and
+a match rotates **left**, which brings up **side II**. So from the moment a card
+hits the table, II is one rotation away, III is two, IV is three, and **I needs a
+full revolution to come back round**.
+
+So side I is the card's resting state, and it is the right place for a
+**passive** or a long-term objective rather than for the effect you are hoping to
+chain into. Printed `Rewind` II — *"resolve the I of a friendly Spell, regardless
+of orientation"* — exists precisely because side I is otherwise the hard one to
+reach, which is a good sign the printed set already knew this.
+
+### Drawing from an empty deck reshuffles the discard
+
+Otherwise the game simply runs out: the standard deck is ten cards, there is no
+draw step, and a gold objective deliberately sends its own card to the discard
+every time it scores. The round trip through the discard **is** the VP throttle,
+so the discard has to come back around.
+
+### Rule B is per spell ACTION, not per chain
+
+"No spell completes more than one full revolution" is scoped to the whole spell
+action, because a rotation does not have to come from a chain. Two `Defrinol
+Orb`s — *"after this Artifact is rotated, rotate a Spell left"* — rotate each
+other through **queued triggers**, which run after a chain has already ended.
+Each individual chain is perfectly well bounded and the pair would still
+ping-pong forever. Scoped to the action, the fifth rotation of a card is refused
+by `ops.turn`, which is the one function every rotation in the game passes
+through.
+
+### A rotation from a queued trigger starts a NEW chain
+
+Resolving a face can rotate things, and the live chain loop rescans and picks
+those up. But a **listener may only queue, never resolve**, so a trigger runs
+after its chain has ended. Any work item that leaves a table changed therefore
+queues a chain for that table — and only for the **acting player's** table, so
+your effect moving an enemy spell never hands your opponent a mandatory chain on
+your own turn.
+
+### A face's gate is tested at two moments
+
+Printed as *"you may only rotate this Spell if…"* on one face, and it does two
+things from that one declaration:
+
+- while that face is **active**, it blocks the player's **voluntary** rotation of
+  the card — the engine simply does not offer it;
+- when that face **resolves**, an unmet gate makes it **inert** — nothing
+  happens, no VP — and the rotation that brought it up still stands.
+
+A **prohibition** (*"you may not rotate this Spell again this turn"*) is
+stronger: it stops the rotation itself, so the matched junction is spent and
+nothing at all happens.
+
+### Golem cards are not four-sided
+
+A golem card never sits on a cell, never rotates and never matches, so it has no
+faces and no corner runes — the schema refuses to let one be authored with them.
+It is a statline and a tier. Three quarters of a four-sided golem would be
+unreachable by construction.
