@@ -17,12 +17,12 @@ import { SPIRAL, SHARD, WHEEL, LATTICE } from '../runes.js';
 
 card({
   id: 'FUSE', name: 'Fuse', school: 'purple',
-  runes: [LATTICE, LATTICE, SPIRAL, LATTICE],
+  runes: [LATTICE, LATTICE, SPIRAL, SPIRAL],
   found: null,
   I:   { text: "Resolve a friendly Spell's face, adding adjacent Keywords.", ...M.spliceResolve() },
   II:  { text: 'Grant a Spell [Ignore Height].', ...M.grantKeyword({ kw: 'Ignore Height' }) },
   III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
-  IV:  { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
 });
 
 card({

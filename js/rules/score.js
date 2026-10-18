@@ -67,8 +67,8 @@ export function award(state, p, amount, source = {}) {
   if (source.kind === 'objective') { bump(L, 'objectivesScored'); bump(L, 'vpFromObjectives', amount); }
   else bump(L, 'vpFromKills', amount);
 
-  fx(state, 'score', { p, amount, kind: source.kind || 'other' });
-  emit(state, 'afterScore', { p, amount, kind: source.kind || 'other', objId: source.objId || null });
+  fx(state, 'score', { p, amount, source: source.kind || 'other' });
+  emit(state, 'afterScore', { p, amount, source: source.kind || 'other', objId: source.objId || null });
 
   // Checked HERE rather than at end of turn, so 15 VP landing in the middle of a
   // chain ends the game at that point. The chain loop reads state.winner and

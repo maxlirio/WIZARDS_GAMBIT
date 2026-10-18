@@ -18,6 +18,7 @@
 import { createGame, legalActions, apply, choose, hashState, cloneState } from '../js/engine.js';
 import { allCards, STANDARD_DECK, randomDeck } from '../js/rules/spells/index.js';
 import { seedRng, int, pick } from '../js/rules/rng.js';
+import { chooseAction, answerFor } from '../js/ai/ai.js';
 import { invariants, monotonic } from './invariants.js';
 import { NUMERALS } from '../js/rules/orient.js';
 
@@ -36,9 +37,22 @@ const VERBOSE = flag('verbose');
 // here matches a real match -- but with ten fixed cards only eight unique faces
 // can ever resolve, and a coverage number from that is meaningless.
 const POOL = flag('pool');
+/**
+ * --ai plays with the real opponent instead of random legal moves, and still
+ * checks every invariant after every decision.
+ *
+ * Both are needed and they find different things. Random play reaches absurd
+ * board states no competent player would build -- which is exactly where the
+ * engine's edges are -- but it almost never finishes a game, so it never
+ * exercises scoring, the endgame, or a deck that has been round the discard
+ * three times. The AI finishes, and finds the bugs that live in positions worth
+ * playing toward.
+ */
+const AI = flag('ai');
+const POLICY = process.argv.includes('--policy') ? process.argv[process.argv.indexOf('--policy') + 1] : 'greedy';
 
 /** Answer a request at random, but only with answers the request allows. */
-function answerFor(r, rng) {
+function answerForRandom(r, rng) {
   if (r.type === 'confirm') return int(rng, 2) === 1;
   if (r.type === 'some') {
     const pool = [...r.options];
@@ -104,7 +118,7 @@ for (let g = 0; g < GAMES; g++) {
     try {
       if (state.pending) {
         const r = state.pending.request;
-        choose(state, answerFor(r, rng));
+        choose(state, AI ? answerFor(state, { policy: POLICY }) : answerForRandom(r, rng));
         harvest();
         if (!check(`after answering ${r.type}`)) break;
       } else {
@@ -114,7 +128,8 @@ for (let g = 0; g < GAMES; g++) {
           failures++;
           break;
         }
-        const a = la[int(rng, la.length)];
+        const a = AI ? chooseAction(state, { policy: POLICY }) : la[int(rng, la.length)];
+        if (!a) { console.log(`  FAIL seed ${seed}: the AI returned no action`); failures++; break; }
         // Coverage is read off the fx stream rather than guessed at: the notes
         // say which face actually resolved, including ones a chain reached that
         // nobody chose.
@@ -154,6 +169,7 @@ const hit = faces.filter((k) => coverage.has(k));
 const cold = faces.filter((k) => !coverage.has(k));
 
 console.log('');
+console.log(`mode                 ${AI ? `AI (${POLICY})` : 'random legal moves'}${POOL ? ', random corpus decks' : ', the standard deck'}`);
 console.log(`games completed      ${games}/${GAMES}`);
 console.log(`mean steps/turns     ${games ? Math.round(totalSteps / games) : 0} / ${games ? Math.round(totalTurns / games) : 0}`);
 console.log(`endings              ${[...endings].map(([k, v]) => `${k} x${v}`).join(', ') || '-'}`);

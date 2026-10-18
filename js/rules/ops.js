@@ -24,7 +24,7 @@ import { emit } from './triggers.js';
 import { ensureFresh } from './derive.js';
 
 /**
- * RULE B. No spell may be rotated more than four times per spell action.
+ * RULE B. NO SPELL MAY BE ROTATED MORE THAN FOUR TIMES IN ONE SPELL ACTION.
  *
  * Four left turns return a card to where it started, so the fifth brings up a
  * face that has already been up this action. Scoped to the ACTION rather than
@@ -33,6 +33,14 @@ import { ensureFresh } from './derive.js';
  * next to each other rotate each other through QUEUED TRIGGERS, which run after
  * a chain has ended and would otherwise ping-pong forever with each individual
  * chain perfectly well bounded.
+ *
+ * It counts ROTATION EVENTS, not quarter-turns, and that distinction is not
+ * cosmetic. `setRot` -- printed Precision I, "rotate a Spell to any side" --
+ * moves a card up to three quarter-turns at once, so counting quarter-turns let
+ * a card that had already turned twice reach five and blow the cap. A 140-game
+ * sweep found it; twenty games had not. Counting events is what actually bounds
+ * the ping-pong anyway, since the loop is driven by how many times a trigger
+ * fires, and "four turns is a revolution" survives as the flavour.
  *
  * Enforced HERE, in the one function every rotation passes through, rather than
  * in the chain. The chain also filters on it so it never offers a dead choice,
@@ -53,7 +61,13 @@ export function fx(state, kind, data = {}) {
   // note left during that replay describes a moment the player has already been
   // shown. Writing it again makes the same bolt strike three times.
   if (state.replaying) return;
-  (state.fx ||= []).push({ kind, ...data });
+  // `kind` goes in LAST, so a payload field of the same name cannot overwrite
+  // the event name. It did: `fx(state, 'push', { kind: body.body, ... })` wrote
+  // a note of kind 'unit', every push note in the game was mislabelled, and
+  // selfplay.js reported realised push distance as 0% of nominal while the
+  // ledger counted 66 metres of it. Payload fields are now named so they cannot
+  // collide, and this ordering makes the next one harmless rather than silent.
+  (state.fx ||= []).push({ ...data, kind });
 }
 
 /** Name the actual cards an effect touched, so the view can draw the real ones. */
@@ -266,7 +280,7 @@ export function turn(state, uid, { dir = 'left', steps = 1, forced = false, sile
   }
   if (sp.turnsThisAction >= REVOLUTION) { fx(state, 'revolutionSpent', { uid }); return false; }
   sp.rot = turned(sp.rot, dir, steps);
-  sp.turnsThisAction += ((steps % 4) + 4) % 4;
+  sp.turnsThisAction++;
   state.players[sp.owner].ledger.rotations++;
   markDirty(state, sp.owner);
   if (!silent) fx(state, 'rotate', { uid, dir, rot: sp.rot });
@@ -283,9 +297,8 @@ export function setRot(state, uid, rot, { forced = false } = {}) {
     return false;
   }
   if (sp.turnsThisAction >= REVOLUTION) { fx(state, 'revolutionSpent', { uid }); return false; }
-  const steps = ((rot - sp.rot) % 4 + 4) % 4;
   sp.rot = rot & 3;
-  sp.turnsThisAction += steps;
+  sp.turnsThisAction++;
   state.players[sp.owner].ledger.rotations++;
   markDirty(state, sp.owner);
   emit(state, 'afterRotate', { uid, dir: 'set', forced, p: sp.owner });

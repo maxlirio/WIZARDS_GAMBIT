@@ -80,7 +80,12 @@ export function push(state, body, dir, mmDist, {
     if (isUnitBody(body)) {
       if (byP !== null) { bump(state.players[byP].ledger, 'unitsPushed'); bump(state.players[byP].ledger, 'pushMm', total); }
     }
-    fx(state, 'push', { id: body.id, kind: body.body, mm: total, dir, from: { x: x0, y: y0 } });
+    fx(state, 'push', { id: body.id, body: body.body, mm: total, dir, from: { x: x0, y: y0 } });
+    // The nominal distance beside the realised one, recorded only for the body
+    // the card actually named. A printed "push 3m" becomes 3m of travel against
+    // real terrain, so the two differ -- and the gap is the price of leaving the
+    // grid, which is a number worth being able to read rather than assume.
+    if (depth === 0) fx(state, 'pushResult', { id: body.id, want: mmDist, got: total, body: body.body });
   }
 
   if (crush && remaining >= CRUSH_MM && isUnitBody(body)) {

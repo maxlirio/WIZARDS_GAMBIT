@@ -34,11 +34,15 @@
 //     Keyed by VERTEX, not by card, so a spell shifted mid-chain cannot
 //     resurrect a spent junction.
 //
-//   RULE B -- no spell completes more than one full revolution per chain.
+//   RULE B -- no spell is rotated more than four times per spell ACTION.
 //
-//     Four left turns return a card to where it started, so a fifth is
-//     provably pointless. This bounds ROTATIONS, which Rule A alone does not,
-//     since a rotation does not have to come from a match. At most 9 x 4 = 36.
+//     Four left turns return a card to where it started, so a fifth brings up a
+//     face that has already been up. This bounds ROTATIONS, which Rule A alone
+//     does not, since a rotation does not have to come from a match: at most
+//     9 x 4 = 36 an action. Scoped to the action rather than the chain because
+//     one action can start several chains -- a queued trigger that rotates
+//     something runs after the chain that queued it has ended. It counts
+//     rotation EVENTS, not quarter-turns; see ops.js.
 //
 // What makes this a proof rather than a hope is that progress depends on NO
 // player choice, NO cost being payable and NO effect succeeding. `state.guard`

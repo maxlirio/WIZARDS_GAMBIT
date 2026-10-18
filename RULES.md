@@ -160,11 +160,18 @@ per link **before** it mutates anything — including when nothing resolves. So 
 is **at most 12 links, by construction**, no matter what the effects do. This is a
 proof, not a safety guard; the engine's `guard` is an assertion that must never fire.
 
-> **No spell completes more than one full revolution during a chain.**
+> **No spell is rotated more than four times in one spell action.**
 
-Four left turns return a spell to where it started, so further rotation is provably
-pointless. This bounds *rotations* (which the link rule alone does not, since printed
-`Defrinol Orb` rotates things without matching anything): at most 9 x 4 = 36.
+Four left turns return a spell to where it started, so a fifth brings up a face that
+has already been up. This bounds *rotations*, which the link rule alone does not,
+since a rotation does not have to come from a match — printed `Defrinol Orb` rotates
+things without matching anything. At most 9 x 4 = 36 rotations an action.
+
+It counts rotation **events**, not quarter-turns. Printed `Precision` I — *"rotate a
+Spell to any side"* — moves a card up to three quarter-turns at once, and counting
+quarter-turns let a card that had already turned twice reach five and blow the cap.
+Counting events is what bounds the loop anyway, since the loop is driven by how many
+times a trigger fires.
 
 If every card in a matched group is under a prohibition, the vertex is spent and
 nothing happens.
@@ -343,10 +350,10 @@ draw step, and a gold objective deliberately sends its own card to the discard
 every time it scores. The round trip through the discard **is** the VP throttle,
 so the discard has to come back around.
 
-### Rule B is per spell ACTION, not per chain
+### Rule B is per spell ACTION, not per chain, and counts events
 
-"No spell completes more than one full revolution" is scoped to the whole spell
-action, because a rotation does not have to come from a chain. Two `Defrinol
+"No spell is rotated more than four times" is scoped to the whole spell action,
+because a rotation does not have to come from a chain. Two `Defrinol
 Orb`s — *"after this Artifact is rotated, rotate a Spell left"* — rotate each
 other through **queued triggers**, which run after a chain has already ended.
 Each individual chain is perfectly well bounded and the pair would still

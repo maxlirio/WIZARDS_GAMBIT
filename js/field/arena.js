@@ -40,6 +40,16 @@ export const QUANT = 250;             // heights snap to this, so steps read as 
 export const STEP = 100;
 /** A height difference a unit simply walks up. */
 export const STEP_UP = 300;
+/**
+ * A height difference a unit simply steps DOWN.
+ *
+ * Deliberately smaller than it is tempting to make it. A body SHOVED over a
+ * lip steeper than this goes airborne and keeps travelling at the height it
+ * left, which is what turns a plateau into something worth standing on; a body
+ * WALKING climbs down instead, at climbing cost. Set this loosely and nothing
+ * in the arena can ever be fallen off.
+ */
+export const STEP_DOWN = 350;
 /** Above this, it is a climb: half speed, and only on climbable ground. */
 export const CLIMB_COST = 2;
 /** Falls shorter than this hurt nobody. */
@@ -79,7 +89,14 @@ export function makeArena(seed) {
         // A flat top with a steep rim: full height out to 70% of the radius,
         // then a short ramp. That gives a plateau you can stand on and a face
         // you have to climb, from one primitive.
-        const inner = idiv(rr * 49, 100);
+        // A SHEER RIM, not a long ramp: full height out to 90% of the radius
+        // and then straight down. The bilinear sample over a 500mm node grid
+        // limits how fast ground can actually fall away, so a gentle rim on top
+        // of that produced a plateau nobody could ever be pushed off -- eight
+        // full AI games reported zero falls across ninety-nine metres of
+        // pushing. Height comes from the plateau; steepness has to come from
+        // the rim being narrower than a node.
+        const inner = idiv(rr * 81, 100);
         const v = d <= inner ? h : idiv(h * (rr - d), rr - inner);
         if (v > hs[at(i, j)]) hs[at(i, j)] = v;
       }
@@ -113,8 +130,10 @@ export function makeArena(seed) {
   } else {
     const plateaus = range(r, 2, 4);
     for (let k = 0; k < plateaus; k++) {
+      // Tall enough to matter. A 500mm plateau is a kerb; the interesting
+      // feature is one a body can be shoved off and take damage for.
       raise(range(r, midLo - 1000, midHi + 1000), range(r, 1200, ARENA_H - 1200),
-            range(r, 1400, 2400), range(r, 1, challenge === 'spires' ? 4 : 3) * 500);
+            range(r, 1400, 2400), range(r, 3, challenge === 'spires' ? 7 : 5) * 500);
     }
   }
 

@@ -61,12 +61,12 @@ export function kill(state, unit, why = {}) {
     // decision and not a free trade.
     state.players[victim].mage.respawnOnTurn = state.turn + (state.active === victim ? 2 : 1);
   } else {
-    bump(state.players[victim].ledger, 'unitsKilled');
+    bump(state.players[victim].ledger, 'unitsLost');
     releaseGolemUnit(state, unit);
   }
 
-  fx(state, 'kill', { id: unit.id, kind: unit.kind, p: victim, by: killer });
-  emit(state, 'afterKill', { id: unit.id, kind: unit.kind, p: victim, by: killer });
+  fx(state, 'kill', { id: unit.id, victim: unit.kind, p: victim, by: killer });
+  emit(state, 'afterKill', { id: unit.id, victim: unit.kind, p: victim, by: killer });
 
   if (killer !== null && killer !== undefined && killer !== victim) {
     awardKill(state, killer, unit.kind === 'mage' ? 'mage' : 'golem', victim);

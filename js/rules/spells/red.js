@@ -13,9 +13,9 @@ card({
   id: 'EMBER_LASH', name: 'Ember Lash', school: 'red',
   runes: [SHARD, SHARD, WHEEL, LATTICE],
   found: null,
-  I:   { text: 'Deal 2 damage to a unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
+  I:   { text: 'Deal 2 damage to an enemy unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
   II:  { text: 'Deal 1 damage to each enemy unit within 2.5m.', ...M.damageAll({ amount: 1, range: 2500 }) },
-  III: { text: 'Push a unit within 3m 2m away.', ...M.pushAway({ mm: 2000, range: 3000 }) },
+  III: { text: 'Push an enemy unit within 3m 2m away.', ...M.pushAway({ mm: 2000, range: 3000 }) },
   IV:  { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
 });
 
@@ -34,14 +34,14 @@ card({
 
 card({
   id: 'CINDER_RAIN', name: 'Cinder Rain', school: 'red',
-  runes: [SHARD, SHARD, LATTICE, WHEEL],
+  runes: [SHARD, SHARD, SHARD, WHEEL],
   found: 'wideBurn',
   I:   { text: 'Deal 1 damage to each enemy unit within 3m.', ...M.damageAll({ amount: 1, range: 3000 }) },
-  II:  { text: 'Deal 2 damage to a unit you can see within 5m.',
+  II:  { text: 'Deal 2 damage to an enemy unit you can see within 5m.',
          ...M.damage({ amount: 2, range: 5000, needLos: true }) },
   III: { text: '1 damage per Spell of yours destroyed this duel, up to 4.',
          ...M.damagePerLedger({ key: 'spellsDestroyed', per: 1, cap: 4, range: 3000 }) },
-  IV:  { text: 'Push a unit within 3m 2m.', ...M.push({ mm: 2000, range: 3000 }) },
+  IV:  { text: 'Push an enemy unit within 3m 2m.', ...M.push({ mm: 2000, range: 3000 }) },
 });
 
 card({
@@ -58,7 +58,7 @@ card({
 
 card({
   id: 'BLOOD_PACT', name: 'Blood Pact', school: 'red',
-  runes: [SHARD, LATTICE, SHARD, SPIRAL],
+  runes: [SHARD, LATTICE, SHARD, SHARD],
   found: 'payInBlood',
   I:   { text: 'Your mage takes 1 damage. Deal 3 damage within 4m.',
          cost: [{ id: 'mageWound', n: 1 }], ...M.damage({ amount: 3, range: 4000 }) },
@@ -74,19 +74,19 @@ card({
   keywords: ['Crush'],
   runes: [WHEEL, SHARD, WHEEL, WHEEL],
   found: 'slamHome',
-  I:   { text: 'Push a unit within 3m 3m.', ...M.push({ mm: 3000, range: 3000 }) },
-  II:  { text: 'Deal 2 damage to a unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
-  III: { text: 'Push a unit within 3m 4m away.', ...M.pushAway({ mm: 4000, range: 3000 }) },
+  I:   { text: 'Push an enemy unit within 3m 3m.', ...M.push({ mm: 3000, range: 3000 }) },
+  II:  { text: 'Deal 2 damage to an enemy unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
+  III: { text: 'Push an enemy unit within 3m 4m away.', ...M.pushAway({ mm: 4000, range: 3000 }) },
   IV:  { text: 'Move a friendly unit to the nearest high ground.', ...M.toHighGround({ mm: 3000 }) },
 });
 
 card({
   id: 'VENOM_DART', name: 'Venom Dart', school: 'red',
   keywords: ['Poison'],
-  runes: [SHARD, SHARD, LATTICE, LATTICE],
+  runes: [SHARD, SHARD, LATTICE, SHARD],
   found: 'poisonTwo',
-  I:   { text: 'Deal 1 damage to a unit within 4m.', ...M.damage({ amount: 1, range: 4000 }) },
-  II:  { text: 'Deal 2 damage to a unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
+  I:   { text: 'Deal 1 damage to an enemy unit within 4m.', ...M.damage({ amount: 1, range: 4000 }) },
+  II:  { text: 'Deal 2 damage to an enemy unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
   III: { text: 'Grant a Spell [Poison].', ...M.grantKeyword({ kw: 'Poison' }) },
-  IV:  { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Deal 1 damage to each enemy unit within 2.5m.', ...M.damageAll({ amount: 1, range: 2500 }) },
 });

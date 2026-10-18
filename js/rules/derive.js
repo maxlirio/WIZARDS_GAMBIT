@@ -29,6 +29,13 @@ import { gateMet } from './gates.js';
  * and READ by some rule. A bucket nothing writes makes every card that depends
  * on it inert; a bucket nothing reads is a passive that computes an answer
  * nobody asks for. Both read as implemented from the outside.
+ *
+ * Three buckets were deleted on the harness's first run -- vpBonus, extraDraw
+ * and unitKeywords -- because nothing read them and no card wrote them. They
+ * were declared speculatively, for cards that might want them later, and that
+ * is exactly the dead weight this list is checked for: a bucket waiting for its
+ * card drifts out of step with the engine around it, and the card that finally
+ * arrives has to debug it. The hook goes in WITH the card that needs it.
  */
 export function emptyDerived() {
   return {
@@ -44,12 +51,9 @@ export function emptyDerived() {
     /* the player */
     rangeBonus: [0, 0],           // mm added to every range check
     damageBonus: [0, 0],
-    vpBonus: [0, 0],              // extra VP per objective scored
-    extraDraw: [0, 0],
 
     /* the battlefield */
     unitMoveBonus: new Map(),     // unitId -> mm
-    unitKeywords: new Map(),      // unitId -> [keyword]
     shield: new Map(),            // unitId -> damage reduction
   };
 }
@@ -110,8 +114,16 @@ export function refresh(state) {
     const def = defOf(state, sp);
     const face = def.faces[activeIndex(sp)];
     if (!face || !face.passive2) continue;
-    try { face.passive2({ state, spell: sp, def, face, p: sp.owner, d }); }
-    catch (e) { state.derivationErrors.push({ uid: sp.uid, def: def.id, error: String(e) }); }
+    if (face.gate && !gateMet(state, sp, face.gate)) continue;
+    // The WATCHED view here too. Running the second pass against the raw
+    // buckets meant every passive2 write went unrecorded, and
+    // tools/checkderived.js reported Link's grantedKeywords as never written
+    // while it was in fact working perfectly.
+    const view = state.strict ? watched(d, state, sp, face) : d;
+    try { face.passive2({ state, spell: sp, def, face, p: sp.owner, d: view }); }
+    catch (e) {
+      state.derivationErrors.push({ uid: sp.uid, def: def.id, numeral: face.numeral, error: String(e && e.message || e) });
+    }
   }
   state._deriving = false;
   return d;

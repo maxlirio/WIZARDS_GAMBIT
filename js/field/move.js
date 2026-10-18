@@ -12,7 +12,7 @@
 // home. From-the-origin costs one multiply and is exact.
 
 import { idiv, imax, imin, isqrt, dist2, DIR64, DIR_SCALE } from './fixed.js';
-import { inBounds, STEP, STEP_UP, CLIMB_COST, FALL_SAFE, propSpec } from './arena.js';
+import { inBounds, STEP, STEP_UP, STEP_DOWN, CLIMB_COST, FALL_SAFE, propSpec } from './arena.js';
 import { surfaceAt, settle, supported, blockingProp, blockingUnit, findProp, BODY_H } from './query.js';
 
 /**
@@ -31,8 +31,17 @@ export const CLIMB_RATE = 750;
 /** No single move may take more steps than this, whatever the budget says. */
 export const MAX_STEPS = 200;
 
-/** Damage per metre fallen beyond the safe drop. */
-export const FALL_DAMAGE_PER_M = 1;
+/**
+ * Fall damage: one point for clearing the safe drop at all, and one more per
+ * further metre.
+ *
+ * The first version was `idiv(drop - FALL_SAFE, 1000)`, which is ZERO for every
+ * drop under two metres -- and arena plateaus are 1.5 to 2.5m, so pushing
+ * somebody off one was free. Seven falls across six full AI games did a
+ * combined zero damage, and the instrument panel in selfplay.js is what said
+ * so.
+ */
+export const fallDamageFor = (drop) => (drop <= FALL_SAFE ? 0 : 1 + idiv(drop - FALL_SAFE, 1000));
 
 /**
  * Walk a body along a bearing, spending up to `budget` millimetres.
@@ -49,7 +58,7 @@ export function walk(state, body, dir, budget, {
   const self = isUnitBody(body) ? null : body.id;
   const maxSteps = imin(idiv(budget, STEP), MAX_STEPS);
   let taken = 0, cost = 0, climbed = 0;
-  let blockedBy = null, fell = false;
+  let blockedBy = null, fell = false, airborneFrom = -1;
 
   for (let k = 1; k <= maxSteps; k++) {
     const nx = x0 + idiv(ux * k * STEP, DIR_SCALE);
@@ -70,7 +79,17 @@ export function walk(state, body, dir, budget, {
         if (!pr || !propSpec(pr.kind).climbable) { blockedBy = { kind: 'sheer', id: s.support.id }; break; }
       }
     }
-    if (rise < -FALL_SAFE && !allowFall) { blockedBy = { kind: 'drop', mm: -rise }; break; }
+    if (rise < -STEP_DOWN) {
+      // Over a lip. A body being PUSHED goes airborne; a body WALKING climbs
+      // down if the drop is within climbing reach and refuses to jump if it is
+      // not.
+      if (!allowFall) {
+        if (!climb || -rise > CLIMB_RATE) { blockedBy = { kind: 'drop', mm: -rise }; break; }
+      } else {
+        airborneFrom = k;
+        break;
+      }
+    }
 
     const pr = blockingProp(state, nx, ny, imax(feet, s.z), { ignore: self });
     if (pr) { blockedBy = { kind: 'prop', id: pr.id }; break; }
@@ -82,11 +101,40 @@ export function walk(state, body, dir, budget, {
     const stepCost = rise > STEP_UP ? CLIMB_COST : 1;
     if ((cost + stepCost) * STEP > budget) { blockedBy = blockedBy || { kind: 'spent' }; break; }
 
-    body.x = nx; body.y = ny; body.z = s.z; body.support = s.support;
     cost += stepCost;
     taken = k;
     if (rise > STEP_UP) climbed++;
-    if (rise < -FALL_SAFE) { fell = true; break; }
+    // A climb DOWN costs the same as a climb up: you are on the rock either way.
+    if (rise < -STEP_DOWN) climbed++;
+    body.x = nx; body.y = ny; body.z = s.z; body.support = s.support;
+  }
+
+  // AIRBORNE. A shoved body that has gone over a lip keeps travelling at the
+  // height it left and only finds the ground when the push runs out. That is
+  // what makes being pushed off a plateau worse than walking off one, and it is
+  // the whole reason height is worth holding.
+  //
+  // The drop itself is NOT applied here: the body keeps its z, loses its
+  // support, and the fall queue works out how far it actually is and what it
+  // costs. Seating it on the lower surface at this point means the fall has
+  // already quietly happened by the time resolveFalls looks -- `before` already
+  // equals the landing height, no drop is detected, and nobody ever takes fall
+  // damage.
+  if (airborneFrom >= 0) {
+    for (let k = airborneFrom; k <= maxSteps; k++) {
+      if ((cost + 1) * STEP > budget) break;
+      const nx = x0 + idiv(ux * k * STEP, DIR_SCALE);
+      const ny = y0 + idiv(uy * k * STEP, DIR_SCALE);
+      if (!inBounds(state.arena, nx, ny)) { blockedBy = { kind: 'edge' }; break; }
+      const under = surfaceAt(state, nx, ny, { ignore: self });
+      if (under.z > body.z) { blockedBy = { kind: 'rise', mm: under.z - body.z }; break; }
+      if (blockingProp(state, nx, ny, body.z, { ignore: self })) { blockedBy = { kind: 'prop' }; break; }
+      body.x = nx; body.y = ny;
+      cost += 1;
+      taken = k;
+    }
+    body.support = null;
+    fell = true;
   }
 
   if (taken === 0) {
@@ -151,8 +199,8 @@ export function resolveFalls(state, hurt) {
       body.support = s.support;
       const drop = before - s.z;
       landed.push({ key, drop, z: s.z });
-      if (isUnit && drop > FALL_SAFE) {
-        const dmg = idiv(drop - FALL_SAFE, 1000) * FALL_DAMAGE_PER_M;
+      if (isUnit) {
+        const dmg = fallDamageFor(drop);
         if (dmg > 0 && hurt) hurt(state, body, dmg, { cause: 'fall', drop });
       }
       // Anything that was standing on this prop has lost its footing.

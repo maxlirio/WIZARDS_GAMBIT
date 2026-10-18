@@ -22,12 +22,12 @@ card({
 
 card({
   id: 'PRECISION', name: 'Precision', school: 'green',
-  runes: [SPIRAL, SPIRAL, SPIRAL, LATTICE],
+  runes: [SPIRAL, SPIRAL, SPIRAL, SHARD],
   found: 'turnFive',
   I:   { text: 'Rotate a Spell to any side. Trigger no effects from it.', ...M.setSideFreely() },
   II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   III: { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
-  IV:  { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
 });
 
 card({
@@ -44,12 +44,12 @@ card({
 
 card({
   id: 'REWIND', name: 'Rewind', school: 'green',
-  runes: [SPIRAL, LATTICE, SPIRAL, LATTICE],
+  runes: [SPIRAL, LATTICE, SPIRAL, SPIRAL],
   found: 'rewindOnce',
   I:   { text: 'Rotate a Spell you control right.', ...M.turnASpell({ dir: 'right' }) },
   II:  { text: 'Resolve the I of a friendly Spell, regardless of orientation.', ...M.rewind({ index: 0 }) },
   III: { text: 'Rotate this Spell right.', ...M.turnSelf({ dir: 'right' }) },
-  IV:  { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Shift this Spell to an adjacent cell.', ...M.shiftSelf() },
 });
 
 card({
@@ -80,5 +80,5 @@ card({
   I:   { text: 'Destroy a Spell.', ...M.destroyASpell({ side: 'friendly' }) },
   II:  { text: 'Rotate a Spell left.', ...M.turnASpell({ dir: 'left' }) },
   III: { text: 'Shift a Spell to an adjacent cell.', ...M.shiftASpell() },
-  IV:  { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Spells either side of this one lose their Keywords.', ...M.passiveSilence() },
 });

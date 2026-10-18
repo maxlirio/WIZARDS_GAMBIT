@@ -41,8 +41,8 @@ import { TIER_CAP, SLOTS } from './rules/golems.js';
 import { beginTurn, endTurn } from './rules/turn.js';
 import { makeMage, unitActions, doUnitAction, pendingUnits } from './rules/units.js';
 import { seedRng, save as saveRng, shuffle } from './rules/rng.js';
-import { CARDS } from './rules/spells/index.js';
-import { STANDARD_DECK } from './rules/spells/index.js';
+import { CARDS, STANDARD_DECK, FINDABLE } from './rules/spells/index.js';
+import { checkFinds } from './rules/learn.js';
 import { makeArena, makeProps } from './field/arena.js';
 import { resolveFalls, recheckSupport } from './field/move.js';
 import { livingUnits, mageOf, unitKeywords } from './field/query.js';
@@ -114,6 +114,14 @@ export function createGame(opts = {}) {
     resolveErrors: [],
 
     players: [null, null],
+    /**
+     * Which cards can be FOUND this match, and by doing what.
+     *
+     * On the state rather than imported where it is used, so a harness can
+     * narrow it (or empty it) without touching the corpus -- and so the engine
+     * has no opinion about which cards exist.
+     */
+    findable: opts.findable || FINDABLE.map((f) => ({ id: f.id, found: f.found })),
     arena: makeArena(seed),
     field: null,
   };
@@ -340,6 +348,10 @@ export function pump(state) {
     recheckSupport(state);
     if (state.field.pendingFalls.length) { resolveFalls(state, hurt); continue; }
     if (state.winner !== null) return state;
+    // The Spellbook, checked only at rest. A find that fired mid-chain would be
+    // reading a board that does not exist yet and would put a card in the
+    // discard in the middle of a replay.
+    if (checkFinds(state)) continue;
 
     if (state.phase === 'spell' && state.spellActionUsed) { state.phase = 'unit'; continue; }
     if (state.phase === 'unit' && !pendingUnits(state, state.active).length) {

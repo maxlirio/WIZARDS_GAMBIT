@@ -376,6 +376,20 @@ export const passiveWildCorners = () => ({
   passive: ({ spell, d }) => { d.wildCorners.add(spell.uid); },
 });
 
+/**
+ * Every corner of this card counts as one named rune.
+ *
+ * Which makes the card re-create its own match after every rotation, since all
+ * four corners stay the same through a turn. That is the pathology the chain's
+ * vertex bound exists to contain -- checkchains.js builds exactly this table on
+ * purpose -- so it is a safe card to print, and a sharp one: it turns a corner
+ * of the table into a junction that always resonates.
+ */
+export const passiveRuneSeal = ({ rune }) => ({
+  tag: 'turn', grants: ['runeOverride'],
+  passive: ({ spell, d }) => { d.runeOverride.set(spell.uid, [rune, rune, rune, rune]); },
+});
+
 /** Printed Link: the Spell to the left has the keywords of the Spell to the right. */
 export const passiveLink = () => ({
   tag: 'draw', grants: ['grantedKeywords'],
@@ -403,6 +417,27 @@ export const passiveShield = ({ n = 1 } = {}) => ({
   passive: ({ state, p, d }) => {
     for (const u of state.field.units) {
       if (u.owner === p && !u.dead) d.shield.set(u.id, (d.shield.get(u.id) || 0) + n);
+    }
+  },
+});
+
+/**
+ * The Spells either side of this one lose their Keywords.
+ *
+ * The counterpart to the whole keyword economy: purple spends a game building
+ * a card up to four Keywords, and this takes them away for as long as it faces
+ * this way. Derived, like everything continuous -- rotate off this face and the
+ * Keywords are simply there again, because they were never removed from
+ * anything, only subtracted at the point of asking.
+ */
+export const passiveSilence = () => ({
+  tag: 'draw', grants: ['lostKeywords'],
+  passive: ({ state, spell, d }) => {
+    for (const n of [leftNeighbour(state, spell), rightNeighbour(state, spell)]) {
+      if (!n) continue;
+      const have = state.defs[n.def].keywords.concat(n.keywords || []);
+      const was = d.lostKeywords.get(n.uid) || [];
+      d.lostKeywords.set(n.uid, [...new Set([...was, ...have])].sort());
     }
   },
 });

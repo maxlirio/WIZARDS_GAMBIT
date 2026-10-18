@@ -18,6 +18,7 @@ import './golems.js';
 import { validateGate } from '../gates.js';
 import { validateCost } from '../costs.js';
 import { validateObjective } from '../objectives.js';
+import { validateFinds } from '../learn.js';
 
 /**
  * Validate gates, costs and VP formulas AFTER every card is registered.
@@ -41,6 +42,7 @@ export function validateCorpus() {
       if (f.objective?.gate) validateGate(d.id, f.numeral, f.objective.gate);
     }
   }
+  validateFinds(allCards());
   return true;
 }
 validateCorpus();

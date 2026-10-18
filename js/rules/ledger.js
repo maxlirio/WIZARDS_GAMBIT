@@ -58,8 +58,8 @@ export function emptyLedger() {
     highGroundEnds: 0,        // turns ended with a friendly unit on high ground
 
     /* kills and scoring */
-    unitsKilled: 0,
-    golemsKilled: 0,
+    unitsLost: 0,             // YOUR units that died. Not kills you made.
+    golemsKilled: 0,          // enemy golem units you killed
     magesKilled: 0,
     mageDeaths: 0,            // YOUR mage dying. The suicide-feeding instrument.
     golemCardsLost: 0,
@@ -73,6 +73,27 @@ export const LEDGER_KEYS = Object.freeze(Object.keys(emptyLedger()));
 
 /** Counters that may legitimately be set rather than incremented. */
 export const HIGH_WATER = Object.freeze(['longestChain']);
+
+/**
+ * Counters that exist for the DESIGNER, not for the cards.
+ *
+ * A declared category rather than an exception. tools/checkledger.js insists
+ * every counter be read by something, and the honest answer for these is that
+ * nothing in the game reads them and nothing should: they are instruments.
+ * `inertResolutions` says how often a chain forced somebody onto a face whose
+ * gate was unmet, which is how you tell whether the gate rule is doing its job;
+ * `vpFromObjectives` against `vpFromKills` is the suicide-feeding measurement
+ * the whole mageVpDecay knob exists for.
+ *
+ * They are still CHECKED -- a diagnostic nothing reads is just overhead -- but
+ * the reader has to be a tool, not a card.
+ */
+export const DIAGNOSTIC = Object.freeze([
+  'reshuffles', 'cardsFound', 'inertResolutions', 'fallDamage',
+  'golemCardsLost', 'objectivesScored', 'vpFromObjectives', 'vpFromKills',
+  'unitsLost', 'mageDeaths', 'forcedRotations', 'artifactsPlayed', 'golemsPlayed',
+  'spellsPlayed',
+]);
 
 export const bump = (ledger, key, by = 1) => {
   if (!(key in ledger)) throw new Error(`no ledger counter '${key}' -- declare it in ledger.js`);
