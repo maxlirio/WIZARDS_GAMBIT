@@ -77,8 +77,16 @@ ok(O.activeFace(CARD, { rot: O.turned(0, 'left') }) === 'II',
 
 /* -------------------------------------------------- 5. the lattice is sound */
 console.log('vertex lattice');
-eq(T.MATCH_SITES.length, 12, 'exactly 12 matchable vertices');
-eq(T.INTERIOR_SITES.length, 4, 'exactly 4 interior vertices');
+eq(T.SHARED_VERTICES.length, 12, 'exactly 12 vertices where two or more cards meet');
+eq(T.INTERIOR_VERTICES.length, 4, 'exactly 4 interior vertices');
+// The match sites: orthogonal pairs only, two touching corners each.
+eq(T.MATCH_SITES.length, 24, 'exactly 24 match sites (12 orthogonal pairs x 2 touching corners)');
+eq(T.INTERIOR_SITES.length, 16, '16 of them sit at the four interior vertices');
+ok(T.MATCH_SITES.every((id) => { const s = T.SITE[id]; const [a, b] = s.cells; return b === a + 1 && a % 3 !== 2 || b === a + 3; }),
+  'every match site pairs orthogonal neighbours, never a diagonal');
+ok(T.MATCH_SITES.every((id) => { const s = T.SITE[id]; return T.CORNER_OF[s.cells[0]][s.pos[0]] === s.vertex && T.CORNER_OF[s.cells[1]][s.pos[1]] === s.vertex; }),
+  'both corners of a site sit on its vertex');
+ok(new Set(T.MATCH_SITES.map((id) => T.SITE[id].cells.join('-'))).size === 12, '12 distinct adjacent pairs');
 eq(T.VERTEX_CARDS.filter((c) => c.length === 1).length, 4, '4 dead outer corners');
 eq(T.VERTEX_CARDS.filter((c) => c.length === 2).length, 8, '8 two-card edge vertices');
 eq(T.VERTEX_CARDS.filter((c) => c.length === 4).length, 4, '4 four-card interior vertices');
@@ -128,7 +136,7 @@ for (const c of T.HOME.artifact) {
   eq(kinds(c), { interior: 1, edge: 2, dead: 1 },
     `grey corner ${c} touches 1 interior + 2 edge + 1 dead`);
 }
-ok(T.INTERIOR_SITES.every((v) => T.VERTEX_CARDS[v].some((e) => e.cell === 4)),
+ok(T.INTERIOR_VERTICES.every((v) => T.VERTEX_CARDS[v].some((e) => e.cell === 4)),
   'every interior vertex touches the purple centre');
 
 /* ------------------------------------------------------- 7. named neighbours */

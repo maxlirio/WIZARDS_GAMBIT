@@ -36,7 +36,7 @@ import { CARDS } from '../js/rules/spells/index.js';
 import { makeDef } from '../js/rules/schema.js';
 import { SPIRAL, SHARD, WHEEL, LATTICE } from '../js/rules/runes.js';
 import { findMatches, runeAtCorner, CHAIN_ASSERT } from '../js/rules/match.js';
-import { MATCH_SITES, INTERIOR_SITES, HOME, CELL_COLOR } from '../js/rules/table.js';
+import { MATCH_SITES, HOME, CELL_COLOR } from '../js/rules/table.js';
 import { makeCard, place, spellsOn, findSpell, REVOLUTION } from '../js/rules/ops.js';
 import { refresh } from '../js/rules/derive.js';
 import { seedRng, int } from '../js/rules/rng.js';

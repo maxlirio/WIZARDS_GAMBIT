@@ -212,8 +212,9 @@ from that snapshot on every answer — like any card. All of its bookkeeping is
 therefore plain serialisable data on `state.chain`.
 
 **Termination is structural, not a guard.** Two real rules, each teachable in a
-sentence: *each junction resonates at most once per chain* (12 junctions, and a
-chain spends one **before** it mutates anything, so 12 links by construction),
+sentence: *each junction resonates at most once per chain* (24 corner-contact
+sites between orthogonal neighbours, and a chain spends one **before** it mutates
+anything, so 24 links by construction),
 and *no spell is rotated more than four times in one spell action*. The engine's
 `guard` is an assertion that must never fire.
 

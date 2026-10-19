@@ -15,7 +15,7 @@
 // system it would have meant the closed event list from the start was wrong.
 // It did not.
 
-import { spellsOn, defOf, found } from './ops.js';
+import { spellsOn, defOf } from './ops.js';
 import { livingUnits, unitsOf, onHighGround, rangeOrigins, mageOf } from '../field/query.js';
 import { keywordsOf } from './keywords.js';
 import { CELLS } from './table.js';
@@ -150,7 +150,13 @@ export function checkFinds(state) {
       try { met = !!FINDS[cond].test(state, p); }
       catch (e) { (state.derivationErrors ||= []).push({ find: cond, error: String(e && e.message || e) }); }
       if (!met) continue;
-      found(state, p, id, cond);
+      // Learned the moment the condition is met -- that is what the Spellbook
+      // records -- but whether the card joins this duel's deck is the player's
+      // choice, asked as a work item so the question parks and replays like
+      // any other. `foundThisMatch` is marked here so the pump never queues
+      // the same find twice.
+      pl.foundThisMatch.push(id);
+      state.queue.push({ kind: 'find', p, defId: id, why: cond, seq: ++state.actionSeq });
       n++;
     }
   }

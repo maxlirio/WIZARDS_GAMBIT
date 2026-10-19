@@ -45,8 +45,10 @@ GREEN    PURPLE     BLUE        3 4 5    blue    the battlefield
 ### What the geometry gives you for free
 
 The 3x3 has a 4x4 lattice of 16 grid vertices. 4 outer corners touch one card and can
-never match; 8 edge vertices touch two cards; 4 interior vertices touch four. So
-there are **12 match sites**. Working out which vertices each cell touches:
+never match; 8 edge vertices touch two cards; 4 interior vertices touch four. Cards
+match only with **orthogonal neighbours**, at the two corners that touch across the
+shared edge — 12 adjacent pairs, two touching corners each, so **24 match sites**.
+Working out which vertices each cell touches:
 
 | cell | interior | edge | dead |
 |---|---|---|---|
@@ -162,17 +164,25 @@ control."*, *"You may discard a card. If you do, rotate this Spell left."*
 Checked after a **play**, a **rotate**, or a **shift** — on the acting player's own
 table.
 
-Two or more of your cards meeting at one grid vertex, showing the **same rune** at
-that vertex, **match**.
+Two of your cards that are **orthogonally adjacent** (sharing an edge, never
+diagonal) **match** when the corners that touch across that edge show the **same
+rune**. A wild corner matches any rune.
 
-When they do:
+**Only a card that just changed can set off a match.** The card you played, rotated
+or shifted — and, inside a chain, every card the chain turns — is *fresh*; a site
+fires only if one of its two cards is fresh. Two cards that have sat matching since
+an earlier turn do not fire again every time something else on the table moves.
 
-1. **Choose one** of the matched cards.
-2. **Rotate it left one step.** This is mandatory and happens even if the card is
+When a match fires:
+
+1. **The other card turns** — the matched neighbour of the fresh card. (If both
+   cards of the pair are fresh, you choose which.)
+2. **It rotates left one step.** This is mandatory and happens even if the card is
    colour-locked.
 3. **Resolve the effect of its newly showing face** — the one now at the top.
 
-Only the chosen card rotates, and the card you rotate is the card you resolve.
+Only that card rotates, and the card that rotates is the card you resolve. If a
+fresh card matches several neighbours, you choose the order; each fires in turn.
 
 The rotation is unconditional; the **effect** is conditional on its cost. If you
 cannot or will not pay, the rotation stands and the effect fizzles. That is why a
@@ -185,10 +195,11 @@ continues as long as matches remain. Two rules bound it:
 
 > **Each junction resonates at most once per chain.**
 
-There are exactly 12 match sites, and a chain spends one previously-unspent vertex
-per link **before** it mutates anything — including when nothing resolves. So a chain
-is **at most 12 links, by construction**, no matter what the effects do. This is a
-proof, not a safety guard; the engine's `guard` is an assertion that must never fire.
+There are exactly 24 match sites (a corner touching a corner across a shared edge),
+and a chain spends one previously-unspent site per link **before** it mutates
+anything — including when nothing resolves. So a chain is **at most 24 links, by
+construction**, no matter what the effects do. This is a proof, not a safety guard;
+the engine's `guard` is an assertion that must never fire.
 
 > **No spell is rotated more than four times in one spell action.**
 

@@ -25,6 +25,7 @@ export function beginTurn(state) {
   state.phase = 'unit';
   state.spellActionUsed = false;
   state.tableDirty = [false, false];
+  state.fresh = [[], []];
 
   const pl = state.players[p];
   // "the mage respawns at its owner's own starting circle at the start of that

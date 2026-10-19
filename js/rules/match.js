@@ -24,15 +24,22 @@
 //
 //   RULE A -- each junction resonates at most once per chain.
 //
-//     There are exactly 12 matchable vertices on a 3x3 (8 edge vertices
-//     touching two cards, 4 interior touching four; the 4 outer corners touch
-//     one card and can never match). `spent` is append-only and grows by one on
-//     EVERY iteration -- including when the group is locked, when the cost is
+//     A junction is a SITE: two orthogonally adjacent cells and one of the two
+//     corners that touch across their shared edge. There are exactly 24 on a
+//     3x3 (table.js). `spent` is append-only and grows by one on EVERY
+//     iteration -- including when the pair is locked, when the cost is
 //     declined, and when the gate is unmet and the face resolves inert. So a
-//     chain is at most 12 links BY CONSTRUCTION, whatever the effects do.
+//     chain is at most 24 links BY CONSTRUCTION, whatever the effects do.
 //
-//     Keyed by VERTEX, not by card, so a spell shifted mid-chain cannot
+//     Keyed by SITE, not by card, so a spell shifted mid-chain cannot
 //     resurrect a spent junction.
+//
+//   THE TRIGGER -- only a card that just changed sets off a match.
+//
+//     The card the action played, rotated or shifted is FRESH, and so is every
+//     card the chain turns. A site fires only if one of its cards is fresh, and
+//     it is the OTHER card -- the matched neighbour -- that turns. Without this,
+//     two cards that matched three turns ago fire again on every action.
 //
 //   RULE B -- no spell is rotated more than four times per spell ACTION.
 //
@@ -51,7 +58,7 @@
 
 import { ask } from './driver.js';
 import {
-  MATCH_SITES, VERTEX_CARDS, INTERIOR_SITES, CORNER_OF,
+  MATCH_SITES, SITE, VERTEX_CARDS, INTERIOR_SITES, CORNER_OF,
 } from './table.js';
 import { indexAt, activeIndex } from './orient.js';
 import { WILD } from './runes.js';
@@ -83,75 +90,57 @@ export function runeAtCorner(state, spell, pos) {
 }
 
 /**
- * Which cards at this vertex are part of SOME matching group.
- *
- * A wildcard joins every group, so a wild corner between a SPIRAL and a SHARD
- * matches both. Two wilds and nothing else match each other.
- *
- * Returning the union over all groups rather than "the biggest group" is the
- * faithful reading: the rule says cards showing the same rune match, and at a
- * four-card interior vertex there can be two independent pairs. Since only one
- * card rotates and the player chooses which, the union is exactly the set of
- * legal choices.
+ * Do two touching corners match? A wildcard matches anything, including
+ * another wildcard.
  */
-function matchedAt(state, p, vertex) {
-  const here = [];
-  for (const { cell, pos } of VERTEX_CARDS[vertex]) {
-    const sp = topOf(state, p, cell);
-    if (sp) here.push({ sp, pos, rune: runeAtCorner(state, sp, pos) });
-  }
-  if (here.length < 2) return [];
-
-  const wilds = here.filter((x) => x.rune === WILD);
-  const groups = new Map();
-  for (const x of here) {
-    if (x.rune === WILD) continue;
-    if (!groups.has(x.rune)) groups.set(x.rune, []);
-    groups.get(x.rune).push(x);
-  }
-
-  const inMatch = new Set();
-  for (const rune of [...groups.keys()].sort()) {
-    const g = [...groups.get(rune), ...wilds];
-    if (g.length < 2) continue;
-    for (const x of g) inMatch.add(x.sp.uid);
-  }
-  // Two or more wildcards and no ordinary rune: they match each other.
-  if (!groups.size && wilds.length >= 2) for (const x of wilds) inMatch.add(x.sp.uid);
-
-  return [...inMatch].sort((a, b) => a - b);
-}
+const runesMatch = (a, b) => a === WILD || b === WILD || a === b;
 
 /**
- * Every unspent vertex with a live match, in a FIXED ORDER.
+ * Every site that matches right now.
  *
- * MATCH_SITES order, which is table.js's frozen ascending vertex id. Two engines
- * in lockstep must agree on the order the player's "which match?" options are
- * presented in, because the answer is recorded as a value and replayed.
+ * `fresh` is the list of uids that have CHANGED since the chain began (the card
+ * played, rotated or shifted, and every card the chain has turned since). When
+ * it is given, only sites touching a fresh card count: a pair that has sat
+ * matching since three turns ago does not fire again every time something
+ * else on the table moves. `null` means "any pair" -- the AI's potential term
+ * and the adversarial harness want that reading.
+ *
+ * Returned in site order, never sorted by anything the state could vary.
  */
-export function findMatches(state, p, spent = []) {
+export function findMatches(state, p, spent = [], fresh = null) {
   const out = [];
-  for (const v of MATCH_SITES) {
-    if (spent.includes(v)) continue;
-    const uids = matchedAt(state, p, v);
-    if (uids.length < 2) continue;
-    const spells = uids.map((u) => findSpell(state, u));
+  for (const id of MATCH_SITES) {
+    if (spent.includes(id)) continue;
+    const site = SITE[id];
+    const a = topOf(state, p, site.cells[0]);
+    const b = topOf(state, p, site.cells[1]);
+    if (!a || !b) continue;
+    if (fresh && !fresh.includes(a.uid) && !fresh.includes(b.uid)) continue;
+    const ra = runeAtCorner(state, a, site.pos[0]);
+    const rb = runeAtCorner(state, b, site.pos[1]);
+    if (!runesMatch(ra, rb)) continue;
     out.push({
-      vertex: v,
-      uids,
-      interior: INTERIOR_SITES.includes(v),
-      // "If every card in a matched group is under a prohibition, the vertex is
-      // spent and nothing happens." EVERY, not any: you choose which card
-      // turns, so one prohibited card among three just means you choose one of
-      // the other two. A colour lock is NOT a prohibition and never lands here.
-      locked: spells.every((s) => prohibited(state, s)),
+      site: id,
+      vertex: site.vertex,
+      uids: [a.uid, b.uid],
+      cells: [a.cell, b.cell],
+      interior: INTERIOR_SITES.includes(id),
+      // The card that did NOT just change is the one the match turns. If both
+      // changed (an effect turned the neighbour of the card you played), or
+      // nothing is marked fresh, the player chooses.
+      turners: fresh ? [a, b].filter((s) => !fresh.includes(s.uid)).map((s) => s.uid) : [],
+      locked: [a, b].every((s) => prohibited(state, s)),
     });
   }
   return out;
 }
 
 /** Does the acting player have a match waiting? Used by legalActions and the AI. */
-export const hasMatch = (state, p) => findMatches(state, p, state.chain?.spent || []).length > 0;
+export const hasMatch = (state, p) =>
+  findMatches(state, p, state.chain?.spent || [], state.chain?.fresh ?? freshOf(state, p)).length > 0;
+
+/** What has changed on this table since the last chain -- the match trigger set. */
+const freshOf = (state, p) => (state.fresh?.[p]?.length ? state.fresh[p] : null);
 
 /**
  * Run the chain to exhaustion.
@@ -163,7 +152,9 @@ export const hasMatch = (state, p) => findMatches(state, p, state.chain?.spent |
  * would diverge from the original run.
  */
 export function* runChain(state, p, cause) {
-  state.chain = { p, cause, spent: [], resolutions: 0, links: 0 };
+  // `fresh` starts as whatever the action changed and grows with every card
+  // the chain turns. Only sites touching a fresh card can fire.
+  state.chain = { p, cause, spent: [], resolutions: 0, links: 0, fresh: [...(state.fresh?.[p] || [])].sort((a, b) => a - b) };
   // Rule B's counter is NOT cleared here. It is per spell ACTION, and one
   // action can produce several chains -- a trigger queued by the first chain
   // rotates something, which starts a second. Clearing it per chain would hand
@@ -180,44 +171,48 @@ export function* runChain(state, p, cause) {
     }
     if (state.winner !== null) break;
 
-    const hits = findMatches(state, p, state.chain.spent);
+    const hits = findMatches(state, p, state.chain.spent, state.chain.fresh.length ? state.chain.fresh : null);
     if (!hits.length) break;
 
     // Order matters to the player, so the player picks when there is a choice.
     // A single match resolves without asking -- and note a zero-option request
     // would park the game forever, which the driver answers null; that is the
     // other half of this and it lives in driver.js.
-    const vertex = hits.length === 1 ? hits[0].vertex : yield ask.pick(
-      hits.map((h) => h.vertex),
+    const siteId = hits.length === 1 ? hits[0].site : yield ask.pick(
+      hits.map((h) => h.site),
       {
-        prompt: 'Which match resonates?',
-        labels: hits.map((h) => `junction ${h.vertex}${h.interior ? ' (interior)' : ''}: ${h.uids.join(', ')}`),
-        show: hits.map((h) => ({ uids: [...h.uids], vertex: h.vertex })),
+        prompt: 'Which match resonates first?',
+        labels: hits.map((h) => h.uids.map((u) => defOf(state, findSpell(state, u)).name).join(' + ')),
+        show: hits.map((h) => ({ uids: [...h.uids], vertex: h.vertex, site: h.site })),
       },
     );
-    const hit = hits.find((h) => h.vertex === vertex) || hits[0];
+    const hit = hits.find((h) => h.site === siteId) || hits[0];
 
     // PROGRESS, UNCONDITIONALLY, BEFORE anything is mutated. Everything below
     // this line may fail, be declined, or do nothing, and the chain still
     // shrinks its own bound. This single line is the termination proof.
-    state.chain.spent.push(hit.vertex);
+    state.chain.spent.push(hit.site);
     state.chain.links++;
     bump(state.players[p].ledger, 'chainLinks');
 
     if (hit.locked) {
-      fx(state, 'matchLocked', { vertex: hit.vertex, uids: hit.uids });
+      fx(state, 'matchLocked', { vertex: hit.vertex, site: hit.site, uids: hit.uids });
       continue;
     }
 
-    // Rule B. A card that has already come full circle this chain is not
-    // offered, and if that leaves nobody the junction is spent regardless --
+    // The matched NEIGHBOUR turns: the card that just changed is the trigger,
+    // the other card of the pair is what it sets off. Only when both cards
+    // changed (or nothing is marked fresh) is there a choice to make.
+    //
+    // Rule B. A card that has already come full circle this action is not
+    // offered, and if that leaves nobody the site is spent regardless --
     // spending rather than skipping is what keeps the loop monotone.
-    const eligible = hit.uids
+    const eligible = (hit.turners.length ? hit.turners : hit.uids)
       .map((u) => findSpell(state, u))
       .filter((s) => s && !prohibited(state, s) && s.turnsThisAction < REVOLUTION)
       .map((s) => s.uid);
     if (!eligible.length) {
-      fx(state, 'matchExhausted', { vertex: hit.vertex, uids: hit.uids });
+      fx(state, 'matchExhausted', { vertex: hit.vertex, site: hit.site, uids: hit.uids });
       continue;
     }
 
@@ -244,10 +239,11 @@ export function* runChain(state, p, cause) {
     // restrains the player, not the board. Only a printed prohibition does, and
     // that was filtered out above.
     turn(state, which, { dir: 'left', forced: true, silent: true });
+    if (!state.chain.fresh.includes(which)) { state.chain.fresh.push(which); state.chain.fresh.sort((a, b) => a - b); }
     bump(state.players[p].ledger, 'forcedRotations');
     refresh(state);
     noteCards(state, hit.uids);
-    fx(state, 'match', { vertex: hit.vertex, uids: hit.uids, chosen: which, p });
+    fx(state, 'match', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: which, p });
     emit(state, 'afterMatch', { vertex: hit.vertex, uids: hit.uids, chosen: which, p });
 
     // The keyword copy comes BEFORE the effect, because the point of the
@@ -268,6 +264,7 @@ export function* runChain(state, p, cause) {
   const summary = { p, links: state.chain.links, resolutions: state.chain.resolutions };
   state.chain = null;
   state.tableDirty[p] = false;
+  if (state.fresh) state.fresh[p] = [];
   emit(state, 'chainEnd', summary);
   return summary;
 }

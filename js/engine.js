@@ -102,6 +102,7 @@ export function createGame(opts = {}) {
     chain: null,
     chainOverflow: false,
     tableDirty: [false, false],
+    fresh: [[], []],             // which cards changed since the last chain, per player
     illegalRotations: 0,
 
     queue: [],
@@ -319,6 +320,7 @@ function runWork(state, item) {
   if (item.kind === 'trigger') return runTrigger(state, item);
   if (item.kind === 'onDestroy') return runOnDestroy(state, item);
   if (item.kind === 'resolve') return runResolve(state, item);
+  if (item.kind === 'find') return runFind(state, item);
   throw new Error(`unknown work item '${item.kind}'`);
 }
 
@@ -343,6 +345,14 @@ function* runOnDestroy(state, item) {
     },
   };
   fireFor(item.keywords, 'onDestroy', ctx, {});
+  return true;
+}
+
+/** A Spellbook find: the finder chooses whether the card joins this duel. */
+function* runFind(state, item) {
+  const name = state.defs[item.defId]?.name || item.defId;
+  const take = yield ask.by(item.p, ask.confirm(`You found ${name}. Add it to your deck for this duel?`));
+  ops.found(state, item.p, item.defId, item.why, { take: take !== false });
   return true;
 }
 
@@ -400,7 +410,7 @@ export function pump(state) {
           // Only the acting player's own table checks. Handing your opponent a
           // mandatory chain on your own turn is a gift no card should give, and
           // the config knob says so out loud.
-          if (q !== state.active && !state.config.enemyShiftChecksMatches) { state.tableDirty[q] = false; continue; }
+          if (q !== state.active && !state.config.enemyShiftChecksMatches) { state.tableDirty[q] = false; if (state.fresh) state.fresh[q] = []; continue; }
           state.queue.push({ kind: 'chain', p: q, cause: item.kind, seq: ++state.actionSeq });
           state.tableDirty[q] = false;
         }
@@ -491,6 +501,7 @@ export function hashState(state) {
   parts.push(`vp${state.vp[0]}/${state.vp[1]}`, `log${state.scoreLog.length}`);
   parts.push(`w${state.winner}`, `rng${saveRng(state.rng).join('.')}`);
   parts.push(`chain${state.chain ? state.chain.spent.join('-') + ':' + state.chain.resolutions : 'x'}`);
+  parts.push(`fresh${(state.fresh || [[], []]).map((f) => f.join('.')).join('|')}`);
   parts.push(`q${state.queue.map((w) => `${w.kind}${w.uid ?? ''}${w.event ?? ''}`).join(',')}`);
   parts.push(`pend${state.pending ? state.pending.request.type + state.pending.answers.length : 'x'}`);
 

@@ -95,7 +95,40 @@ export const VERTEX_CARDS = Object.freeze(
 );
 
 /**
- * The vertices where a match can happen: those touched by 2 or more cells.
+ * THE MATCH SITES: a corner touching a corner across a shared edge.
+ *
+ * Two cards match only when they are ORTHOGONALLY ADJACENT and the corners
+ * that touch show the same rune. Diagonal neighbours meet at a point and do
+ * not match. Each adjacent pair shares an edge with two ends, so it has two
+ * sites; 12 adjacent pairs on a 3x3 make 24 sites. A chain spends a SITE at
+ * most once, so 24 is the bound on links.
+ *
+ * `MATCH_SITES` are the ids, in a fixed order (vertex, then the lower cell),
+ * and `SITE[id]` is the geometry. Everything downstream iterates the ids.
+ */
+export const SITE = Object.freeze((() => {
+  const out = {};
+  for (let a = 0; a < CELLS; a++) {
+    for (const b of [rightOf(a), below(a)]) {
+      if (b === null) continue;
+      for (const v of CORNER_OF[a]) {
+        const posB = CORNER_OF[b].indexOf(v);
+        if (posB < 0) continue;
+        const id = `${v}:${a}-${b}`;
+        out[id] = Object.freeze({ id, vertex: v, cells: Object.freeze([a, b]), pos: Object.freeze([CORNER_OF[a].indexOf(v), posB]) });
+      }
+    }
+  }
+  return out;
+})());
+export const MATCH_SITES = Object.freeze(
+  Object.keys(SITE).sort((x, y) => (SITE[x].vertex - SITE[y].vertex) || (SITE[x].cells[0] - SITE[y].cells[0]) || (SITE[x].cells[1] - SITE[y].cells[1])),
+);
+/** Sites at the four interior vertices, where four cards crowd one point. */
+export const INTERIOR_SITES = Object.freeze(MATCH_SITES.filter((id) => VERTEX_CARDS[SITE[id].vertex].length === 4));
+
+/**
+ * The vertices where cards meet at all: those touched by 2 or more cells.
  *
  * On a 3x3 that is exactly 12 of the 16 — the 8 edge vertices (2 cells each)
  * and the 4 interior vertices (4 cells each). The 4 outer corners touch one
@@ -104,10 +137,10 @@ export const VERTEX_CARDS = Object.freeze(
  * This 12 is the chain's termination bound: a chain spends each vertex at most
  * once, so it cannot exceed 12 links. See match.js.
  */
-export const MATCH_SITES = Object.freeze(
+export const SHARED_VERTICES = Object.freeze(
   VERTEX_CARDS.map((cards, v) => (cards.length >= 2 ? v : -1)).filter((v) => v >= 0),
 );
 
-export const INTERIOR_SITES = Object.freeze(
+export const INTERIOR_VERTICES = Object.freeze(
   VERTEX_CARDS.map((cards, v) => (cards.length === 4 ? v : -1)).filter((v) => v >= 0),
 );

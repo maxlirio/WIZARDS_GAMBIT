@@ -11,7 +11,7 @@
 // carrying around -- and the design wants that tension measured, not assumed.
 
 import { spellsOn, defOf, topOf, canTurn } from '../rules/ops.js';
-import { MATCH_SITES, VERTEX_CARDS, INTERIOR_SITES, CELL_COLOR } from '../rules/table.js';
+import { MATCH_SITES, SITE, CELL_COLOR } from '../rules/table.js';
 import { activeIndex } from '../rules/orient.js';
 import { runeAtCorner, findMatches } from '../rules/match.js';
 import { keywordsOf } from '../rules/keywords.js';
@@ -61,24 +61,21 @@ export function matchPotential(state, p) {
   const live = findMatches(state, p, []);
   for (const h of live) score += WEIGHTS.matchLive + (h.interior ? WEIGHTS.matchInterior : 0);
 
-  const liveSet = new Set(live.map((h) => h.vertex));
-  for (const v of MATCH_SITES) {
-    if (liveSet.has(v)) continue;
-    const here = [];
-    for (const { cell, pos } of VERTEX_CARDS[v]) {
-      const sp = topOf(state, p, cell);
-      if (sp) here.push({ sp, pos });
-    }
-    if (here.length < 2) continue;
-    // Would one left turn of one of these cards make this junction match?
-    for (const x of here) {
-      if (!canTurn(state, x.sp)) continue;
-      const after = { ...x.sp, rot: (x.sp.rot + 1) & 3 };
-      const r = runeAtCorner(state, after, x.pos);
-      if (here.some((y) => y.sp.uid !== x.sp.uid && runeAtCorner(state, y.sp, y.pos) === r)) {
-        score += WEIGHTS.matchLatent;
-        break;
-      }
+  const liveSet = new Set(live.map((h) => h.site));
+  for (const id of MATCH_SITES) {
+    if (liveSet.has(id)) continue;
+    const site = SITE[id];
+    const a = topOf(state, p, site.cells[0]);
+    const b = topOf(state, p, site.cells[1]);
+    if (!a || !b) continue;
+    // Would one left turn of either card make these two corners match?
+    const pair = [[a, site.pos[0], b, site.pos[1]], [b, site.pos[1], a, site.pos[0]]];
+    for (const [x, px, y, py] of pair) {
+      if (!canTurn(state, x)) continue;
+      const after = { ...x, rot: (x.rot + 1) & 3 };
+      const r = runeAtCorner(state, after, px);
+      const o = runeAtCorner(state, y, py);
+      if (r === o || r === 'WILD' || o === 'WILD') { score += WEIGHTS.matchLatent; break; }
     }
   }
   return score;

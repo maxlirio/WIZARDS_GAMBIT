@@ -228,7 +228,7 @@ export function place(state, p, spell, cell, { under = false } = {}) {
   spell.cell = cell;
   spell.owner = p;
   if (under) stack.push(spell); else stack.unshift(spell);
-  markDirty(state, p);
+  markDirty(state, p, under ? null : spell.uid);
   return true;
 }
 
@@ -236,9 +236,18 @@ export function place(state, p, spell, cell, { under = false } = {}) {
 export const protectedFrom = (state, card) =>
   applyFor(keywordsOf(state, card), 'destroy', { protected: false }).protected;
 
-/** The table changed, so the one live chain loop should rescan. */
-export const markDirty = (state, p) => {
+/**
+ * The table changed, so the one live chain loop should rescan -- and `uid` is
+ * WHICH card changed. Only the corners of a changed card can set off a match
+ * (match.js), so the changed set is kept on the state, per player, until the
+ * chain that consumes it ends.
+ */
+export const markDirty = (state, p, uid = null) => {
   state.tableDirty[p] = true;
+  if (uid !== null && uid !== undefined) {
+    if (!state.fresh) state.fresh = [[], []];
+    if (!state.fresh[p].includes(uid)) { state.fresh[p].push(uid); state.fresh[p].sort((a, b) => a - b); }
+  }
   // Derived buckets are now one mutation stale. Marked rather than recomputed:
   // a derive pass in the middle of `destroy` would run every passive against a
   // half-mutated board.
@@ -307,7 +316,7 @@ export function turn(state, uid, { dir = 'left', steps = 1, forced = false, sile
   sp.rot = turned(sp.rot, dir, steps);
   sp.turnsThisAction++;
   state.players[sp.owner].ledger.rotations++;
-  markDirty(state, sp.owner);
+  markDirty(state, sp.owner, uid);
   if (!silent) fx(state, 'rotate', { uid, dir, rot: sp.rot });
   emit(state, 'afterRotate', { uid, dir, forced, p: sp.owner });
   return true;
@@ -325,7 +334,7 @@ export function setRot(state, uid, rot, { forced = false } = {}) {
   sp.rot = rot & 3;
   sp.turnsThisAction++;
   state.players[sp.owner].ledger.rotations++;
-  markDirty(state, sp.owner);
+  markDirty(state, sp.owner, uid);
   emit(state, 'afterRotate', { uid, dir: 'set', forced, p: sp.owner });
   return true;
 }
@@ -365,7 +374,8 @@ export function destroy(state, uid, { by = null, byP = null } = {}) {
   card.turnsThisAction = 0;
   state.players[card.owner].discard.push(card);
   state.players[card.owner].ledger.spellsDestroyed++;
-  markDirty(state, at.player);
+  // The card beneath it (if any) is now showing: ITS corners are the fresh ones.
+  markDirty(state, at.player, state.players[at.player].table[at.cell][0]?.uid ?? null);
   fx(state, 'destroy', { uid, p: at.player, cell: at.cell, by });
   if (parting.length && state.queue) {
     state.queue.push({
@@ -420,13 +430,20 @@ export function discardFromHand(state, p, uid) {
 }
 
 /** Put a card into a player's discard from nowhere -- a FOUND card. */
-export function found(state, p, defId, why) {
-  const card = makeCard(state, defId, p);
-  state.players[p].discard.push(card);
-  state.players[p].ledger.cardsFound++;
-  state.players[p].foundThisMatch.push(defId);
-  fx(state, 'found', { p, defId, why });
-  emit(state, 'afterFound', { p, defId, why });
+/**
+ * A find, resolved. `take` is the player's answer: the card joins this duel's
+ * discard (and so its deck) only if they want it. Either way the way to find it
+ * is learned, which the view writes into the Spellbook off the `found` note.
+ */
+export function found(state, p, defId, why, { take = true } = {}) {
+  let card = null;
+  if (take) {
+    card = makeCard(state, defId, p);
+    state.players[p].discard.push(card);
+    state.players[p].ledger.cardsFound++;
+  }
+  fx(state, 'found', { p, defId, why, taken: take });
+  emit(state, 'afterFound', { p, defId, why, taken: take });
   return card;
 }
 

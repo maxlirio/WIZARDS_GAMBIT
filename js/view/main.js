@@ -406,7 +406,14 @@ function flushFx() {
       case 'shatter': t += 400; break;
       case 'summon': { const id = f.id; later(t + 60, () => cues().summon(id)); t += 500; break; }
       case 'score': { const p = f.p; later(t, () => cues().score(p)); toast(`${pName(f.p)} +${f.amount} VP — ${SOURCE[f.source] || esc(f.source)}`, f.p === HUMAN ? 'good' : HUMAN === null ? 'good' : 'bad'); t += 500; break; }
-      case 'found': if (f.p === HUMAN) toast(`Learned <b>${esc(CARDS[f.defId]?.name || f.defId)}</b> — it goes to your discard`, 'learn'); t += 300; break;
+      case 'found':
+        if (f.p === HUMAN) {
+          // Into the Spellbook NOW, not at the end of the match -- a player
+          // who opens the book mid-duel should see what they just learned.
+          profile.learn(f.why, f.defId);
+          toast(`Learned <b>${esc(CARDS[f.defId]?.name || f.defId)}</b> — ${f.taken === false ? 'written in your Spellbook, not taken' : 'it goes to your discard'}`, 'learn');
+        }
+        t += 300; break;
       case 'turnStart': banner(f.p); break;
       case 'respawn': t += 400; break;
       case 'win': { const p = f.p; later(t + 300, () => cues().cheer(p)); break; }
@@ -453,7 +460,7 @@ function narrate(f) {
     case 'strike': return `&nbsp;&nbsp;⚔ ${esc(unitName(f.from ?? f.id))} strikes ${esc(unitName(f.to))} for ${f.amount}${f.edge ? ' (high ground)' : ''}`;
     case 'move': return null;
     case 'respawn': return `${P(f.p)} mage respawns`;
-    case 'found': return `${P(f.p)} <span class="green">learn${f.p === HUMAN ? '' : 's'} ${esc(CARDS[f.defId]?.name || f.defId)}</span> — ${esc(FINDS[f.why]?.text || f.why)}`;
+    case 'found': return `${P(f.p)} <span class="green">learn${f.p === HUMAN ? '' : 's'} ${esc(CARDS[f.defId]?.name || f.defId)}</span> — ${esc(FINDS[f.why]?.text || f.why)}${f.taken === false ? ' <i>(not taken)</i>' : ''}`;
     case 'golemSpent': return `${N(f.uid)} is spent and goes to the discard`;
     case 'terrainRemoved': return `&nbsp;&nbsp;&nbsp;&nbsp;banishes a ${esc(propName(f.id))} until end of turn`;
     case 'levitate': return `&nbsp;&nbsp;&nbsp;&nbsp;lifts a ${esc(propName(f.id))} ${m(f.mm)}`;
