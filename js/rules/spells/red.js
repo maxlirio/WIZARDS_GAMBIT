@@ -18,7 +18,7 @@ card({
   I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000, element: 'fire' }) },
   II:  { text: 'Discard a card. Deal 2 damage to an enemy unit within 3m.',
          cost: [{ id: 'discard', n: 1 }], ...M.damage({ amount: 2, range: 3000, element: 'fire' }) },
-  III: { text: 'Push an enemy unit within 3m 2m away.', ...M.pushAway({ mm: 2000, range: 3000 }) },
+  III: { text: 'Push an enemy unit within 3m away with force 3.', ...M.pushAway({ force: 3, range: 3000 }) },
   IV:  { text: 'Fireball: deal 3 damage to an enemy unit within 4m and 1 to each enemy near it.',
          ...M.fireball({ amount: 3, splash: 1, radius: 1500, range: 4000 }) },
 });
@@ -60,8 +60,8 @@ card({
          gate: { id: 'enemyInRange', mm: 3000 }, ...M.damage({ amount: 1, range: 3000 }) },
   II:  { text: 'Raise a stone wall within 2m of your mage.', ...M.raiseWall({ mm: 2000 }) },
   III: { text: 'Your units take 1 less damage.', ...M.passiveShield({ n: 1 }) },
-  IV:  { text: 'Deal 2 damage to each enemy unit within 2.5m and push each 1.5m away.',
-         ...M.nova({ amount: 2, mm: 1500, range: 2500 }) },
+  IV:  { text: 'Deal 2 damage to each enemy unit within 2.5m and push each away with force 2.',
+         ...M.nova({ amount: 2, force: 2, range: 2500 }) },
 });
 
 card({
@@ -84,12 +84,12 @@ card({
   keywords: ['Crush'],
   runes: [WHEEL, LATTICE, WHEEL, WHEEL],
   found: 'slamHome',
-  I:   { text: 'Push an enemy unit within 2m 1.5m.', ...M.push({ mm: 1500, range: 2000 }) },
+  I:   { text: 'Push an enemy unit within 2m with force 2.', ...M.push({ force: 2, range: 2000 }) },
   II:  { text: 'Grant a Spell [Crush].', ...M.grantKeyword({ kw: 'Crush' }) },
-  III: { text: 'Destroy a Spell you control. Push an enemy unit within 3m 3m away.',
-         cost: [{ id: 'destroyFriendly', n: 1 }], ...M.pushAway({ mm: 3000, range: 3000 }) },
-  IV:  { text: 'Push an enemy unit within 3m 4m away, then deal 2 damage to it.',
-         ...M.slam({ mm: 4000, range: 3000, amount: 2 }) },
+  III: { text: 'Destroy a Spell you control. Push an enemy unit within 3m away with force 4.',
+         cost: [{ id: 'destroyFriendly', n: 1 }], ...M.pushAway({ force: 4, range: 3000 }) },
+  IV:  { text: 'Push an enemy unit within 3m away with force 5, then deal 2 damage to it.',
+         ...M.slam({ force: 5, range: 3000, amount: 2 }) },
 });
 
 card({

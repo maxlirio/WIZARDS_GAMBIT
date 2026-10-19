@@ -240,7 +240,7 @@ one funnel, so a new Keyword works on every existing face the day it is register
 
 - `[Ignore Height]` sets the height coefficient in a range check to zero. That is its
   entire implementation.
-- `[Crush]` turns a push's blocked remaining travel into damage.
+- `[Crush]` doubles a push's impact damage.
 - `[Stun]` spends the target's action.
 - `[Channel]` marks a unit as a **range origin**.
 
@@ -251,7 +251,7 @@ The implemented set is **fifteen**, each with exactly one hook and no exceptions
 | `[Ignore Height]` | range ignores height | `range` |
 | `[Reach]` | range +1m | `range` |
 | `[Impact]` | damage +1 | `damage` |
-| `[Crush]` | a blocked push deals the travel it lost as damage | `push` |
+| `[Crush]` | its impacts deal double damage | `push` |
 | `[Levitate]` | a push ignores terrain | `push` |
 | `[Stun]` | spends the target's action | `hit` |
 | `[Poison]` | 1 damage at the start of the target's turns | `hit` |
@@ -416,10 +416,21 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
 | standing stone | 4 | 5 | a quake can crack it |
 | wall | 6 | 6 | slides a hand's width, but it slides |
 
-- **Pushed:** a push of N metres moves a piece of mass *m* by `2N / (m + 1)` — a shard
-  the whole way, a boulder two thirds, a wall a seventh. Units have no mass term.
+- **Pushed:** a push has a **force** (1–8) and a **direction you drag**. A body of
+  mass *m* slides `force × 0.75m / m`: a mage (mass 1) the whole way, a boulder half,
+  a standing stone a quarter, a wall a sixth. Golem units weigh their tier: A 3, B 2,
+  C 1.
+- **Impacts:** when a slide is stopped early, what is left of it is energy — mass ×
+  remaining travel — and **both** the moving body and whatever stopped it take
+  `energy / 1.5m` damage. Heavier things hit harder; things stopped sooner hit harder.
+  Whatever was struck is shoved on with the leftover momentum, so a thrown mage can
+  knock a golem into a pillar. A unit that takes 2+ from an impact is **knocked down**
+  and loses its action this turn. `[Crush]` doubles impact damage.
+- **Toppled:** a tall piece (standing stone, tree) pushed with enough force — or hit
+  hard enough — **falls over along the push**, dealing 2 to every unit under its
+  length, and is gone.
 - **Smashed:** a piece at 0 hp **shatters** and is gone for good; whatever stood on it
-  falls. Under `[Crush]`, both the body shoved into a wall *and the wall* take the damage.
+  falls.
 - **Burned:** fire faces light anything made of wood. A burning piece **bites at the
   start of every turn** (1 damage to every unit within 0.9m of its edge, whichever side
   it is on, credited to whoever lit it), **spreads** to wood within 1.2m, and after its

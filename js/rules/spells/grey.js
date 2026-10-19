@@ -121,5 +121,5 @@ card({
   I:   { text: 'Damage to your mage is dealt to a friendly golem unit instead.', ...M.replaceMageDamage() },
   II:  { text: 'Your units take 1 less damage.', ...M.passiveShield({ n: 1 }) },
   III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
-  IV:  { text: 'Push an enemy unit within 3m 2m away.', ...M.pushAway({ mm: 2000, range: 3000 }) },
+  IV:  { text: 'Push an enemy unit within 3m away with force 3.', ...M.pushAway({ force: 3, range: 3000 }) },
 });

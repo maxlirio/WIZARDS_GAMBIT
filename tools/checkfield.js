@@ -91,8 +91,8 @@ const ok = (cond, msg) => { if (cond) pass++; else { fail++; console.log(`  FAIL
       // millimetres, so `idiv` has something to round.
       for (const [out, back] of [[0, 32], [16, 48], [8, 40], [24, 56]]) {
         pr.x = home.x; pr.y = home.y; pr.z = home.z;
-        const a = push(state, pr, out, 1000, { byP: 0 });
-        const b = push(state, pr, back, 1000, { byP: 0 });
+        const a = push(state, pr, out, 0, { mm: 1000, byP: 0 });
+        const b = push(state, pr, back, 0, { mm: 1000, byP: 0 });
         if (a.mm < 1000 || b.mm < 1000) { blocked++; continue; }
         clean++;
         const dx = iabs(pr.x - home.x), dy = iabs(pr.y - home.y);
@@ -163,7 +163,7 @@ const ok = (cond, msg) => { if (cond) pass++; else { fail++; console.log(`  FAIL
         placeBody(state, u, best.x, best.y);
         u.hp = u.maxHp;
         const z0 = u.z;
-        push(state, u, d, 3000, { byP: 1 - u.owner });
+        push(state, u, d, 4, { byP: 1 - u.owner });
         if (state.field.pendingFalls.length) stuck++;
         if (u.z < z0) { drops++; if (u.hp < u.maxHp) damaged++; }
       }

@@ -99,7 +99,7 @@ card({
   II:  { text: 'Your mage takes 1 damage. Score 1 VP per 6 damage dealt since this was played, up to 2.',
          tag: 'break', cost: [{ id: 'mageWound', n: 1 }],
          objective: { gate: { id: 'ledgerAtLeast', key: 'damageDealt', n: 6, since: true }, vp: { k: 'perLedger', key: 'damageDealt', div: 6, per: 1, cap: 2, since: true } } },
-  III: { text: 'Push an enemy unit within 3m 2m.', ...M.push({ mm: 2000, range: 3000 }) },
+  III: { text: 'Push an enemy unit within 3m with force 3.', ...M.push({ force: 3, range: 3000 }) },
   IV:  { text: 'If the enemy mage has lost 3 hit points, discard a card and score 3 VP.',
          tag: 'break', cost: [{ id: 'discard', n: 1 }],
          objective: { gate: { id: 'enemyMageHurt', n: 3 }, vp: { k: 'flat', n: 3 } } },
@@ -141,7 +141,7 @@ card({
   found: 'firstLight',
   I:   { text: 'After you play a Spell, draw a card.', ...M.onPlayDraw({ n: 1 }) },
   II:  { text: 'At the start of your turn, deal 1 damage to an enemy within 3m.', ...M.onTurnStartDamage({ amount: 1, range: 3000 }) },
-  III: { text: 'Push a terrain piece within 4m 2m.', ...M.shoveTerrain({ mm: 2000, range: 4000 }) },
+  III: { text: 'Push a terrain piece within 4m with force 3.', ...M.shoveTerrain({ force: 3, range: 4000 }) },
   IV:  { text: 'After 20 rotations since this was played, score 1 VP per 7 of them, up to 3.',
          tag: 'turn', objective: { gate: { id: 'ledgerAtLeast', key: 'rotations', n: 20, since: true }, vp: { k: 'perLedger', key: 'rotations', div: 7, per: 1, cap: 3, since: true } } },
 });

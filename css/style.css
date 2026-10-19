@@ -336,3 +336,11 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 #prompt .phint.match { color: #ffe7a6; }
 .card-svg .qn { font: 700 34px Cinzel, serif; }
 .card-svg .quest.ready circle { animation: hotcorner 1s ease-in-out infinite; }
+
+/* ------------------------------------------------------------ the push prompt */
+/* The drag arrow's floating label on the battlefield, and the compass fallback. */
+.dlabel { position: absolute; left: 0; top: 0; font: 600 12px Inter; color: #e8fbff; background: #0a2430d8; border: 1px solid #7fe0ff99; padding: 3px 8px; border-radius: 5px; white-space: nowrap; box-shadow: 0 0 12px #7fe0ff44; }
+#prompt .phint.drag { color: #bfefff; }
+.pbtns.compass button { display: inline-flex; align-items: center; gap: 6px; }
+.pbtns.compass button i { font-style: normal; font-size: 16px; line-height: 1; color: #7fe0ff; width: 1.1em; text-align: center; }
+.pbtns.compass button small { font-weight: 500; color: var(--ink-dim); }

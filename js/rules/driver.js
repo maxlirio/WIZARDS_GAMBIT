@@ -158,8 +158,12 @@ export const ask = {
    * the field ({x, y, z}) or a set of cards ({uids}) -- so a choice of "where"
    * can be drawn where it is instead of read off a coordinate in a label.
    */
-  pick: (options, { prompt = '', labels = null, show = null } = {}) =>
-    ({ type: 'pick', kind: 'option', options, prompt, labels, show, required: true }),
+  // `kind: 'dir'` is the drag-to-push question: `target` is what will be
+  // pushed, `force` how hard, `preferred` the bearings a sensible player would
+  // consider first (away from the caster). All plain data.
+  pick: (options, { prompt = '', labels = null, show = null, kind = 'pick', target = null, force = null, preferred = null } = {}) =>
+    ({ type: 'pick', kind: kind === 'pick' ? 'option' : kind, options, prompt, labels, show, required: true,
+       ...(target ? { target } : {}), ...(force !== null ? { force } : {}), ...(preferred ? { preferred } : {}) }),
 
   /** Yes or no -- "you may". */
   confirm: (prompt = '') => ({ type: 'confirm', kind: 'confirm', prompt, required: false }),

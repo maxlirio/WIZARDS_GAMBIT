@@ -1,20 +1,35 @@
 // Pushing things around, and the only place in the game that looks like physics.
 //
-// It is NOT physics, and the ceiling is deliberate: no rotation, no momentum,
-// no friction, props one deep, a push chain three bodies long, and travel
-// quantised to 100mm. A real solver cannot be made bit-identical across JS
-// engines without doing all of this in fixed point anyway, and at that point
-// the honest version is a short bounded routine whose limits are written down.
+// It is NOT physics, and the ceiling is deliberate: no rotation, no friction,
+// props one deep, a push chain three bodies long, and travel quantised to
+// 100mm. A real solver cannot be made bit-identical across JS engines without
+// doing all of this in fixed point anyway, and at that point the honest version
+// is a short bounded routine whose limits are written down.
 //
-// What it does buy is the thing the game is actually about: a printed "push 4
-// squares" becomes four metres of travel resolved against real ground, so the
-// same spell shoves someone off a ledge on one arena and slams them into a
-// pillar on another. Terrain changes outcomes, which is the whole point of
-// leaving the grid behind.
+// What it DOES model, since 2026-10-18:
+//
+//   FORCE, not distance. A push is an impulse `force` (1..8). A body of mass m
+//   slides force x 750 / m millimetres: a mage (mass 1) the whole way, a
+//   boulder (2) half, a standing stone (4) a quarter, a wall (6) a sixth.
+//
+//   IMPACTS. When the slide is stopped early, what is left of it is energy:
+//   mass x remaining travel. That energy becomes damage to BOTH the moving
+//   body and whatever stopped it -- heavier things hit harder, and things hit
+//   harder the earlier they are stopped (that is "faster"). Whatever was
+//   struck is shoved on with the leftover momentum, which is how a thrown
+//   mage knocks a golem into a pillar.
+//
+//   TOPPLING. A tall piece (pillar, tree) pushed hard enough falls over
+//   along the push, and anything under its length is crushed.
+//
+// What it buys is the thing the game is actually about: the same spell
+// shoves someone off a ledge on one arena and slams them into a pillar on
+// another. Terrain changes outcomes, which is the whole point of leaving the
+// grid behind.
 
-import { idiv, imin, imax, isqrt, dist2, bearing, opposite, DIR64 } from './fixed.js';
+import { idiv, imin, imax, isqrt, clamp, dist2, bearing, opposite, DIR64, DIR_SCALE } from './fixed.js';
 import {
-  STEP, FALL_SAFE, propSpec, heightAt, propR, propMass, propOnBoard, propBurnable, propBurning,
+  STEP, FALL_SAFE, BODY_R, propSpec, heightAt, propR, propMass, propOnBoard, propBurnable, propBurning,
   BURN_TURNS, FIRE_REACH, FIRE_SPREAD,
 } from './arena.js';
 import { findProp, findUnit, propsOnBoard, livingUnits } from './query.js';
@@ -25,61 +40,69 @@ import { bump } from '../rules/ledger.js';
 
 /** How many bodies a single push may set in motion. */
 export const PUSH_DEPTH = 3;
-/** Millimetres of blocked travel per point of [Crush] damage. */
-export const CRUSH_MM = 500;
+/** The slide one point of force gives a body of mass 1. */
+export const FORCE_MM = 750;
+/** Mass x remaining travel (mm) per point of impact damage. */
+export const IMPACT_K = 1500;
+/** An impact this hard knocks a unit down: it loses its action this turn. */
+export const KNOCKDOWN_DMG = 2;
+/** Golem units by tier. The mage is 1. */
+export const TIER_MASS = Object.freeze({ A: 3, B: 2, C: 1 });
+
+export const bodyMass = (state, body) => {
+  if (!isUnitBody(body)) return propMass(body);
+  if (body.kind !== 'golem' || !body.def) return 1;
+  return TIER_MASS[state.defs[body.def]?.tier] || 1;
+};
+
+/** The travel budget a force buys a mass. Mass is never below 1. */
+export const travelFor = (force, mass) => idiv(force * FORCE_MM, imax(1, mass));
+/** A 0..100 launch speed for the view: force over mass. */
+const speedOf = (force, mass) => clamp(idiv(force * 25, imax(1, mass)), 5, 100);
 
 /**
- * Shove a body along a bearing.
+ * Shove a body along a bearing with `force`.
  *
- * `climb: false` throughout, and that is a rule rather than a simplification:
- * being shoved does not make you scramble up a wall, it slams you into it. The
- * travel you did not get is the `shortfall`, and [Crush] is the keyword that
- * turns it into damage -- which is why the shortfall is returned rather than
- * discarded.
+ * `mm` overrides the force (the harness measures drift with an exact distance,
+ * and a struck body is shoved on with whatever momentum is LEFT rather than a
+ * fresh force). `climb: false` throughout, and that is a rule rather than a
+ * simplification: being shoved does not make you scramble up a wall, it slams
+ * you into it -- unless the push carries [Levitate].
  */
-export function push(state, body, dir, mmDist, {
-  depth = 0, byP = null, crush = false, chain = null,
+export function push(state, body, dir, force, {
+  depth = 0, byP = null, crush = false, levitate = false, chain = null, mm = null, speed = null,
 } = {}) {
   const log = chain || [];
-  if (!body || body.dead || mmDist < STEP) return { mm: 0, shortfall: mmDist, blockedBy: null, chain: log };
-  // MASS. Everything can be pushed, but not everything flies: a push of N
-  // metres moves a piece of mass m by 2N/(m+1) -- a crystal shard (mass 1)
-  // the whole way, a boulder two thirds, a standing stone two fifths, a wall a
-  // seventh. Units have no mass term; a shoved body is the thing the push is
-  // for. Applied once at the top, so the shortfall [Crush] converts into
-  // damage is measured against what the push could really have done.
-  const nominal = mmDist;
-  if (!isUnitBody(body)) mmDist = idiv(mmDist * 2, propMass(body) + 1);
-  if (mmDist < STEP) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
+  if (!body || body.dead) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
+  const mass = bodyMass(state, body);
+  const spec = isUnitBody(body) ? null : propSpec(body.kind);
+  // A tall piece pushed hard enough TOPPLES rather than slides.
+  if (depth === 0 && mm === null && spec?.tippable && force >= spec.tipForce) {
+    topple(state, body, dir, { byP });
+    return { mm: 0, shortfall: 0, blockedBy: null, chain: log, toppled: true };
+  }
+  const budget = mm !== null ? mm : travelFor(force, mass);
+  const v = speed !== null ? speed : speedOf(force, mass);
+  if (budget < STEP) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
 
   const riders = isUnitBody(body) ? [] : ridersOf(state, body);
   const x0 = body.x, y0 = body.y;
-  let remaining = mmDist, total = 0, blockedBy = null;
+  let remaining = budget, total = 0, blockedBy = null;
 
   // Bounded by PUSH_DEPTH + 1 segments: each segment either moves the body or
   // clears exactly one obstacle out of the way, and clearing is what costs a
   // segment. No `while`, so there is no arrangement of bodies that hangs here.
   for (let seg = 0; seg <= PUSH_DEPTH && remaining >= STEP; seg++) {
-    const r = walk(state, body, dir, remaining, { allowFall: true, climb: false });
+    const r = walk(state, body, dir, remaining, { allowFall: true, climb: levitate });
     total += r.mm;
     remaining = r.shortfall;
     blockedBy = r.blockedBy;
     if (!r.blockedBy || remaining < STEP) break;
-    if (depth >= PUSH_DEPTH) break;
-
-    let next = null;
-    if (r.blockedBy.kind === 'unit') next = findUnit(state, r.blockedBy.id);
-    else if (r.blockedBy.kind === 'prop') {
-      const pr = findProp(state, r.blockedBy.id);
-      if (pr && propSpec(pr.kind).pushable) next = pr;
-    }
-    if (!next) break;
-
-    const sub = push(state, next, dir, remaining, { depth: depth + 1, byP, crush, chain: log });
-    // If the body in front could not be budged, the whole column is jammed.
-    // Trying again would re-walk into the same obstacle for the rest of the
-    // segment budget and return the same answer.
-    if (sub.mm < STEP) break;
+    // THE IMPACT. What is left of the slide is energy, and energy hurts.
+    const hit = impact(state, body, mass, remaining, r.blockedBy, dir, v, { byP, crush, depth, chain: log });
+    if (body.dead || body.destroyed) break;
+    // If the thing in front could not be budged, the whole column is jammed.
+    if (!hit.moved) break;
   }
 
   if (total > 0) {
@@ -89,31 +112,18 @@ export function push(state, body, dir, mmDist, {
     // under someone -- and it is also why a prop's riders are collected BEFORE
     // it moves, since afterwards nothing is standing on it any more.
     for (const u of riders) queueFall(state, u);
-    if (isUnitBody(body)) {
-      if (byP !== null) { bump(state.players[byP].ledger, 'unitsPushed'); bump(state.players[byP].ledger, 'pushMm', total); }
+    if (isUnitBody(body) && byP !== null) {
+      bump(state.players[byP].ledger, 'unitsPushed');
+      bump(state.players[byP].ledger, 'pushMm', total);
     }
-    fx(state, 'push', { id: body.id, body: body.body, mm: total, dir, from: { x: x0, y: y0 } });
+    fx(state, 'push', {
+      id: body.id, body: body.body, mm: total, dir, from: { x: x0, y: y0 },
+      to: { x: body.x, y: body.y, z: body.z }, force: force || 0, speed: v,
+    });
     // The nominal distance beside the realised one, recorded only for the body
-    // the card actually named. A printed "push 3m" becomes 3m of travel against
-    // real terrain, so the two differ -- and the gap is the price of leaving the
-    // grid, which is a number worth being able to read rather than assume.
-    if (depth === 0) fx(state, 'pushResult', { id: body.id, want: nominal, got: total, body: body.body });
-  }
-
-  if (crush && remaining >= CRUSH_MM) {
-    // [Crush]: the travel the wall ate becomes damage. A push that goes
-    // nowhere because the target was already against a pillar is the single
-    // nastiest line this keyword enables, and it is intentional.
-    const dmg = idiv(remaining, CRUSH_MM);
-    if (isUnitBody(body)) hurt(state, body, dmg, { cause: 'crush', byP });
-    else smashProp(state, body, dmg, { byP, cause: 'crush' });
-    // And the wall takes it too. The thing that stopped the push is hit as
-    // hard as the thing that was pushed into it -- a crystal shard somebody
-    // is slammed against shatters.
-    if (blockedBy?.kind === 'prop') {
-      const wall = findProp(state, blockedBy.id);
-      if (wall) smashProp(state, wall, dmg, { byP, cause: 'crush' });
-    }
+    // the card actually named. A printed force becomes a slide against real
+    // terrain, and selfplay.js reports how much of it is realised.
+    if (depth === 0) fx(state, 'pushResult', { id: body.id, want: budget, got: total, body: body.body });
   }
 
   if (depth === 0) {
@@ -127,6 +137,81 @@ export function push(state, body, dir, mmDist, {
   return { mm: total, shortfall: remaining, blockedBy, chain: log };
 }
 
+/**
+ * A moving body has been stopped with `remaining` travel still in it.
+ *
+ * Energy = mass x remaining. Both bodies take `energy / IMPACT_K` damage
+ * ([Crush] doubles it); a wall, a cliff or the edge of the ward hurts only the
+ * body that hit it. Whatever was struck is then shoved on with the leftover
+ * momentum, if it is something that can move at all -- a tall piece that
+ * takes enough energy topples instead.
+ */
+function impact(state, body, mass, remaining, blockedBy, dir, v, { byP, crush, depth, chain }) {
+  const energy = mass * remaining;
+  let dmg = idiv(energy, IMPACT_K);
+  if (crush) dmg *= 2;
+  let other = null;
+  if (blockedBy.kind === 'unit') other = findUnit(state, blockedBy.id);
+  else if (blockedBy.kind === 'prop' && blockedBy.id) other = findProp(state, blockedBy.id);
+  fx(state, 'impact', {
+    id: body.id, body: body.body, into: { kind: blockedBy.kind, id: blockedBy.id ?? null },
+    dmg, at: { x: body.x, y: body.y, z: body.z }, dir, speed: v,
+  });
+  if (dmg > 0) {
+    if (isUnitBody(body)) { hurt(state, body, dmg, { cause: 'impact', byP }); knockdown(state, body, dmg, dir); }
+    else smashProp(state, body, dmg, { byP, cause: 'impact' });
+    if (other) {
+      if (isUnitBody(other)) { hurt(state, other, dmg, { cause: 'impact', byP }); knockdown(state, other, dmg, dir); }
+      else smashProp(state, other, dmg, { byP, cause: 'impact' });
+    }
+  }
+  if (!other || depth >= PUSH_DEPTH) return { moved: false };
+  if (isUnitBody(other) ? other.dead : (other.destroyed || !propSpec(other.kind).pushable)) return { moved: false };
+  const ospec = isUnitBody(other) ? null : propSpec(other.kind);
+  if (ospec?.tippable && energy >= ospec.tipEnergy) { topple(state, other, dir, { byP }); return { moved: true }; }
+  const om = bodyMass(state, other);
+  const sub = push(state, other, dir, 0, { depth: depth + 1, byP, crush, chain, mm: idiv(energy, om), speed: v });
+  return { moved: sub.mm >= STEP };
+}
+
+/** Slammed hard enough and a unit is winded: it loses its action this turn. */
+function knockdown(state, u, dmg, dir) {
+  if (!u || u.dead || dmg < KNOCKDOWN_DMG) return;
+  u.acted = true;
+  fx(state, 'knockdown', { id: u.id, dir });
+}
+
+/**
+ * A tall piece falls over along `dir`. Everything under its length is hit,
+ * then the piece is gone -- a felled tree or a cracked pillar is rubble.
+ */
+export function topple(state, prop, dir, { byP = null } = {}) {
+  if (!prop || !propOnBoard(state, prop)) return false;
+  const spec = propSpec(prop.kind);
+  const [ux, uy] = DIR64[dir & 63];
+  const L = spec.h + propR(prop);
+  const reach = propR(prop) + BODY_R;
+  const hits = [];
+  for (const u of [...livingUnits(state)].sort((a, b) => a.id - b.id)) {
+    // Distance from the unit to the line the trunk lands on: project onto the
+    // direction, clamp to the trunk's length, compare. Integer throughout.
+    const dx = u.x - prop.x, dy = u.y - prop.y;
+    const t = clamp(idiv(dx * ux + dy * uy, DIR_SCALE), 0, L);
+    const cx = prop.x + idiv(ux * t, DIR_SCALE), cy = prop.y + idiv(uy * t, DIR_SCALE);
+    if (dist2(u.x, u.y, cx, cy) > reach * reach) continue;
+    if (u.z > prop.z + spec.h || u.z < prop.z - 1500) continue;
+    hits.push(u.id);
+  }
+  fx(state, 'topple', { id: prop.id, kind: prop.kind, dir, at: { x: prop.x, y: prop.y, z: prop.z }, hits });
+  for (const id of hits) {
+    const u = findUnit(state, id);
+    hurt(state, u, spec.tipDmg, { cause: 'topple', byP });
+    knockdown(state, u, spec.tipDmg, dir);
+  }
+  shatterProp(state, prop, { byP, cause: 'topple' });
+  return true;
+}
+
 /** Units standing on this prop right now. Ascending by id. */
 export const ridersOf = (state, prop) =>
   state.field.units
@@ -134,12 +219,12 @@ export const ridersOf = (state, prop) =>
     .sort((a, b) => a.id - b.id);
 
 /** Push a body directly away from a point. The commonest printed phrasing. */
-export const pushAwayFrom = (state, body, fromX, fromY, mmDist, opts = {}) =>
-  push(state, body, bearing(fromX, fromY, body.x, body.y), mmDist, opts);
+export const pushAwayFrom = (state, body, fromX, fromY, force, opts = {}) =>
+  push(state, body, bearing(fromX, fromY, body.x, body.y), force, opts);
 
 /** Pull a body toward a point. Printed on a handful of blue faces. */
-export const pullToward = (state, body, toX, toY, mmDist, opts = {}) =>
-  push(state, body, bearing(body.x, body.y, toX, toY), mmDist, opts);
+export const pullToward = (state, body, toX, toY, force, opts = {}) =>
+  push(state, body, bearing(body.x, body.y, toX, toY), force, opts);
 
 /**
  * Lift a prop into the air and let it hang there. Printed Levitation's partner:

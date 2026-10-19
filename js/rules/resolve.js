@@ -39,7 +39,7 @@ import {
 import { push, pushAwayFrom, pullToward, levitate, removeTerrain, smashProp, ignite } from '../field/push.js';
 import { propR, propOnBoard, propSpec } from '../field/arena.js';
 import { walk, placeBody, fallDamageFor, recheckSupport, resolveFalls } from '../field/move.js';
-import { pushDirs, ringPoints, elevatedNear, unitTargets, terrainTargets, dirLabel } from '../field/candidates.js';
+import { pushDirs, pushPreferred, ringPoints, elevatedNear, unitTargets, terrainTargets, dirLabel } from '../field/candidates.js';
 
 /**
  * How deep one face may reach into another.
@@ -176,7 +176,7 @@ export function makeCtx(state, spell, def, face, opts = {}) {
      *
      * One funnel, so a card that says "fire" never has to know what wood is.
      */
-    sweep: (x, y, radius, element, { amount = 1, mm = 0 } = {}) => {
+    sweep: (x, y, radius, element, { amount = 1, force = 0 } = {}) => {
       if (!element) return;
       for (const id of ctx.propsNear(x, y, radius)) {
         const pr = findProp(state, id);
@@ -187,9 +187,9 @@ export function makeCtx(state, spell, def, face, opts = {}) {
           ignite(state, pr, { byP: p });
           if (pr.kind === 'shard') smashProp(state, pr, pr.hp, { byP: p, cause: 'lightning' });
         } else if (element === 'force') {
-          if (mm > 0 && !(pr.x === x && pr.y === y)) {
-            const pp = applyKw(state, spell, 'push', { mm, crush: false, levitate: false });
-            pushAwayFrom(state, pr, x, y, pp.mm, { byP: p, crush: pp.crush });
+          if (force > 0 && !(pr.x === x && pr.y === y)) {
+            const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
+            pushAwayFrom(state, pr, x, y, pp.force, { byP: p, crush: pp.crush, levitate: pp.levitate });
           }
           if (propOnBoard(state, pr)) smashProp(state, pr, amount, { byP: p, cause: 'force' });
         }
@@ -207,26 +207,42 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       return dealt;
     },
 
-    /** A push, with [Crush] and [Levitate] already folded in. */
-    shove: (bodyId, dir, mmDist, o = {}) => {
+    /** A push of `force`, with [Crush] and [Levitate] already folded in. */
+    shove: (bodyId, dir, force, o = {}) => {
       const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
       if (!body) return { mm: 0 };
-      const pp = applyKw(state, spell, 'push', { mm: mmDist, crush: false, levitate: false });
-      return push(state, body, dir, pp.mm, { byP: p, crush: pp.crush, ...o });
+      const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
+      return push(state, body, dir, pp.force, { byP: p, crush: pp.crush, levitate: pp.levitate, ...o });
     },
-    shoveAway: (bodyId, mmDist, o = {}) => {
+    shoveAway: (bodyId, force, o = {}) => {
       const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
       const o0 = rangeOrigins(state, p)[0] || { x: 0, y: 0 };
       if (!body) return { mm: 0 };
-      const pp = applyKw(state, spell, 'push', { mm: mmDist, crush: false, levitate: false });
-      return pushAwayFrom(state, body, o0.x, o0.y, pp.mm, { byP: p, crush: pp.crush, ...o });
+      const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
+      return pushAwayFrom(state, body, o0.x, o0.y, pp.force, { byP: p, crush: pp.crush, levitate: pp.levitate, ...o });
     },
-    pullIn: (bodyId, mmDist, o = {}) => {
+    pullIn: (bodyId, force, o = {}) => {
       const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
       const o0 = rangeOrigins(state, p)[0] || { x: 0, y: 0 };
       if (!body) return { mm: 0 };
-      const pp = applyKw(state, spell, 'push', { mm: mmDist, crush: false, levitate: false });
-      return pullToward(state, body, o0.x, o0.y, pp.mm, { byP: p, crush: pp.crush, ...o });
+      const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
+      return pullToward(state, body, o0.x, o0.y, pp.force, { byP: p, crush: pp.crush, levitate: pp.levitate, ...o });
+    },
+    /**
+     * The drag-to-push question. Every bearing is an option; the view turns a
+     * drag on the battlefield into one of them, and offers `preferred` as
+     * buttons for anyone who would rather click.
+     */
+    askDir: (bodyId, prompt, force) => {
+      const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
+      const pref = body ? pushPreferred(state, p, body) : [];
+      const dirs = pushDirs();
+      return ask.pick(dirs, {
+        prompt, kind: 'dir', force,
+        target: body ? { body: body.body, id: body.id } : null,
+        preferred: pref,
+        labels: dirs.map(dirLabel),
+      });
     },
     relocate: (unitId, point) => {
       const u = findUnit(state, unitId);
@@ -243,10 +259,6 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       const u = findUnit(state, unitId);
       return u ? elevatedNear(state, u, mmDist) : null;
     },
-    pushDirs: (unitId) => {
-      const u = typeof unitId === 'number' ? findUnit(state, unitId) : findProp(state, unitId);
-      return u ? pushDirs(state, p, u) : [];
-    },
     dirLabel,
     liftTerrain: (propId, mmUp) => {
       const pr = findProp(state, propId);
@@ -262,17 +274,17 @@ export function makeCtx(state, spell, def, face, opts = {}) {
     },
 
     /** Push a body directly away from an arbitrary point. */
-    pushFrom: (bodyId, fromX, fromY, mmDist, o = {}) => {
+    pushFrom: (bodyId, fromX, fromY, force, o = {}) => {
       const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
       if (!body) return { mm: 0 };
-      const pp = applyKw(state, spell, 'push', { mm: mmDist, crush: false, levitate: false });
-      return pushAwayFrom(state, body, fromX, fromY, pp.mm, { byP: p, crush: pp.crush || !!o.crush, ...o });
+      const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
+      return pushAwayFrom(state, body, fromX, fromY, pp.force, { byP: p, crush: pp.crush || !!o.crush, levitate: pp.levitate, ...o });
     },
-    pullTo: (bodyId, toX, toY, mmDist, o = {}) => {
+    pullTo: (bodyId, toX, toY, force, o = {}) => {
       const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
       if (!body) return { mm: 0 };
-      const pp = applyKw(state, spell, 'push', { mm: mmDist, crush: false, levitate: false });
-      return pullToward(state, body, toX, toY, pp.mm, { byP: p, crush: pp.crush, ...o });
+      const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
+      return pullToward(state, body, toX, toY, pp.force, { byP: p, crush: pp.crush, levitate: pp.levitate, ...o });
     },
     /** Where this face measures from: the first range origin (usually the mage). */
     origin: () => rangeOrigins(state, p)[0] || null,

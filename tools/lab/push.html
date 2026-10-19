@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Push lab</title>
+<!-- The physics-flavoured push, cue by cue, on the REAL battlefield: a mage
+     and a standing stone staged on a seeded arena, then push -> impact ->
+     topple -> knockdown played by hand so each can be photographed, plus a
+     synthetic drag stroke for the direction prompt's arrow. window.LAB drives
+     it from tools/lab/shoot-push.mjs. ?seed=N picks the arena. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../css/style.css">
+<style>
+  #info { position: fixed; left: 10px; top: 8px; z-index: 5; color: #fff; font: 12px ui-monospace, monospace; text-shadow: 0 1px 2px #000; pointer-events: none; }
+  #bar { position: fixed; left: 10px; bottom: 8px; z-index: 5; display: flex; gap: 4px; flex-wrap: wrap; }
+  #bar a { color: #9fd8ff; background: #0008; padding: 2px 6px; border-radius: 3px; text-decoration: none; cursor: pointer; font: 12px ui-monospace, monospace; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="arena"></div>
+<div id="info">push lab</div>
+<div id="bar"></div>
+<script type="module">
+import { createGame } from '../../js/engine.js';
+import { heightAt } from '../../js/field/arena.js';
+import { createArena } from '../../js/view/arena3d.js';
+
+const Q = new URLSearchParams(location.search);
+const S = createGame({ seed: +(Q.get('seed') || 11) });
+const A = S.arena;
+const MM = 1 / 1000;
+
+/* ---- the stage: the mage 3 m west of a standing stone, on the flattest
+   ground the arena has (a fall has to be seen landing, not vanish into a hill) */
+const mage = S.field.units.find((u) => u.owner === 0 && u.kind === 'mage');
+const foe = S.field.units.find((u) => u.owner === 1 && u.kind === 'mage');
+let CX = Math.round(A.w / 2), CY = Math.round(A.h / 2), bestRange = Infinity;
+for (let x = 4500; x <= A.w - 6500; x += 500) for (let y = 3000; y <= A.h - 3000; y += 500) {
+  let lo = Infinity, hi = -Infinity;
+  for (let dx = -3500; dx <= 3000; dx += 500) for (let dy = -2000; dy <= 2000; dy += 500) { const h = heightAt(A, x + dx, y + dy); lo = Math.min(lo, h); hi = Math.max(hi, h); }
+  if (hi - lo < bestRange) { bestRange = hi - lo; CX = x; CY = y; }
+}
+const put = (b, x, y) => { b.x = x; b.y = y; b.z = heightAt(A, x, y); };
+put(mage, CX - 3000, CY);
+put(foe, CX + 2200, CY + 2600);
+// Keep the stage clear: every piece the arena rolled is parked in the far corner.
+for (const pr of S.field.props) put(pr, A.w - 900, 600 + 450 * S.field.props.indexOf(pr));
+const pillar = { id: 'pLAB', kind: 'pillar', x: 0, y: 0, z: 0, removedUntil: null, hp: 5, burning: null, litBy: null, destroyed: false };
+const boulder = { id: 'bLAB', kind: 'boulder', x: 0, y: 0, z: 0, removedUntil: null, hp: 4, burning: null, litBy: null, destroyed: false };
+put(pillar, CX, CY);
+put(boulder, CX - 1500, CY + 1800);
+S.field.props.push(pillar, boulder);
+
+const arena = createArena(document.querySelector('#arena'), S, { quality: Q.get('q') || 'high', seat: 0, unitLabel: (u) => (u.owner === 0 ? 'Your mage' : 'Enemy mage') });
+await arena.whenReady;
+arena.sync(S);
+const info = document.querySelector('#info');
+
+/* ---- cameras: the game's own, and a close-up on the stage */
+function view(kind = 'close') {
+  const t = { x: CX * MM, y: 0.6, z: CY * MM };
+  if (kind === 'game') arena.home();
+  else if (kind === 'side') { arena.camera.position.set(t.x - 1.5, 3.2, t.z + 6.5); arena.controls.target.set(t.x - 0.5, 0.8, t.z); }
+  else { arena.camera.position.set(t.x - 6.5, 4.2, t.z + 4.5); arena.controls.target.set(t.x - 1, 0.7, t.z); }
+  arena.controls.update();
+}
+view(Q.get('cam') || 'close');
+
+/* ---- the cues, each staged the way the real timeline would stage it */
+let picked = null;
+const STEPS = {
+  /** The mage is thrown 2.4 m east with force 5, straight at the stone. */
+  push() {
+    const from = { x: mage.x, y: mage.y };
+    put(mage, CX - 700, CY);
+    arena.sync(S);
+    arena.cues.push(mage.id, 'unit', 2300, from, 0, 5, 70, { x: mage.x, y: mage.y, z: mage.z });
+  },
+  /** The boulder shoved 1.5 m east with force 3. */
+  pushProp() {
+    const from = { x: boulder.x, y: boulder.y };
+    put(boulder, boulder.x + 1500, boulder.y);
+    arena.sync(S);
+    arena.cues.push(boulder.id, 'prop', 1500, from, 0, 3, 45, { x: boulder.x, y: boulder.y, z: boulder.z });
+  },
+  /** The mage slams into the stone for 2. */
+  impact() {
+    arena.cues.impact({ id: mage.id, body: 'unit', into: { kind: 'prop', id: pillar.id }, dmg: 2, at: { x: mage.x, y: mage.y, z: mage.z }, dir: 0, speed: 40 });
+  },
+  /** The stone falls east, onto the enemy mage standing in its shadow. */
+  topple() {
+    put(foe, CX + 1600, CY + 300);
+    pillar.destroyed = true;
+    arena.cues.toppling(pillar.id);
+    arena.sync(S);
+    arena.cues.topple(pillar.id, 0, [foe.id]);
+  },
+  /** The enemy mage is winded. */
+  knockdown() { arena.cues.knockdown(foe.id, 0); },
+  /** The direction prompt with a stroke drawn 3 m to the east of the mage. */
+  drag() {
+    picked = null;
+    arena.beginDrag({ body: 'unit', id: mage.id, force: 5 }, (d) => { picked = d; info.textContent = `picked dir ${d}`; });
+    const c = arena.renderer.domElement;
+    const [ax, ay] = arena.project(mage.x, mage.y, mage.z);
+    const [bx, by] = arena.project(mage.x + 3000, mage.y + 1200, heightAt(A, mage.x + 3000, mage.y + 1200));
+    const ev = (type, x, y) => c.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, button: 0, bubbles: true }));
+    ev('pointerdown', ax, ay);
+    ev('pointermove', (ax + bx) / 2, (ay + by) / 2);
+    ev('pointermove', bx, by);
+  },
+  /** Release the stroke: the callback gets the bearing. */
+  dragUp() {
+    const c = arena.renderer.domElement;
+    const [bx, by] = arena.project(mage.x + 3000, mage.y + 1200, heightAt(A, mage.x + 3000, mage.y + 1200));
+    c.dispatchEvent(new PointerEvent('pointerup', { clientX: bx, clientY: by, pointerId: 1, button: 0, bubbles: true }));
+    arena.endDrag();
+  },
+  reset() {
+    put(mage, CX - 3000, CY); put(foe, CX + 2200, CY + 2600);
+    pillar.destroyed = false; put(boulder, CX - 1500, CY + 1800); arena.sync(S);
+  },
+};
+function step(name) { STEPS[name]?.(); info.textContent = name; }
+
+const bar = document.querySelector('#bar');
+for (const nm of Object.keys(STEPS)) { const a = document.createElement('a'); a.textContent = nm; a.onclick = () => step(nm); bar.appendChild(a); }
+
+window.LAB = { arena, state: S, step, view, names: Object.keys(STEPS), get picked() { return picked; }, ready: true };
+</script>
+</body>
+</html>

@@ -190,41 +190,39 @@ export const damageAndLock = ({ amount = 3, range = 3000, element = null } = {})
 
 /* ============================================================ the field */
 
-export const push = ({ mm = 2000, range = 3000, side = 'enemy' } = {}) => ({
+/** Push a unit with `force` in a direction the player drags. */
+export const push = ({ force = 3, range = 3000, side = 'enemy' } = {}) => ({
   tag: 'move', reach: range,
   *effect(ctx) {
     const ids = side === 'enemy' ? ctx.enemyUnits(range) : ctx.anyUnits(range);
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Push which unit?', kind: 'unit' });
     if (id === null) return;
-    const dirs = ctx.pushDirs(id);
-    if (!dirs.length) return;
-    const d = dirs.length === 1 ? dirs[0]
-      : yield ctx.ask.pick(dirs, { prompt: 'Push it which way?', labels: dirs.map(ctx.dirLabel) });
+    const d = yield ctx.askDir(id, 'Drag to push it', force);
     if (d === null) return;
-    ctx.shove(id, d, mm);
+    ctx.shove(id, d, force);
   },
 });
 
-export const pushAway = ({ mm = 2000, range = 3000, side = 'enemy' } = {}) => ({
+export const pushAway = ({ force = 3, range = 3000, side = 'enemy' } = {}) => ({
   tag: 'move', reach: range,
   *effect(ctx) {
     const ids = side === 'enemy' ? ctx.enemyUnits(range) : ctx.anyUnits(range);
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Push which unit away?', kind: 'unit' });
     if (id === null) return;
-    ctx.shoveAway(id, mm);
+    ctx.shoveAway(id, force);
   },
 });
 
-export const pull = ({ mm = 2000, range = 4000 } = {}) => ({
+export const pull = ({ force = 3, range = 4000 } = {}) => ({
   tag: 'move', reach: range,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range);
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Pull which unit?', kind: 'unit' });
     if (id === null) return;
-    ctx.pullIn(id, mm);
+    ctx.pullIn(id, force);
   },
 });
 
@@ -258,19 +256,16 @@ export const toHighGround = ({ mm = 3000, range = 4000 } = {}) => ({
   },
 });
 
-export const shoveTerrain = ({ mm = 2000, range = 4000 } = {}) => ({
+export const shoveTerrain = ({ force = 3, range = 4000 } = {}) => ({
   tag: 'move', reach: range,
   *effect(ctx) {
     const ids = ctx.propsInRange(range, { pushableOnly: true });
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Push which terrain piece?', kind: 'prop' });
     if (id === null) return;
-    const dirs = ctx.pushDirs(id);
-    if (!dirs.length) return;
-    const d = dirs.length === 1 ? dirs[0]
-      : yield ctx.ask.pick(dirs, { prompt: 'Which way?', labels: dirs.map(ctx.dirLabel) });
+    const d = yield ctx.askDir(id, 'Drag to push it', force);
     if (d === null) return;
-    ctx.shove(id, d, mm);
+    ctx.shove(id, d, force);
   },
 });
 
@@ -391,7 +386,7 @@ export const fireball = ({ amount = 3, splash = 1, radius = 1500, range = 4000, 
 });
 
 /** Damage and a knock-back on every enemy around the origin. */
-export const nova = ({ amount = 2, mm = 1500, range = 2500, element = 'force' } = {}) => ({
+export const nova = ({ amount = 2, force = 2, range = 2500, element = 'force' } = {}) => ({
   tag: 'break', reach: range, element,
   *effect(ctx) {
     const o = ctx.origin();
@@ -400,15 +395,15 @@ export const nova = ({ amount = 2, mm = 1500, range = 2500, element = 'force' } 
       if (ctx.state.winner !== null) break;
       ctx.hit(id, amount);
       const u = ctx.unit(id);
-      if (u && !u.dead) ctx.pushFrom(id, o.x, o.y, mm);
+      if (u && !u.dead) ctx.pushFrom(id, o.x, o.y, force);
     }
     // And the terrain goes with them: rocks shoved, crystals cracked.
-    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount, mm });
+    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount, force });
   },
 });
 
 /** Push every enemy within range directly away from the origin. */
-export const repel = ({ mm = 2500, range = 3000, element = 'force', side = 'enemy' } = {}) => ({
+export const repel = ({ force = 3, range = 3000, element = 'force', side = 'enemy' } = {}) => ({
   tag: 'move', reach: range, element,
   *effect(ctx) {
     const o = ctx.origin();
@@ -417,26 +412,26 @@ export const repel = ({ mm = 2500, range = 3000, element = 'force', side = 'enem
     for (const id of ids) {
       const u = ctx.unit(id);
       if (!u || (u.x === o.x && u.y === o.y)) continue;   // the caster stays put
-      ctx.pushFrom(id, o.x, o.y, mm);
+      ctx.pushFrom(id, o.x, o.y, force);
     }
-    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 0, mm });
+    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 0, force });
   },
 });
 
 /** Pull every enemy within range toward the origin. */
-export const vortex = ({ mm = 2000, range = 5000, element = 'force' } = {}) => ({
+export const vortex = ({ force = 3, range = 5000, element = 'force' } = {}) => ({
   tag: 'move', reach: range, element,
   *effect(ctx) {
     const o = ctx.origin();
     if (!o) return;
-    for (const id of ctx.enemyUnits(range)) ctx.pullTo(id, o.x, o.y, mm);
+    for (const id of ctx.enemyUnits(range)) ctx.pullTo(id, o.x, o.y, force);
     // Loose stone is dragged in too. Pulled toward the mage, not past it.
-    for (const id of ctx.propsNear(o.x, o.y, ctx.range(range).mm)) ctx.pullTo(id, o.x, o.y, mm);
+    for (const id of ctx.propsNear(o.x, o.y, ctx.range(range).mm)) ctx.pullTo(id, o.x, o.y, force);
   },
 });
 
 /** A quake: EVERY unit near the origin is thrown back, yours included. */
-export const quake = ({ mm = 2000, range = 3000, element = 'force' } = {}) => ({
+export const quake = ({ force = 3, range = 3000, element = 'force' } = {}) => ({
   tag: 'move', reach: range, element,
   *effect(ctx) {
     const o = ctx.origin();
@@ -444,16 +439,16 @@ export const quake = ({ mm = 2000, range = 3000, element = 'force' } = {}) => ({
     for (const id of ctx.anyUnits(range)) {
       const u = ctx.unit(id);
       if (!u || (u.x === o.x && u.y === o.y)) continue;   // the epicentre stays put
-      ctx.pushFrom(id, o.x, o.y, mm);
+      ctx.pushFrom(id, o.x, o.y, force);
     }
     // The ground heaves: standing stones crack, crystals shatter, and what
     // was standing on a boulder is on the ground now.
-    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 2, mm });
+    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 2, force });
   },
 });
 
 /** Shove one enemy away and hit it. With crush, the wall it hits is the hit. */
-export const slam = ({ mm = 4000, range = 3000, amount = 0, crush = false, element = 'force' } = {}) => ({
+export const slam = ({ force = 5, range = 3000, amount = 0, crush = false, element = 'force' } = {}) => ({
   tag: 'move', reach: range, element,
   *effect(ctx) {
     const ids = ctx.enemyUnits(range);
@@ -461,7 +456,7 @@ export const slam = ({ mm = 4000, range = 3000, amount = 0, crush = false, eleme
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Slam which unit?', kind: 'unit' });
     if (id === null) return;
     const o = ctx.origin();
-    if (o) ctx.pushFrom(id, o.x, o.y, mm, { crush });
+    if (o) ctx.pushFrom(id, o.x, o.y, force, { crush });
     const u = ctx.unit(id);
     if (amount > 0 && u && !u.dead) ctx.hit(id, amount);
   },

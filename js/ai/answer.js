@@ -27,6 +27,10 @@ export function candidates(request, limit = 10) {
     }
     return out.length ? out : [[]];
   }
+  // A direction question offers all sixty-four bearings; the first ten are
+  // all roughly east. Try the preferred ones (away from the caster, then the
+  // compass) instead.
+  if (request.kind === 'dir') return [...new Set([...(request.preferred || []), 0, 8, 16, 24, 32, 40, 48, 56])].slice(0, limit);
   const opts = [...request.options];
   if (request.allowNone) opts.push(null);
   return opts.slice(0, limit);
@@ -37,6 +41,7 @@ export function quickAnswer(state, request, rng) {
   if (request.type === 'confirm') return true;
   if (request.type === 'some') return request.options.slice(0, request.count);
   if (!request.options || !request.options.length) return null;
+  if (request.kind === 'dir') return request.preferred?.[0] ?? request.options[0];
   // The first option, not a random one. A rollout whose answers were random
   // would make the same candidate action score differently on every call, and
   // a one-ply search over a noisy evaluation picks noise.

@@ -34,7 +34,7 @@ import { makeCtx } from '../rules/resolve.js';
 import { moveBudget, canMoveTo } from '../rules/units.js';
 import { rangeOrigins } from '../field/query.js';
 import { cardSVG, centreSVG, faceListHTML, SCHOOL_INK, runeGlyphInline } from './cards.js';
-import { createArena, SCHOOL_HEX } from './arena3d.js';
+import { createArena, SCHOOL_HEX, pushSlideMs } from './arena3d.js';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -391,7 +391,24 @@ function flushFx() {
       }
       case 'strike': { const { from, to } = f; later(t - 200, () => cues().strike(from ?? f.id, to)); t += 300; break; }
       case 'kill': { const id = f.id; later(t + 150, () => cues().kill(id)); t += 500; break; }
-      case 'push': { const { id, body, mm, from } = f; later(t, () => cues().push(id, body, mm, from)); t += 160; break; }
+      case 'push': {
+        const { id, body, mm, from, dir, force, speed, to } = f;
+        later(t, () => cues().push(id, body, mm, from, dir ?? 0, force ?? 1, speed ?? 50, to ?? null));
+        // The slam, the numbers and the fall all wait for the slide to end.
+        t += pushSlideMs(mm, speed ?? 50) + 60;
+        break;
+      }
+      case 'impact': { const note = f; later(t, () => cues().impact(note)); t += 260; break; }
+      case 'topple': {
+        const { id, dir, hits } = f;
+        // Marked NOW, before render() syncs the destroyed piece away, so it
+        // stays standing until its fall has played.
+        cues().toppling(id);
+        later(t, () => cues().topple(id, dir, hits || []));
+        t += 1150;
+        break;
+      }
+      case 'knockdown': { const { id, dir } = f; later(t, () => cues().knockdown(id, dir)); t += 500; break; }
       case 'falls': for (const l of f.landed || []) if (l.key[0] === 'u' && l.drop > 0) { const id = Number(l.key.slice(1)), drop = l.drop; later(t + 250, () => cues().fall(id, drop)); } t += 350; break;
       case 'hurl': { const { id, mm } = f; later(t, () => cues().hurl(id, mm)); holdDamage = 900; t += 1000; break; }
       case 'dropRock': { const { id, from, to, onto } = f; later(t, () => cues().dropRock(id, from, to, onto)); holdDamage = 1050; t += 1200; break; }
@@ -452,7 +469,22 @@ function narrate(f) {
     case 'keywordCopy': return `&nbsp;&nbsp;&nbsp;&nbsp;copies <span class="kw">[${esc(f.kw)}]</span> onto ${N(f.to)}`;
     case 'keywordGrant': return `&nbsp;&nbsp;&nbsp;&nbsp;grants <span class="kw">[${esc(f.kw)}]</span> to ${N(f.uid)}`;
     case 'damage': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">${f.amount} damage</span> to ${esc(unitName(f.id))}${f.cause && f.cause !== 'spell' ? ` (${esc(f.cause)})` : ''}`;
-    case 'push': return f.body === 'unit' ? `&nbsp;&nbsp;&nbsp;&nbsp;pushes ${esc(unitName(f.id))} ${m(f.mm)}` : `&nbsp;&nbsp;&nbsp;&nbsp;shoves a ${esc(propName(f.id))} ${m(f.mm)}`;
+    case 'push': {
+      const force = f.force ? ` with force ${f.force}` : '';
+      return f.body === 'unit' ? `&nbsp;&nbsp;&nbsp;&nbsp;pushes ${esc(unitName(f.id))} ${m(f.mm)}${force}` : `&nbsp;&nbsp;&nbsp;&nbsp;shoves a ${esc(propName(f.id))} ${m(f.mm)}${force}`;
+    }
+    case 'impact': {
+      const who = f.body === 'unit' ? esc(unitName(f.id)) : `a ${esc(propName(f.id))}`;
+      const into = f.into?.kind === 'unit' ? esc(unitName(f.into.id)) : f.into?.kind === 'prop' ? `a ${esc(propName(f.into.id))}`
+        : f.into?.kind === 'edge' ? 'the edge of the ward' : f.into?.kind === 'rise' ? 'a rise in the ground' : 'a wall of rock';
+      return `&nbsp;&nbsp;&nbsp;&nbsp;<b>${who} slams into ${into}</b>${f.dmg > 0 ? ` for <span class="red">${f.dmg}</span>` : ', no harm done'}`;
+    }
+    case 'topple': {
+      const onto = (f.hits || []).map((id) => esc(unitName(id)));
+      return `&nbsp;&nbsp;&nbsp;&nbsp;<b>the ${esc(propName(f.id))} topples</b>${onto.length ? ` onto ${onto.join(' and ')}` : ''}`;
+    }
+    case 'knockdown': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is knocked flat and loses its action`;
+    case 'pushResult': return null;
     case 'falls': return `&nbsp;&nbsp;&nbsp;&nbsp;<b>falls</b>: ${(f.landed || []).map((l) => m(l.drop)).join(', ')}`;
     case 'kill': return `<span class="red">☠ ${esc(unitName(f.id))} slain</span>${f.by !== null && f.by !== undefined ? ` by ${P(f.by)}` : ''}`;
     case 'score': return `<span class="gold">+${f.amount} VP</span> to ${P(f.p)} — ${SOURCE[f.source] || esc(f.source)}`;
@@ -861,10 +893,15 @@ function promptPick(v) {
 
 function renderPrompt() {
   const el = $('#prompt');
-  if (!humanToAnswer()) { el.hidden = true; return; }
+  if (!humanToAnswer()) { el.hidden = true; arena.endDrag(); return; }
   const r = S.pending.request;
   el.hidden = false;
   let html = `<div class="ptitle">${esc(r.prompt || 'Choose')}</div>`;
+  if (r.kind !== 'dir') arena.endDrag();
+  if (r.kind === 'dir') {
+    renderDirPrompt(el, r, html);
+    return;
+  }
   if (r.type === 'confirm') {
     html += `<div class="pbtns"><button data-v="yes" class="primary">Yes</button><button data-v="no">No</button></div>`;
   } else {
@@ -898,6 +935,40 @@ function renderPrompt() {
       b.onmouseleave = () => document.querySelectorAll('.cell.hint').forEach((c) => c.classList.remove('hint'));
     }
   });
+}
+
+/**
+ * The drag-to-push question. The battlefield takes the drag itself
+ * (arena.beginDrag); the panel explains it and offers the eight compass
+ * bearings for anyone who would rather click, the engine's `preferred`
+ * ones (away from the caster) first. Each button carries an arrow showing
+ * where that bearing points ON THIS PLAYER'S SCREEN, read off the camera,
+ * because a compass letter alone says nothing about which way is which.
+ */
+const SCREEN_ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘'];
+function screenArrow(d) {
+  const a = arena.screenAngle(d);
+  return SCREEN_ARROWS[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8];
+}
+function renderDirPrompt(el, r, html) {
+  const label = (d) => { const i = r.options.indexOf(d); return i >= 0 && r.labels?.[i] !== undefined ? String(r.labels[i]) : String(d); };
+  const answerDir = (d) => {
+    if (r.options.includes(d)) return answer(d);
+    // Off the menu: the nearest bearing that is on it.
+    let best = r.options[0], bd = 64;
+    for (const o of r.options) { const k = Math.abs(((o - d + 32) & 63) - 32); if (k < bd) { bd = k; best = o; } }
+    answer(best);
+  };
+  const preferred = (r.preferred || []).filter((d) => r.options.includes(d));
+  const compass = [0, 8, 16, 24, 32, 40, 48, 56].filter((d) => r.options.includes(d) && !preferred.includes(d));
+  html += `<div class="phint drag">Drag on the battlefield from the ringed target in the direction to push (force ${esc(r.force)}), or pick a bearing below.</div>`;
+  html += '<div class="pbtns compass">';
+  for (const d of preferred) html += `<button data-d="${d}" class="primary"><i>${screenArrow(d)}</i> ${esc(label(d))} <small>away from your mage</small></button>`;
+  for (const d of compass) html += `<button data-d="${d}"><i>${screenArrow(d)}</i> ${esc(label(d))}</button>`;
+  html += '</div>';
+  el.innerHTML = html;
+  el.querySelectorAll('button[data-d]').forEach((b) => { b.onclick = () => answerDir(Number(b.dataset.d)); });
+  if (r.target) arena.beginDrag({ body: r.target.body, id: r.target.id, force: r.force }, answerDir);
 }
 
 /** "Ember Lash and Shove meet at a corner, both showing the Wheel rune." */

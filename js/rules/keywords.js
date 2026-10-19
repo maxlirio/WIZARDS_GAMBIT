@@ -33,7 +33,7 @@ export const MAX_KEYWORDS = 4;
 export const HOOKS = Object.freeze([
   'range',      // ({mm, heightK}) -> the same shape
   'damage',     // ({amount}) -> the same shape
-  'push',       // ({mm, crush, levitate}) -> the same shape
+  'push',       // ({force, crush, levitate}) -> the same shape
   'hit',        // (ctx, {target}) -> void. After a hit lands.
   'incoming',   // ({amount}) -> the same shape. Damage being taken.
   'unitMove',   // ({mm}) -> the same shape
@@ -53,8 +53,8 @@ export const KEYWORDS = Object.freeze({
 
   Impact: { text: 'Damage +1.', damage: (dd) => ({ ...dd, amount: dd.amount + 1 }) },
 
-  /** Travel the wall ate becomes damage. See field/push.js. */
-  Crush: { text: 'A blocked push deals damage instead.', push: (pp) => ({ ...pp, crush: true }) },
+  /** Impacts hit twice as hard. See field/push.js. */
+  Crush: { text: 'Its impacts deal double damage.', push: (pp) => ({ ...pp, crush: true }) },
 
   /** Pushed through the air: terrain does not stop it. */
   Levitate: { text: 'A push ignores terrain.', push: (pp) => ({ ...pp, levitate: true }) },

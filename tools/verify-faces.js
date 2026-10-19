@@ -76,12 +76,18 @@ export function claimsOf(def, face) {
   const dmg = t.match(/[Dd]eal (\d+) damage/);
   if (dmg) c.push({ kind: 'damage', n: Number(dmg[1]) });
 
-  // "Push a unit within 3m 2m." -- the first distance is the range, a second
-  // bare distance is how far it goes.
-  const dists = [...t.matchAll(/([\d.]+)m/g)].map((m) => num(m[1]));
-  if (/[Pp]ush|[Pp]ull|[Rr]elocate|[Rr]aise/.test(t)) {
-    const travel = range ? dists.filter((d) => d !== num(range[1])) : dists;
-    if (travel.length) c.push({ kind: 'travel', mm: travel[travel.length - 1] });
+  // "Push a unit within 3m with force 4." -- the distance is the range; the
+  // force buys a mass-1 body force x 750mm of travel, and nothing may travel
+  // further than that. "Relocate ... up to 3m" / "Raise ... by 1m" still
+  // print a bare distance.
+  const force = t.match(/with force (\d)/);
+  if (force) c.push({ kind: 'travel', mm: Number(force[1]) * 750 });
+  else {
+    const dists = [...t.matchAll(/([\d.]+)m/g)].map((m) => num(m[1]));
+    if (/[Pp]ush|[Pp]ull|[Rr]elocate|[Rr]aise/.test(t)) {
+      const travel = range ? dists.filter((d) => d !== num(range[1])) : dists;
+      if (travel.length) c.push({ kind: 'travel', mm: travel[travel.length - 1] });
+    }
   }
 
   const draw = t.match(/[Dd]raw (a|\d+) cards?/);

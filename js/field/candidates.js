@@ -31,13 +31,27 @@ const uniqSort = (nums) => [...new Set(nums)].sort((a, b) => a - b);
  * uses. The extra bearings are snapped onto the 64-direction table like
  * everything else, so the answer a player gives is always an integer index.
  */
-export function pushDirs(state, p, target) {
-  const dirs = COMPASS.map((c) => c.dir);
+export function pushDirs() {
+  // Every bearing. The player answers by DRAGGING on the battlefield and the
+  // view snaps the drag to the nearest table direction, so the option list is
+  // the whole table -- still finite, still an integer index.
+  return ALL_DIRS;
+}
+const ALL_DIRS = Object.freeze(Array.from({ length: 64 }, (_, i) => i));
+
+/**
+ * The bearings a sensible player reaches for first: "directly away from each
+ * of the pusher's range origins". The HUD offers them as buttons labelled as
+ * such (beside the compass) for anyone who would rather not drag, and the AI
+ * samples them plus the compass rather than all sixty-four.
+ */
+export function pushPreferred(state, p, target) {
+  const dirs = [];
   for (const o of rangeOrigins(state, p)) {
     if (o.x === target.x && o.y === target.y) continue;
     dirs.push(bearing(o.x, o.y, target.x, target.y));
   }
-  return uniqSort(dirs);
+  return [...new Set(dirs)];
 }
 
 export const dirLabel = (d) => {

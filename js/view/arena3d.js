@@ -20,6 +20,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { heightAt, propSpec, propOnBoard, propBurning } from '../field/arena.js';
+import { DIR64, DIR_SCALE, bearing } from '../field/fixed.js';
 import { loadAll, pickLod } from './assets.js';
 import { buildWorld, menhir } from './world.js';
 import { createPropFactory } from './props.js';
@@ -32,6 +33,21 @@ const TEAM = [0x4fd2ff, 0xff5d5d];
 const TEAM_DARK = [0x1d4e78, 0x6a1a1a];
 const TEAM_CSS = ['#4fd2ff', '#ff6b6b'];
 export const SCHOOL_HEX = { red: 0xff6a52, blue: 0x52b6ff, green: 0x5ee68f, purple: 0xc98bff, gold: 0xffcf5a, grey: 0xc3cad6 };
+/** The pushing school's blue-white: the propulsion behind a shoved body, the drag arrow. */
+const PUSH_HEX = 0x7fe0ff;
+
+/**
+ * How long a push's slide takes on screen, in ms. The engine's `speed`
+ * (0..100) is the launch speed; the slide eases out from it, so a hard push
+ * covers the same distance faster rather than further. main.js uses this to
+ * time the impact after the slide, so the number lives in one place.
+ */
+export function pushSlideMs(mm, speed = 50) {
+  const d = Math.max(0.2, mm * MM);
+  const v0 = 3 + speed * 0.09;            // m/s at launch, 3..12
+  // A cubic ease-out leaves at three times the mean speed: T = 3d / v0.
+  return Math.round(Math.max(300, Math.min(1500, (3 * d / v0) * 1000)));
+}
 
 export function createArena(host, state, handlers = {}) {
   const a = state.arena;
@@ -148,12 +164,15 @@ export function createArena(host, state, handlers = {}) {
     hit.userData.pick = { kind: 'unit', id: u.id };
     actor.root.add(hit);
     actor.root.position.set(u.x * MM, u.z * MM, u.y * MM);
+    // Yaw first, then pitch: a lean set on rotation.x is then in the body's
+    // own frame (forward/back) whichever way the actor faces.
+    actor.root.rotation.order = 'YXZ';
     actor.facing = actor.facingTarget = u.owner === 0 ? Math.PI / 2 : -Math.PI / 2;
     const label = document.createElement('div');
     label.className = `ulabel p${u.owner}`;
     labels.appendChild(label);
     scene.add(actor.root);
-    return { actor, base, label, unit: u, target: new THREE.Vector3(u.x * MM, u.z * MM, u.y * MM), vy: 0, airborne: false };
+    return { actor, base, label, unit: u, target: new THREE.Vector3(u.x * MM, u.z * MM, u.y * MM), vy: 0, airborne: false, slide: null, crushedAt: -1e9 };
   }
 
   /* ---------------------------------------------------------- sync */
@@ -166,6 +185,7 @@ export function createArena(host, state, handlers = {}) {
       let rec = actors.get(u.id);
       if (u.dead) {
         if (rec && !rec.actor.dead) {
+          if (rec.slide) { endSlide(rec.slide); rec.slide = null; }
           rec.actor.die();
           const kept = rec;
           actors.delete(u.id);
@@ -191,7 +211,7 @@ export function createArena(host, state, handlers = {}) {
       rec.label.classList.toggle('acted', !!u.acted && s.active === u.owner);
     }
     for (const [id, rec] of actors) {
-      if (!seen.has(id)) { scene.remove(rec.actor.root); rec.label.remove(); rec.actor.dispose(); actors.delete(id); }
+      if (!seen.has(id)) { if (rec.slide) endSlide(rec.slide); scene.remove(rec.actor.root); rec.label.remove(); rec.actor.dispose(); actors.delete(id); }
     }
     for (const pr of s.field.props) {
       let m = propMeshes.get(pr.id);
@@ -203,6 +223,9 @@ export function createArena(host, state, handlers = {}) {
         if (pr.raised) { m.scale.y = 0.01; fx.tween(0.7, (t) => { m.scale.y = 0.01 + fx.ease.out(t) * 0.99; }); fx.dust(pr.x * MM, pr.z * MM, pr.y * MM, { n: 30, size: 0.8 }); fx.shake(0.05, 0.4); }
       }
       m.userData.target = new THREE.Vector3(pr.x * MM, pr.z * MM, pr.y * MM);
+      // The engine has already written the piece off, but its fall has not
+      // played yet: it stays up, whole and unburst, until the topple cue ends.
+      if (topplePending.has(pr.id)) continue;
       const on = propOnBoard(s, pr);
       if (m.visible && !on && pr.destroyed && !m.userData.shattered) {
         m.userData.shattered = true;
@@ -240,6 +263,7 @@ export function createArena(host, state, handlers = {}) {
     }
   }
   const stumps = [];
+  const topplePending = new Set();   // prop ids whose topple cue is scheduled but not finished
 
   /* ---------------------------------------------------------- markers */
   const markerGroup = new THREE.Group();
@@ -314,6 +338,48 @@ export function createArena(host, state, handlers = {}) {
   const unitTop = (id) => { const rec = actors.get(id); const p = unitPos(id); if (p && rec) p.y += rec.actor.height * 0.55; return p; };
   const mageOf = (p) => [...actors.values()].find((r) => r.unit.owner === p && r.unit.kind === 'mage');
 
+  /* ---------------------------------------------------------- slides */
+  // A pushed body does not walk: it is THROWN, with a propulsion streaming
+  // out behind it that fades as it decelerates. One slide record per body,
+  // stepped by the frame loop; the plume is a pair of additive cones so no
+  // light is spent on it.
+  function startSlide(A, B, D, dur, force, extra) {
+    fx.ring(A.x, A.y, A.z, 0.9 + force * 0.2, PUSH_HEX, { dur: 0.45, width: 0.14 });
+    fx.flash(A.x, A.y + 0.8, A.z, PUSH_HEX, 6 + force * 1.5, 0.3, 4 + force * 0.5);
+    fx.pools.sparks.emit({ x: A.x - D.x * 0.3, y: A.y + 0.6, z: A.z - D.z * 0.3, n: 10 + force * 4, spread: 0.2, vx: -D.x * 4, vz: -D.z * 4, vspread: 2, vy: 1, life: 0.5, size: 0.08, sizeEnd: 0.02, color: 0xffffff, colorEnd: PUSH_HEX, gravity: -4 });
+    fx.dust(A.x, A.y, A.z, { n: 10 + force * 2, size: 0.45 });
+    const plume = makePlume(force);
+    scene.add(plume);
+    return { from: A, to: B, D, dur, t: 0, force, plume, acc: 0, travelled: 0, lastX: A.x, lastZ: A.z, ...extra };
+  }
+  /** One frame of the propulsion behind a sliding body at (x, y, z); `thrust` 1..0 as it dies. */
+  function plumeStep(sl, x, y, z, groundY, thrust, dt) {
+    const { D, force, plume } = sl;
+    plume.position.set(x - D.x * 0.25, y, z - D.z * 0.25);
+    plume.rotation.y = Math.atan2(D.z, -D.x);
+    const flick = 0.85 + 0.15 * Math.sin(performance.now() * 0.05);
+    plume.scale.set(0.3 + thrust * flick, 0.5 + thrust * 0.5, 0.5 + thrust * 0.5);
+    plume.children[0].material.opacity = 0.5 * thrust;
+    plume.children[1].material.opacity = 0.8 * thrust;
+    // The nozzle itself: a hot glow where the magic meets the body.
+    fx.pools.soft.emit({ x: x - D.x * 0.2, y, z: z - D.z * 0.2, n: 1, life: 0.08, size: (0.5 + force * 0.08) * (0.5 + thrust * 0.5), color: 0xffffff, alpha: 0.7 * thrust, fade: 0 });
+    // Motes streaming back out of the nozzle, and the ground scuffed as it goes.
+    sl.acc += dt * (70 + force * 25) * thrust;
+    const v = 3 + force * 0.7;
+    while (sl.acc >= 1) {
+      sl.acc -= 1;
+      fx.pools.soft.emit({ x: x - D.x * 0.3, y: y + (Math.random() - 0.5) * 0.3, z: z - D.z * 0.3, n: 1, spread: 0.12, vx: -D.x * v, vz: -D.z * v, vspread: 0.9, vy: 0.3, life: 0.4, lifeSpread: 0.15, size: 0.22, sizeEnd: 0.05, color: 0xdffbff, colorEnd: PUSH_HEX, alpha: 0.85, fade: 1, drag: 1.5 });
+      if (Math.random() < 0.3) fx.pools.sparks.emit({ x: x - D.x * 0.2, y: y - 0.2, z: z - D.z * 0.2, n: 1, spread: 0.1, vx: -D.x * v * 0.7, vz: -D.z * v * 0.7, vspread: 1.2, vy: 1.2, life: 0.6, size: 0.06, sizeEnd: 0.015, color: 0xffffff, colorEnd: PUSH_HEX, gravity: -6 });
+    }
+    sl.travelled += Math.hypot(x - sl.lastX, z - sl.lastZ);
+    sl.lastX = x; sl.lastZ = z;
+    if (sl.travelled > 0.14) { sl.travelled = 0; fx.dust(x - D.x * 0.2, groundY, z - D.z * 0.2, { n: 3, size: 0.4, up: 0.8 }); }
+  }
+  function endSlide(sl) {
+    scene.remove(sl.plume);
+    for (const c of sl.plume.children) { c.geometry.dispose(); c.material.dispose(); }
+  }
+
   const cues = {
     /** A spell resolving at the caster. */
     cast(p, colour, { big = false } = {}) {
@@ -349,13 +415,16 @@ export function createArena(host, state, handlers = {}) {
       if (!rec) return;
       // The body reacts to WHAT hit it: a flinch, a flail of burning robes, a
       // stiff spasm, or being slammed flat.
-      const kind = cause === 'fire' ? 'fire' : cause === 'lightning' ? 'lightning' : cause === 'crush' || cause === 'rock' ? 'crush' : 'blow';
-      rec.actor.hit(kind);
+      const crushing = cause === 'crush' || cause === 'rock' || cause === 'impact' || cause === 'topple';
+      const kind = cause === 'fire' ? 'fire' : cause === 'lightning' ? 'lightning' : crushing ? 'crush' : 'blow';
+      // A slam's cue (impact, topple) has just thrown the body down; the
+      // damage note that follows it only adds the number, not a second fall.
+      if (performance.now() - rec.crushedAt > 1200) rec.actor.hit(kind);
       const p = rec.actor.root.position;
-      const col = cause === 'fire' ? 0xff7a20 : cause === 'lightning' ? 0xb8ecff : cause === 'poison' ? 0x7fe04a : cause === 'fall' || cause === 'crush' || cause === 'rock' ? 0xd9c9a8 : 0xff4040;
+      const col = cause === 'fire' ? 0xff7a20 : cause === 'lightning' ? 0xb8ecff : cause === 'poison' ? 0x7fe04a : cause === 'fall' || crushing ? 0xd9c9a8 : 0xff4040;
       fx.pools.sparks.emit({ x: p.x, y: p.y + rec.actor.height * 0.5, z: p.z, n: 14, spread: 0.2, vspread: 3, vy: 1.5, life: 0.5, size: 0.1, sizeEnd: 0.02, color: 0xffffff, colorEnd: col, gravity: -8 });
       floatAtUnit(id, `−${amount}`, cause === 'fire' ? 'dmg fire' : 'dmg');
-      if (cause === 'fall' || cause === 'crush' || cause === 'rock') fx.shake(0.05, 0.3);
+      if (cause === 'fall' || crushing) fx.shake(0.05, 0.3);
     },
     heal(id, amount) { const p = unitPos(id); if (p) fx.motes(p.x, p.y, p.z, 0x6cf09a, { n: 28 }); floatAtUnit(id, `+${amount}`, 'heal'); },
     poison(id) { const p = unitPos(id); if (p) fx.motes(p.x, p.y + 1.2, p.z, 0x86e03a, { n: 18, up: 0.6, size: 0.18, drip: true }); },
@@ -368,10 +437,139 @@ export function createArena(host, state, handlers = {}) {
       const f = actors.get(fromId), t = unitPos(toId);
       if (f && t) { f.actor.lookAt(t.x, t.z); f.actor.strike(); }
     },
-    push(id, body, mm, from) {
-      if (body === 'unit') { const rec = actors.get(id); if (rec) { if (rec.actor.shove) rec.actor.shove(); else rec.actor.hit(); rec.pushed = true; } }
-      const p = body === 'unit' ? unitPos(id) : propMeshes.get(id)?.position.clone();
-      if (p) fx.dust(p.x, p.y, p.z, { n: 14, size: 0.45 });
+    /**
+     * A push: the body is thrown from `from` to `to` along DIR64 `dir` with
+     * a propulsion streaming out behind it. `force` (1-8) sizes the plume,
+     * `speed` (0-100) the launch; both are the engine's numbers. The sync has
+     * already moved the engine's target, so the body is set back to `from`
+     * and slid from there -- the slide is the cue, not the walk.
+     */
+    push(id, body, mm, from, dir = 0, force = 1, speed = 50, to = null) {
+      const D = dirVec(dir);
+      const dur = pushSlideMs(mm, speed) / 1000;
+      if (body === 'unit') {
+        const rec = actors.get(id);
+        if (!rec) return;
+        const pos = rec.actor.root.position;
+        const A = new THREE.Vector3(from ? from.x * MM : pos.x, pos.y, from ? from.y * MM : pos.z);
+        const B = to ? new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM) : rec.target.clone();
+        pos.x = A.x; pos.z = A.z;
+        if (rec.actor.shove) rec.actor.shove(); else rec.actor.hit();
+        rec.pushed = true;
+        // Face the pusher and stumble backwards, the top of the body leaning
+        // into the slide (the feet are dragged, the shoulders lead).
+        rec.slide = startSlide(A, B, D, dur, force, { facing: Math.atan2(-D.x, -D.z), lean: 0.1 + 0.03 * force });
+      } else {
+        const m = propMeshes.get(id);
+        if (!m) return;
+        const A = new THREE.Vector3(from ? from.x * MM : m.position.x, m.position.y, from ? from.y * MM : m.position.z);
+        const B = to ? new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM) : m.userData.target.clone();
+        m.position.x = A.x; m.position.z = A.z;
+        m.userData.slide = startSlide(A, B, D, dur, force, { axis: perpAxis(dir), tilt: 0.06 + 0.02 * force });
+      }
+    },
+    /**
+     * The moving body hit something: `into` is what, `at` where (engine mm),
+     * `dmg` what both sides take. Numbers come from the damage notes after
+     * this; here is the slam itself.
+     */
+    impact(note) {
+      const { id, body, into, dmg = 0, at, dir = 0 } = note;
+      const D = dirVec(dir);
+      const p = at ? new THREE.Vector3(at.x * MM, at.z * MM, at.y * MM)
+        : (body === 'unit' ? unitPos(id) : propMeshes.get(id)?.position.clone());
+      if (!p) return;
+      const r = body === 'unit' ? 0.3 : (propMeshes.get(id)?.userData.r || 0.4);
+      // The point of contact: the leading edge of the mover.
+      const c = p.clone().addScaledVector(D, r);
+      const hard = Math.min(1, 0.35 + dmg * 0.25);
+      fx.flash(c.x, c.y + 0.8, c.z, 0xe6fbff, 8 + dmg * 5, 0.22, 4 + dmg);
+      fx.pools.sparks.emit({ x: c.x, y: c.y + 0.7, z: c.z, n: 18 + dmg * 10, spread: 0.15, radial: 3 + dmg, radialSpread: 1.5, vx: -D.x * 2, vz: -D.z * 2, vy: 2, life: 0.55, lifeSpread: 0.2, size: 0.09, sizeEnd: 0.02, color: 0xffffff, colorEnd: PUSH_HEX, gravity: -9, drag: 0.6 });
+      fx.pools.soft.emit({ x: c.x, y: c.y + 0.7, z: c.z, n: 1, life: 0.18, size: 0.9 + dmg * 0.4, sizeEnd: 0.2, color: 0xffffff, alpha: 0.9 * hard, fade: 0 });
+      fx.ring(c.x, c.y, c.z, 0.9 + dmg * 0.35, 0xdff6ff, { dur: 0.4, width: 0.12 });
+      fx.dust(c.x, c.y, c.z, { n: 12 + dmg * 6, size: 0.5, spread: 0.4, up: 1 + dmg * 0.3 });
+      fx.shake(Math.min(0.2, 0.04 + 0.03 * dmg), 0.35);
+      const jolt = (kind, bid, away) => {
+        if (kind === 'unit') {
+          const rec = actors.get(bid);
+          if (!rec) return;
+          if (dmg >= 2) { rec.actor.hit('crush'); rec.crushedAt = performance.now(); } else rec.actor.hit();
+          if (away) rec.actor.lookAt(c.x - D.x * 2, c.z - D.z * 2);
+        } else if (kind === 'prop') {
+          const m = propMeshes.get(bid);
+          if (!m) return;
+          const inner = m.userData.inner;
+          fx.tween(0.4, (t) => { const k = Math.sin(t * Math.PI) * (1 - t) * (0.06 + dmg * 0.03); inner.scale.set(1 + k, 1 - k * 1.4, 1 + k); }, () => inner.scale.setScalar(1));
+          fx.debris(m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, { n: 2 + dmg, colour: m.userData.kind === 'shard' ? 0x7fdcff : m.userData.kind === 'tree' ? 0x2a1d12 : 0x6b6358, size: 0.09, spread: m.userData.r, up: 2 + dmg });
+        }
+      };
+      jolt(body, id, false);
+      if (into) {
+        if (into.kind === 'unit' || into.kind === 'prop') jolt(into.kind, into.id, true);
+        else fx.debris(c.x, c.y, c.z, { n: 3 + dmg, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });   // the ward, a wall, a rise: the ground gives a little
+      }
+    },
+    /** A topple is coming for this prop: keep it standing until the cue plays. */
+    toppling(propId) { topplePending.add(propId); },
+    /**
+     * A tall piece falls over along `dir`, pivoting on the edge of its base,
+     * lands with a thud on everything in `hits`, and is gone. The engine's
+     * shatter for it is swallowed (`topplePending`) so it does not burst twice.
+     */
+    topple(propId, dir = 0, hits = []) {
+      const m = propMeshes.get(propId);
+      if (!m) { topplePending.delete(propId); return; }
+      const D = dirVec(dir), axis = perpAxis(dir);
+      const { r, h, inner } = m.userData;
+      const base = m.position.clone();
+      m.visible = true;
+      // Rotating about the base's far edge, not its centre: the pivot point
+      // stays put, so the piece is translated by what the rotation did to it.
+      const pivot = D.clone().multiplyScalar(r);
+      const q = new THREE.Quaternion();
+      const swung = new THREE.Vector3();
+      let creak = 0;
+      fx.dust(base.x, base.y, base.z, { n: 8, size: 0.4, spread: r });
+      fx.tween(0.72, (t) => {
+        const ang = -Math.PI / 2 * t;
+        q.setFromAxisAngle(axis, ang);
+        inner.quaternion.copy(q);
+        inner.position.copy(pivot).sub(swung.copy(pivot).applyQuaternion(q));
+        // Grit from the footing as it tears loose.
+        creak += t;
+        if (creak > 0.6) { creak = 0; fx.pools.dust.emit({ x: base.x - D.x * r * 0.5, y: base.y + 0.1, z: base.z - D.z * r * 0.5, n: 1, spread: r * 0.5, vy: 0.6, life: 0.8, size: 0.25, sizeEnd: 0.7, color: 0x8a7b62, alpha: 0.35, drag: 2, fade: 1, rotJitter: 3.14 }); }
+      }, () => {
+        // The thud: dust the whole length of the fallen piece, a ring where
+        // its middle landed, and the ground jumps.
+        for (let i = 1; i <= 4; i++) { const s = (h * i) / 4; fx.dust(base.x + D.x * s, base.y, base.z + D.z * s, { n: 14, size: 0.6 + r, spread: r, up: 1.2 }); }
+        const mid = base.clone().addScaledVector(D, h * 0.5);
+        fx.ring(mid.x, base.y, mid.z, h * 0.55, 0xd9c9a8, { dur: 0.55, width: 0.15 });
+        fx.debris(base.x + D.x * h, base.y, base.z + D.z * h, { n: 5, colour: m.userData.kind === 'tree' ? 0x2a1d12 : 0x6b6358, size: r * 0.3, spread: r, up: 2.5 });
+        fx.shake(Math.min(0.2, 0.08 + h * 0.03), 0.45);
+        for (const uid of hits) { const rec = actors.get(uid); if (rec) { rec.actor.hit('crush'); rec.crushedAt = performance.now(); } }
+        if (m.userData.burning) { m.userData.burning = false; fx.unburn(propId); m.userData.setBurning?.(false); }
+        // Lie there a moment, then fade: what remains is the engine's rubble.
+        const mats = [];
+        m.traverse((o) => { if (o.material && !o.userData.pick) { o.material = o.material.clone?.() || o.material; o.material.transparent = true; mats.push(o.material); } });
+        fx.tween(1.1, (t) => { const k = Math.max(0, 1 - Math.max(0, t - 0.45) / 0.55); for (const mt of mats) mt.opacity = k; }, () => {
+          m.visible = false;
+          m.userData.shattered = true;
+          topplePending.delete(propId);
+          inner.quaternion.identity(); inner.position.set(0, 0, 0);
+        });
+      }, (t) => t * t);
+    },
+    /** Slammed hard enough to lose its action: the unit goes down and gets up. */
+    knockdown(id, dir = 0) {
+      const rec = actors.get(id);
+      if (!rec) return;
+      const p = rec.actor.root.position;
+      if (rec.actor.tumble) rec.actor.tumble(0.6); else rec.actor.hit('crush');
+      rec.crushedAt = performance.now();
+      const D = dirVec(dir);
+      fx.dust(p.x + D.x * 0.4, p.y, p.z + D.z * 0.4, { n: 16, size: 0.5, spread: 0.4 });
+      fx.pools.stars.emit({ x: p.x, y: p.y + rec.actor.height * 0.9, z: p.z, n: 5, spread: 0.3, vy: 0.5, vspread: 0.3, life: 1.1, size: 0.2, sizeEnd: 0.05, color: 0xfff1a0, alpha: 1, fade: 2, spinJitter: 2 });
+      fx.shake(0.05, 0.3);
     },
     fall(id, drop) {
       const rec = actors.get(id);
@@ -469,8 +667,21 @@ export function createArena(host, state, handlers = {}) {
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   let down = null;
-  renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener('pointerdown', (e) => {
+    if (drag) {
+      // A direction is being asked: any press on the canvas starts the stroke.
+      if (e.button !== 0) return;
+      down = null;
+      drag.stroke = { id: e.pointerId };
+      try { renderer.domElement.setPointerCapture(e.pointerId); } catch { /* a synthetic pointer cannot be captured */ }
+      strokeMove(e.clientX, e.clientY);
+      e.preventDefault();
+      return;
+    }
+    down = [e.clientX, e.clientY];
+  });
   renderer.domElement.addEventListener('pointerup', (e) => {
+    if (drag) { if (drag.stroke) strokeEnd(e.clientX, e.clientY); return; }
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) return;
     const hit = pickAt(e.clientX, e.clientY);
     if (!hit) { handlers.onPickNothing?.(); return; }
@@ -480,6 +691,7 @@ export function createArena(host, state, handlers = {}) {
     else if (hit.kind === 'ground') handlers.onPickGround?.(hit.x, hit.y);
   });
   renderer.domElement.addEventListener('pointermove', (e) => {
+    if (drag) { if (drag.stroke) strokeMove(e.clientX, e.clientY); return; }
     const hit = pickAt(e.clientX, e.clientY);
     renderer.domElement.style.cursor = hit && (hit.kind === 'marker' || (hit.kind === 'unit' && handlers.isPickable?.(hit))
       || (hit.kind === 'ground' && moveCircle && insideMove(hit.x, hit.y))) ? 'pointer' : '';
@@ -504,6 +716,111 @@ export function createArena(host, state, handlers = {}) {
       return { kind: 'ground', x: Math.round(h.point.x / MM), y: Math.round(h.point.z / MM) };
     }
     return h.object.userData.pick;
+  }
+
+  /* ---------------------------------------------------------- the drag */
+  // The direction prompt. While a request is parked here the canvas belongs
+  // to it: the camera stops orbiting, a press anywhere starts a stroke, an
+  // arrow grows from the target to the pointer's ground point, and the
+  // release hands back the engine's DIR64 bearing of that arrow. Clicks on
+  // units and markers never reach their handlers in the meantime.
+  let drag = null;
+  const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  function targetPos() {
+    if (!drag) return null;
+    return drag.body === 'unit' ? unitPos(drag.id) : propMeshes.get(drag.id)?.position.clone() || null;
+  }
+  /** Where the pointer touches the ground, falling back to the target's level off the terrain. */
+  function groundPointAt(cx, cy) {
+    const r = renderer.domElement.getBoundingClientRect();
+    ndc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hit = world ? ray.intersectObject(world.terrain, false)[0] : null;
+    if (hit) return hit.point.clone();
+    const T = targetPos();
+    dragPlane.constant = -(T ? T.y : 0);
+    const out = new THREE.Vector3();
+    return ray.ray.intersectPlane(dragPlane, out) ? out : null;
+  }
+  function beginDrag(target, cb) {
+    const key = `${target.body}:${target.id}:${target.force}`;
+    if (drag && drag.key === key) { drag.cb = cb; return; }
+    endDrag();
+    drag = { ...target, cb, key, stroke: null, arrow: makeArrow(), ring: null, label: null, tip: new THREE.Vector3(), len: 0 };
+    drag.arrow.visible = false;
+    scene.add(drag.arrow);
+    // The thing that will be pushed wears a pulsing ring.
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.6, 48),
+      new THREE.MeshBasicMaterial({ color: PUSH_HEX, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending }));
+    ring.rotation.x = -Math.PI / 2;
+    ring.renderOrder = 20;
+    scene.add(ring);
+    drag.ring = ring;
+    const label = document.createElement('div');
+    label.className = 'dlabel';
+    label.style.display = 'none';
+    labels.appendChild(label);
+    drag.label = label;
+    controls.enableRotate = false; controls.enablePan = false;
+    renderer.domElement.style.cursor = 'crosshair';
+    showGhost(null);
+  }
+  function endDrag() {
+    if (!drag) return;
+    scene.remove(drag.arrow); scene.remove(drag.ring);
+    drag.arrow.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+    drag.ring.geometry.dispose(); drag.ring.material.dispose();
+    drag.label.remove();
+    drag = null;
+    controls.enableRotate = true; controls.enablePan = true;
+    renderer.domElement.style.cursor = '';
+  }
+  function strokeMove(cx, cy) {
+    const T = targetPos(), G = groundPointAt(cx, cy);
+    if (!T || !G) return;
+    const dx = G.x - T.x, dz = G.z - T.z;
+    const len = Math.hypot(dx, dz);
+    drag.len = len;
+    const a = drag.arrow;
+    a.visible = len > 0.08;
+    a.position.set(T.x, T.y + 0.1, T.z);
+    // Local +X is the arrow's length; a yaw of atan2(-dz, dx) lays it on (dx, dz).
+    a.rotation.y = Math.atan2(-dz, dx);
+    const HEAD = 0.55;
+    a.children[0].scale.x = Math.max(0.01, len - HEAD * 0.8);
+    a.children[1].position.x = Math.max(0, len - HEAD);
+    // Too short a stroke means nothing: the arrow says so by staying dim.
+    const live = len > 0.3;
+    a.children[0].material.opacity = live ? 0.75 : 0.3;
+    a.children[1].material.opacity = live ? 0.9 : 0.35;
+    drag.tip.set(G.x, T.y + 0.1, G.z);
+    drag.label.style.display = live ? '' : 'none';
+    drag.label.textContent = `force ${drag.force} →  ≈ ${(drag.force * 0.75).toFixed(1)} m for a mage`;
+  }
+  function strokeEnd(cx, cy) {
+    const T = targetPos(), G = groundPointAt(cx, cy);
+    const cb = drag.cb;
+    drag.stroke = null;
+    drag.arrow.visible = false;
+    drag.label.style.display = 'none';
+    if (!T || !G) return;
+    if (Math.hypot(G.x - T.x, G.z - T.z) <= 0.3) return;
+    // Engine millimetres: x is x, y is our z.
+    cb(bearing(Math.round(T.x / MM), Math.round(T.z / MM), Math.round(G.x / MM), Math.round(G.z / MM)));
+  }
+  function cancelStroke() {
+    if (!drag?.stroke) return;
+    drag.stroke = null;
+    drag.arrow.visible = false;
+    drag.label.style.display = 'none';
+  }
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancelStroke(); });
+  /** Where DIR64 `d` points on the player's screen, in radians: 0 is right, pi/2 is up. */
+  function screenAngle(d) {
+    const D = dirVec(d);
+    const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
+    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+    return Math.atan2(D.dot(fwd), D.dot(right));
   }
 
   /* ---------------------------------------------------------- rings */
@@ -645,13 +962,26 @@ export function createArena(host, state, handlers = {}) {
       const dx = tgt.x - pos.x, dz = tgt.z - pos.z;
       const dist = Math.hypot(dx, dz);
       const speed = rec.pushed ? 7 : actor.speed;
-      if (dist > 0.02) {
+      if (rec.slide) {
+        // Thrown: the slide owns the ground position, the facing and the lean.
+        const sl = rec.slide;
+        sl.t += dt;
+        const k = fx.ease.out(Math.min(1, sl.t / sl.dur));
+        pos.x = sl.from.x + (sl.to.x - sl.from.x) * k; pos.z = sl.from.z + (sl.to.z - sl.from.z) * k;
+        actor.facingTarget = sl.facing;
+        actor.moving = false;
+        const thrust = (1 - k) * Math.min(1, sl.t / 0.08);
+        actor.root.rotation.x = -sl.lean * thrust;
+        plumeStep(sl, pos.x, pos.y + actor.height * 0.45, pos.z, pos.y, thrust, dt);
+        if (sl.t >= sl.dur) { endSlide(sl); rec.slide = null; }
+      } else if (dist > 0.02) {
         const step = Math.min(dist, speed * dt);
         pos.x += dx / dist * step; pos.z += dz / dist * step;
         actor.facingTarget = Math.atan2(dx, dz);
         actor.moving = !rec.pushed;
         if (rec.pushed && Math.random() < 0.5) fx.dust(pos.x, pos.y, pos.z, { n: 2, size: 0.35 });
       } else { actor.moving = false; rec.pushed = false; }
+      if (!rec.slide && actor.root.rotation.x !== 0) actor.root.rotation.x = Math.abs(actor.root.rotation.x) < 1e-3 ? 0 : actor.root.rotation.x * (1 - Math.min(1, dt * 8));
       const dy = tgt.y - pos.y;
       if (dy < -0.35 && !rec.airborne) {
         // A drop: gravity, then a thump. A body going over a real edge
@@ -693,7 +1023,17 @@ export function createArena(host, state, handlers = {}) {
       if (d.t > 3.5) { scene.remove(d.rec.actor.root); d.rec.label.remove(); d.rec.actor.dispose(); dying.splice(i, 1); }
     }
     for (const [pid, m] of propMeshes) {
-      if (m.userData.target && !m.userData.flying) {
+      const sl = m.userData.slide;
+      if (sl) {
+        sl.t += dt;
+        const k = fx.ease.out(Math.min(1, sl.t / sl.dur));
+        m.position.lerpVectors(sl.from, sl.to, k);
+        const thrust = (1 - k) * Math.min(1, sl.t / 0.08);
+        // Tipped back against the motion while the thrust is on it.
+        m.userData.inner.quaternion.setFromAxisAngle(sl.axis, sl.tilt * thrust);
+        plumeStep(sl, m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, m.position.y, thrust, dt);
+        if (sl.t >= sl.dur) { endSlide(sl); m.userData.slide = null; m.userData.inner.quaternion.identity(); }
+      } else if (m.userData.target && !m.userData.flying) {
         const d = m.position.distanceTo(m.userData.target);
         if (d > 0.01) { m.position.lerp(m.userData.target, 1 - Math.pow(0.0005, dt)); if (d > 0.3 && Math.random() < 0.4) fx.dust(m.position.x, m.position.y, m.position.z, { n: 2, size: 0.4 }); }
       }
@@ -708,6 +1048,20 @@ export function createArena(host, state, handlers = {}) {
     }
     for (const l of rangeLabels) place(l.el, l.p, 0.2);
     if (ghost.visible) ghost.children[0].scale.setScalar(1 + Math.sin(now / 200) * 0.1);
+    if (drag) {
+      const T = targetPos();
+      if (T) {
+        drag.ring.position.set(T.x, T.y + 0.06, T.z);
+        drag.ring.scale.setScalar(1 + Math.sin(now / 180) * 0.12);
+        drag.ring.material.opacity = 0.7 + Math.sin(now / 180) * 0.25;
+      }
+      if (drag.arrow.visible) {
+        // Light runs down the shaft toward the head: the arrow has a direction even when it stands still.
+        drag.arrow.children[2].position.x = (now / 600) % 1 * Math.max(0.1, drag.len - 0.4);
+        drag.arrow.children[2].visible = drag.len > 0.3;
+      }
+      if (drag.label.style.display !== 'none') place(drag.label, drag.tip, 0.5);
+    }
     for (let i = floaters.length - 1; i >= 0; i--) {
       const f = floaters[i];
       const t = (now - f.t0) / 1500;
@@ -729,6 +1083,7 @@ export function createArena(host, state, handlers = {}) {
   return {
     sync, setMarkers, clearMarkers, highlightUnits, floatText, floatAtUnit, pulse, pulseUnit,
     setRanges, setMoveCircle, showGhost, insideMove: (x, y) => insideMove(x, y), setViewport,
+    beginDrag, endDrag, screenAngle,
     camera, controls, renderer, scene, fx, cues,
     get ready() { return ready; }, whenReady: readyPromise,
     project(x, y, z) {
@@ -749,5 +1104,63 @@ export function createArena(host, state, handlers = {}) {
 /* ------------------------------------------------------------ helpers */
 
 function hashStr(s) { let h = 7; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) | 0; return Math.abs(h); }
+
+/** DIR64 index -> unit vector in scene space (engine x -> x, engine y -> z). */
+function dirVec(d) { const [ux, uy] = DIR64[d & 63]; return new THREE.Vector3(ux / DIR_SCALE, 0, uy / DIR_SCALE); }
+/**
+ * The horizontal axis perpendicular to `d`, signed so that a POSITIVE
+ * rotation about it tips the top of a body AGAINST the direction (and a
+ * negative one lays it down along it): for east, +Z, about which +Y swings
+ * to -X.
+ */
+function perpAxis(d) { const [ux, uy] = DIR64[d & 63]; return new THREE.Vector3(-uy / DIR_SCALE, 0, ux / DIR_SCALE); }
+
+/**
+ * The propulsion behind a pushed body: an outer cone of the push's blue and
+ * a hot white core, additive, nozzle at the group's origin and the tail
+ * along local +X. Scaled per frame by the thrust left in the slide.
+ */
+function makePlume(force) {
+  const g = new THREE.Group();
+  const len = 0.7 + force * 0.22, rad = 0.18 + force * 0.025;
+  const mk = (r, l, colour, opacity) => {
+    const geo = new THREE.ConeGeometry(r, l, 14, 1, true);
+    // Additive black is nothing: painting the vertices from the colour at
+    // the nozzle to black at the tail makes the cone a streak that dies out
+    // instead of a hard-edged paper dart.
+    const c = new THREE.Color(colour);
+    const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) { const k = (l / 2 - pos.getY(i)) / l; const k2 = k * k; col[i * 3] = c.r * k2; col[i * 3 + 1] = c.g * k2; col[i * 3 + 2] = c.b * k2; }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const m = new THREE.Mesh(geo,
+      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+    // A cone's apex is +Y: turned so the apex (the tail) points down +X, base at the nozzle.
+    m.rotation.z = -Math.PI / 2;
+    m.position.x = l / 2;
+    m.renderOrder = 8;
+    return m;
+  };
+  g.add(mk(rad, len, PUSH_HEX, 0.32), mk(rad * 0.5, len * 0.7, 0xeafdff, 0.55));
+  return g;
+}
+
+/**
+ * The drag arrow, flat on the ground: a shaft that widens from its tail to
+ * the neck (child 0, scaled in x to the length), a head (child 1, moved to
+ * the end) and a running spark (child 2). Local +X is its direction.
+ */
+function makeArrow() {
+  const g = new THREE.Group();
+  const mat = (opacity) => new THREE.MeshBasicMaterial({ color: PUSH_HEX, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending });
+  const quad = (pts) => { const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); return geo; };
+  const shaft = new THREE.Mesh(quad([0, 0, -0.05, 1, 0, -0.17, 1, 0, 0.17, 0, 0, -0.05, 1, 0, 0.17, 0, 0, 0.05]), mat(0.75));
+  const head = new THREE.Mesh(quad([0, 0, -0.42, 0.55, 0, 0, 0, 0, 0.42]), mat(0.9));
+  const spark = new THREE.Mesh(new THREE.CircleGeometry(0.16, 16), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending }));
+  spark.rotation.x = -Math.PI / 2;
+  spark.position.y = 0.01;
+  for (const m of [shaft, head, spark]) m.renderOrder = 21;
+  g.add(shaft, head, spark);
+  return g;
+}
 
 export { TEAM_CSS };

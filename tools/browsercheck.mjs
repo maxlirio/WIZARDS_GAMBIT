@@ -91,19 +91,8 @@ try {
   const tb = await ev(`(()=>{const b=document.querySelector('#mine').getBoundingClientRect(); return {x:b.x,y:b.y,width:b.width,height:b.height}})()`);
   await shot('table-closeup', tb);
 
-  // Hover a hand card, then play it by clicking: hand -> glowing cell.
-  const handN = await ev(`document.querySelectorAll('#hand .hcard.playable').length`);
-  check('hand shows playable cards', handN > 0, `${handN} playable`);
-  await clickSel('#hand .hcard.playable');
-  const targets = await ev(`document.querySelectorAll('.cell.target, .gslot.target').length`);
-  check('selecting a hand card lights its legal cells', targets > 0, `${targets} targets`);
-  await shot('card-selected');
-  await clickSel('.cell.target, .gslot.target');
-  await waitIdle();
-  const played = await ev(`WG.state.fx.some(f => f.kind === 'play' || f.kind === 'golemCard')`);
-  check('clicking a lit cell plays the card', played);
-
-  // Unit phase: markers should be on the field.
+  // The turn opens with the UNIT PHASE (units move before the spell action):
+  // markers should be on the field, the mage walks, then 'Done moving'.
   const phase = await ev('WG.state.phase');
   if (phase === 'unit' && !(await ev('!!WG.state.pending'))) {
     await sleep(600);
@@ -125,6 +114,19 @@ try {
     await clickSel('#tray button.end');
     await waitIdle();
   }
+  // Now the spell action. Hover a hand card, then play it by clicking: hand -> glowing cell.
+  const handN = await ev(`document.querySelectorAll('#hand .hcard.playable').length`);
+  check('hand shows playable cards', handN > 0, `${handN} playable`);
+  await clickSel('#hand .hcard.playable');
+  const targets = await ev(`document.querySelectorAll('.cell.target, .gslot.target').length`);
+  check('selecting a hand card lights its legal cells', targets > 0, `${targets} targets`);
+  await shot('card-selected');
+  await clickSel('.cell.target, .gslot.target');
+  await waitIdle();
+  const played = await ev(`WG.state.fx.some(f => f.kind === 'play' || f.kind === 'golemCard')`);
+  check('clicking a lit cell plays the card', played);
+
+  await sleep(300);
   await sleep(500);
   await shot('after-enemy-turn');
 

@@ -206,11 +206,14 @@ export const aboveMedian = (a, x, y) => heightAt(a, x, y) - a.median;
  */
 const PROP_KINDS = Object.freeze({
   boulder: { r: 450, h: 700, mass: 2, hp: 4, climbable: true, platform: true, pushable: true },
-  pillar:  { r: 350, h: 2200, mass: 4, hp: 5, climbable: true, platform: false, pushable: true },
+  // `tippable`: pushed with at least `tipForce`, or struck with at least
+  // `tipEnergy` (mass x remaining mm), it falls over along the push and deals
+  // `tipDmg` to everything under its length. See field/push.js::topple.
+  pillar:  { r: 350, h: 2200, mass: 4, hp: 5, climbable: true, platform: false, pushable: true, tippable: true, tipForce: 4, tipEnergy: 6000, tipDmg: 2 },
   shard:   { r: 250, h: 1400, mass: 1, hp: 2, climbable: false, platform: false, pushable: true },
   wall:    { r: 700, h: 1100, mass: 6, hp: 6, climbable: true, platform: true, pushable: true },
   floater: { r: 500, h: 400, mass: 1, hp: 3, climbable: false, platform: true, pushable: true, floating: true },
-  tree:    { r: 300, h: 3200, mass: 3, hp: 3, climbable: false, platform: false, pushable: true, burnable: true },
+  tree:    { r: 300, h: 3200, mass: 3, hp: 3, climbable: false, platform: false, pushable: true, burnable: true, tippable: true, tipForce: 3, tipEnergy: 4500, tipDmg: 2 },
 });
 
 export const propSpec = (kind) => PROP_KINDS[kind];
