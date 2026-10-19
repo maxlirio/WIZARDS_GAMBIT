@@ -337,15 +337,52 @@ const propName = (id) => { const pr = S.field.props.find((x) => x.id === id); re
  * each into a cue on a timeline. Returns the timeline's length in ms, so the
  * AI's pause can match it.
  */
+/**
+ * Lift every push note ahead of the impacts its walk produced. The engine
+ * logs [impact(A into B), <B's own notes>, push(B), push(A)]; the view wants
+ * [push(A), impact(A into B), push(B), ...], so each push is moved to just
+ * before the first impact of the same body that follows the previous push
+ * of that body. Nothing else moves.
+ */
+function pushOrdered(notes) {
+  const out = notes.slice();
+  for (let i = 0; i < out.length; i++) {
+    const n = out[i];
+    if (n.kind !== 'push') continue;
+    // The previous push of this body, if any, bounds the search.
+    let lo = 0;
+    for (let j = i - 1; j >= 0; j--) if (out[j].kind === 'push' && out[j].id === n.id && out[j].body === n.body) { lo = j + 1; break; }
+    let first = -1;
+    for (let j = lo; j < i; j++) if (out[j].kind === 'impact' && out[j].id === n.id && out[j].body === n.body) { first = j; break; }
+    if (first < 0) continue;
+    out.splice(i, 1);
+    out.splice(first, 0, n);
+  }
+  return out;
+}
+
 function flushFx() {
-  let t = 0, tPush = 0;
+  let t = 0;
   const flash = new Map();
   const later = (ms, fn) => { const my = gameId; timers.push(setTimeout(() => { if (my === gameId && arena) fn(); }, FAST ? 0 : ms)); };
   let castCtx = null;        // the face resolving right now: {p, element, big, face}
   let holdDamage = 0;        // ms to delay the next damage cue (a rock still falling)
   let tMeteor = 0;           // when the last meteor strikes, so its boulder appears then
   const cues = () => arena.cues;
-  for (const f of S.fx.slice(fxSeen)) {
+  // The push family keeps its own clock. The engine writes a push's notes
+  // inside out -- the impact, then the struck body's own push, then at last
+  // the pusher's push with its whole travel -- so played in order the slam
+  // flashed first, the struck body slid, and the pusher was then set back to
+  // its start and slid again (user: "keeps restarting and smashing into
+  // things"). Here each push note is lifted ahead of the impacts its walk
+  // caused, every slide gets a start time, an impact lands when its body
+  // reaches the point of contact, and whatever comes after the whole shove
+  // waits for the last slide to end.
+  const slideStart = new Map();   // `${body}:${id}` -> [startMs, fromX, fromY, mm, slideMs]
+  let tSlidesEnd = 0;             // when the last slide of the current shove ends
+  const PUSH_FAMILY = new Set(['push', 'impact', 'carry', 'pushResult', 'scraped']);
+  for (const f of pushOrdered(S.fx.slice(fxSeen))) {
+    if (!PUSH_FAMILY.has(f.kind) && tSlidesEnd > t) { t = tSlidesEnd; tSlidesEnd = 0; slideStart.clear(); }
     const line = narrate(f);
     if (line) logLine(line, f.kind);
     switch (f.kind) {
@@ -393,21 +430,34 @@ function flushFx() {
       case 'strike': { const { from, to } = f; later(t - 200, () => cues().strike(from ?? f.id, to)); t += 300; break; }
       case 'kill': { const id = f.id; later(t + 150, () => cues().kill(id)); t += 500; break; }
       case 'carry': {
-        // Fired after the prop's push note, so it rides the slide the prop is
-        // about to make: same start time as that slide, same duration.
-        const { id, mm, from, dir, speed, to } = f;
-        later(tPush, () => cues().carry(id, mm, from, dir ?? 0, speed ?? 50, to ?? null));
+        // Rides the slide of the prop it stands on: same start, same duration.
+        const { id, mm, from, dir, speed, to, on } = f;
+        const st = slideStart.get(`prop:${on}`);
+        later(st ? st[0] : t, () => cues().carry(id, mm, from, dir ?? 0, speed ?? 50, to ?? null));
         break;
       }
       case 'push': {
         const { id, body, mm, from, dir, force, speed, to } = f;
-        tPush = t;
+        const ms = pushSlideMs(mm, speed ?? 50);
+        slideStart.set(`${body}:${id}`, [t, from?.x ?? to?.x ?? 0, from?.y ?? to?.y ?? 0, mm, ms]);
+        tSlidesEnd = Math.max(tSlidesEnd, t + ms + 60);
         later(t, () => cues().push(id, body, mm, from, dir ?? 0, force ?? 1, speed ?? 50, to ?? null));
-        // The slam, the numbers and the fall all wait for the slide to end.
-        t += pushSlideMs(mm, speed ?? 50) + 60;
         break;
       }
-      case 'impact': { const note = f; later(t, () => cues().impact(note)); t += 260; break; }
+      case 'impact': {
+        const note = f;
+        // The slam lands when the mover reaches the point of contact: that
+        // far along its slide, on a cubic ease-out.
+        const st = slideStart.get(`${f.body}:${f.id}`);
+        if (st && f.at && st[3] > 0) {
+          const frac = Math.min(1, Math.hypot(f.at.x - st[1], f.at.y - st[2]) / st[3]);
+          const k = 1 - Math.cbrt(Math.max(0, 1 - frac));           // inverse of ease-out(1-(1-t)^3)
+          t = Math.max(t, st[0] + Math.round(k * st[4]));
+        }
+        later(t, () => cues().impact(note));
+        tSlidesEnd = Math.max(tSlidesEnd, t + 260);
+        break;
+      }
       case 'topple': {
         const { id, dir, hits } = f;
         // Marked NOW, before render() syncs the destroyed piece away, so it

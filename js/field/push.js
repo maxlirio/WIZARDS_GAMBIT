@@ -15,9 +15,11 @@
 //   IMPACTS. When the slide is stopped early, what is left of it is energy:
 //   mass x remaining travel. That energy becomes damage to BOTH the moving
 //   body and whatever stopped it -- heavier things hit harder, and things hit
-//   harder the earlier they are stopped (that is "faster"). Whatever was
-//   struck is shoved on with the leftover momentum, which is how a thrown
-//   mage knocks a golem into a pillar.
+//   harder the earlier they are stopped (that is "faster"). The collision is
+//   INELASTIC: the moving body stops where it hit, and whatever it struck is
+//   knocked on with HALF the leftover travel -- enough for a thrown mage to
+//   knock a golem into a pillar, not enough for a Newton's cradle (user: "no
+//   friction... looks really messy").
 //
 //   TOPPLING. A tall piece (pillar, tree) pushed hard enough falls over
 //   along the push, and anything under its length is crushed.
@@ -92,20 +94,18 @@ export function push(state, body, dir, force, {
   const x0 = body.x, y0 = body.y, z0 = body.z;
   let remaining = budget, total = 0, blockedBy = null;
 
-  // Bounded by PUSH_DEPTH + 1 segments: each segment either moves the body or
-  // clears exactly one obstacle out of the way, and clearing is what costs a
-  // segment. No `while`, so there is no arrangement of bodies that hangs here.
-  for (let seg = 0; seg <= PUSH_DEPTH && remaining >= STEP; seg++) {
+  // ONE slide, and the body stops where it is stopped. It used to follow
+  // whatever it had knocked loose, segment after segment, and a line of
+  // bodies clacked along like a Newton's cradle; now the impact is where the
+  // mover ends and only the struck thing moves on (nested through `impact`,
+  // bounded by PUSH_DEPTH).
+  {
     const r = walk(state, body, dir, remaining, { allowFall: true, climb: levitate, riders: riders.map((u) => u.id) });
     total += r.mm;
     remaining = r.shortfall;
     blockedBy = r.blockedBy;
-    if (!r.blockedBy || remaining < STEP) break;
     // THE IMPACT. What is left of the slide is energy, and energy hurts.
-    const hit = impact(state, body, mass, remaining, r.blockedBy, dir, v, { byP, crush, depth, chain: log });
-    if (body.dead || body.destroyed) break;
-    // If the thing in front could not be budged, the whole column is jammed.
-    if (!hit.moved) break;
+    if (r.blockedBy && remaining >= STEP) impact(state, body, mass, remaining, r.blockedBy, dir, v, { byP, crush, depth, chain: log });
   }
 
   if (total > 0) {
@@ -166,9 +166,9 @@ export function push(state, body, dir, force, {
  *
  * Energy = mass x remaining. Both bodies take `energy / IMPACT_K` damage
  * ([Crush] doubles it); a wall, a cliff or the edge of the ward hurts only the
- * body that hit it. Whatever was struck is then shoved on with the leftover
- * momentum, if it is something that can move at all -- a tall piece that
- * takes enough energy topples instead.
+ * body that hit it. Whatever was struck is then knocked on with HALF the
+ * leftover travel (scaled by its mass), if it is something that can move at
+ * all -- a tall piece that takes enough energy topples instead.
  */
 function impact(state, body, mass, remaining, blockedBy, dir, v, { byP, crush, depth, chain }) {
   const energy = mass * remaining;
@@ -199,7 +199,7 @@ function impact(state, body, mass, remaining, blockedBy, dir, v, { byP, crush, d
   const ospec = isUnitBody(other) ? null : propSpec(other.kind);
   if (ospec?.tippable && energy >= ospec.tipEnergy) { topple(state, other, dir, { byP }); return { moved: true }; }
   const om = bodyMass(state, other);
-  const sub = push(state, other, dir, 0, { depth: depth + 1, byP, crush, chain, mm: idiv(energy, om), speed: v });
+  const sub = push(state, other, dir, 0, { depth: depth + 1, byP, crush, chain, mm: idiv(energy, om * 2), speed: v });
   return { moved: sub.mm >= STEP };
 }
 

@@ -437,8 +437,10 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
 - **Impacts:** when a slide is stopped early, what is left of it is energy — mass ×
   remaining travel — and **both** the moving body and whatever stopped it take
   `energy / 1.5m` damage. Heavier things hit harder; things stopped sooner hit harder.
-  Whatever was struck is shoved on with the leftover momentum, so a thrown mage can
-  knock a golem into a pillar. A unit that takes 2+ from an impact is **knocked down**
+  The collision is inelastic: **the moving body stops where it hit**, and whatever it
+  struck is knocked on with **half** the leftover travel (scaled by its own mass), so
+  a thrown mage can knock a golem into a pillar but a line of bodies never clacks
+  along like a Newton's cradle. A unit that takes 2+ from an impact is **knocked down**
   and loses its action this turn. `[Crush]` doubles impact damage.
 - **Toppled:** a tall piece (standing stone, tree) pushed with enough force — or hit
   hard enough — **falls over along the push**, dealing 2 to every unit under its
