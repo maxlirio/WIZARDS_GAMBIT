@@ -101,7 +101,12 @@ try {
     const circ = await ev(`WG.arena.insideMove(${u0[0]} + 1000, ${u0[1]})`);
     check('unit phase shows the move circle', circ === true);
     // Click OPEN GROUND inside the circle, off to one side so the mage itself is not under the cursor.
-    const pos = await ev(`(()=>{const p=WG.arena.project(${u0[0]} + 900, ${u0[1]} - 1600, ${u0[2]}); const b=document.querySelector('#arena').getBoundingClientRect(); return [b.x+p[0], b.y+p[1]]})()`);
+    // The circle is a SHAPE now (what the walk can really reach), so the
+    // click goes two thirds of the way out along a spoke the shape vouches for.
+    const pos = await ev(`(()=>{const sh=WG.arena.moveShape(); const u=[${u0[0]},${u0[1]}];
+      let best=null; for (const p of sh) { const d=Math.hypot(p.x-u[0],p.y-u[1]); if (d>=1500 && (!best||d>best.d)) best={...p,d}; }
+      const t = best ? [u[0]+(best.x-u[0])*0.66, u[1]+(best.y-u[1])*0.66] : [u[0]+900, u[1]-1600];
+      const p=WG.arena.project(t[0], t[1], ${u0[2]}); const b=document.querySelector('#arena').getBoundingClientRect(); return [b.x+p[0], b.y+p[1]]})()`);
     if (pos) { await mouse('mouseMoved', pos[0], pos[1], { buttons: 0 }); await sleep(250); await shot('move-preview'); }
     if (pos) {
       const before = await ev(`JSON.stringify(WG.state.field.units.filter(u=>u.owner===0).map(u=>[u.x,u.y]))`);

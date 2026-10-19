@@ -49,11 +49,53 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
   const bounds = {};
 
   /** One LOD0 copy of a HIGHGROUND bake, with its footprint measured once. */
-  function rockModel(which) {
+  function rockModel(which, { solo = false } = {}) {
     // LOD0 only on high: LOD1 keeps the silhouette at a third of the triangles.
     const g = pickLod(gltfs[which], high ? 0 : 1);
+    if (solo) {
+      // The bare rock: the bake's grass tufts and companion pebble are
+      // separate islands of triangles, and a rock that FLOATS cannot carry
+      // grass in the air under it. Keep the largest island only.
+      g.traverse((o) => { if (o.isMesh) o.geometry = soloIsland(o.geometry); });
+      const key = `${which}:solo`;
+      if (!bounds[key]) bounds[key] = new THREE.Box3().setFromObject(g);
+      return { g, box: bounds[key] };
+    }
     if (!bounds[which]) bounds[which] = new THREE.Box3().setFromObject(g);
     return { g, box: bounds[which] };
+  }
+
+  /**
+   * The largest connected island of an indexed geometry, with vertices welded
+   * by position so split normals and seams do not split the rock. Cached per
+   * source geometry.
+   */
+  const soloCache = new WeakMap();
+  function soloIsland(geo) {
+    if (soloCache.has(geo)) return soloCache.get(geo);
+    const idx = geo.index ? geo.index.array : null;
+    const pos = geo.attributes.position.array;
+    const nv = pos.length / 3;
+    if (!idx) { soloCache.set(geo, geo); return geo; }
+    const key = new Map(); const rep = new Int32Array(nv);
+    for (let v = 0; v < nv; v++) {
+      const k = `${pos[3 * v].toFixed(4)},${pos[3 * v + 1].toFixed(4)},${pos[3 * v + 2].toFixed(4)}`;
+      if (!key.has(k)) key.set(k, v);
+      rep[v] = key.get(k);
+    }
+    const par = new Int32Array(nv); for (let i = 0; i < nv; i++) par[i] = i;
+    const find = (x) => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+    const uni = (a, b) => { a = find(a); b = find(b); if (a !== b) par[a] = b; };
+    for (let t = 0; t < idx.length; t += 3) { uni(rep[idx[t]], rep[idx[t + 1]]); uni(rep[idx[t + 1]], rep[idx[t + 2]]); }
+    const size = new Map(); let best = -1, bestN = 0;
+    for (let t = 0; t < idx.length; t += 3) { const r = find(rep[idx[t]]); const n = (size.get(r) || 0) + 1; size.set(r, n); if (n > bestN) { bestN = n; best = r; } }
+    const keep = [];
+    for (let t = 0; t < idx.length; t += 3) if (find(rep[idx[t]]) === best) keep.push(idx[t], idx[t + 1], idx[t + 2]);
+    const out = geo.clone();
+    out.setIndex(keep);
+    out.computeBoundingBox(); out.computeBoundingSphere();
+    soloCache.set(geo, out);
+    return out;
   }
 
   /**
@@ -63,8 +105,8 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
    * still looks like the rock. Centred on its footprint, base at y = 0. Its
    * materials are cloned so the tint and the char are this piece's own.
    */
-  function fittedRock(which, r, h, { wide = 1.25, tall = 1.05, tint = 0xffffff } = {}) {
-    const { g, box } = rockModel(which);
+  function fittedRock(which, r, h, { wide = 1.25, tall = 1.05, tint = 0xffffff, solo = false } = {}) {
+    const { g, box } = rockModel(which, { solo });
     const size = box.getSize(new THREE.Vector3());
     const sxz = (2 * r * wide) / Math.max(size.x, size.z);
     const sy = THREE.MathUtils.clamp((h * tall) / size.y, sxz * 0.8, sxz * 1.5);
@@ -364,31 +406,17 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
 
   /* ------------------------------------------------------------ floater */
 
-  /** A slab of rock with a torn underside. Sizes vary per piece (the engine's `scale`). */
+  /**
+   * A rock that floats. JUST a rock: no earthen underside, no roots (user:
+   * "the rock should just float, not have dirt under it"). Sizes vary per
+   * piece (the engine's `scale`).
+   */
   function floater(P) {
-    const { r, h, seed, rnd, body } = P;
+    const { r, h, seed, body } = P;
     const which = ['boulderB', 'boulderC', 'boulderA'][seed % 3];
-    const rock = fittedRock(which, r, h, { wide: 1.1, tall: 1.15, tint: 0xe8e4dc });
+    const rock = fittedRock(which, r, h, { wide: 1.1, tall: 1.15, tint: 0xe8e4dc, solo: true });
     rock.rotation.y = (seed % 5) * 1.1;
     body.add(rock);
-    // The torn underside: an inverted, jittered cone with a few roots of rock hanging from it.
-    // The underside and its roots are one mesh.
-    const under = new THREE.Mesh(new THREE.ConeGeometry(r * 0.85, h * 1.5, 12, 4));
-    jitter(under.geometry, 0.2, seed);
-    under.geometry.computeVertexNormals();
-    under.rotation.x = Math.PI; under.position.y = -h * 0.75 + 0.06;
-    under.updateMatrix();
-    const underGeos = [under.geometry.applyMatrix4(under.matrix)];
-    for (let i = 0; i < 4; i++) {
-      const a = rnd() * 6.28, d = r * (0.3 + rnd() * 0.4);
-      const root = new THREE.Mesh(new THREE.ConeGeometry(0.04 + rnd() * 0.04, 0.18 + rnd() * 0.22, 5));
-      root.rotation.x = Math.PI; root.position.set(Math.cos(a) * d, -h * (0.3 + rnd() * 0.5), Math.sin(a) * d);
-      root.updateMatrix();
-      underGeos.push(root.geometry.applyMatrix4(root.matrix));
-    }
-    const under2 = new THREE.Mesh(mergeGeometries(underGeos), mats.dark);
-    under2.userData.noShadow = true;        // the slab's shadow is the slab's
-    body.add(under2);
     // No sigil, no ring, no pool of light, no bobbing: a floating rock is
     // TERRAIN. It hangs there the way a cliff stands there. (A piece a spell
     // lifts gets its glow from arena3d's levitating fx, not from here.)

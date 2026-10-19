@@ -917,13 +917,65 @@ export function createArena(host, state, handlers = {}) {
     scene.add(ghost);
   }
   let ghostLine = null;
-  const insideMove = (x, y) => !!moveCircle && (x - moveCircle.x) ** 2 + (y - moveCircle.y) ** 2 <= moveCircle.r ** 2;
+  // Inside the move SHAPE: within the walk's reach along the nearest sampled
+  // heading, or within the plain circle when no shape was given.
+  function insideMove(x, y) {
+    if (!moveCircle) return false;
+    const dx = x - moveCircle.x, dy = y - moveCircle.y, d2 = dx * dx + dy * dy;
+    if (d2 > moveCircle.r ** 2) return false;
+    const sh = moveCircle.shape;
+    if (!sh || !sh.length) return true;
+    const i = Math.round((Math.atan2(dy, dx) / (Math.PI * 2)) * sh.length + sh.length) % sh.length;
+    const p = sh[i], px = p.x - moveCircle.x, py = p.y - moveCircle.y;
+    return d2 <= px * px + py * py + 50 * 50;
+  }
   function setMoveCircle(c) {
     moveGroup.clear();
     moveCircle = c;
     showGhost(null);
     if (!c) return;
-    moveGroup.add(terrainRing(c.x, c.y, c.r, 0x7fe0ff, { fill: 0.1 }));
+    if (c.shape && c.shape.length) moveGroup.add(terrainShape(c.x, c.y, c.shape, 0x7fe0ff, { fill: 0.1 }));
+    else moveGroup.add(terrainRing(c.x, c.y, c.r, 0x7fe0ff, { fill: 0.1 }));
+  }
+  const moveShape = () => (moveCircle?.shape || []).map((p) => ({ x: p.x, y: p.y, z: p.z }));
+
+  /**
+   * A draped region bounded by `shape`: one reach point per heading, in
+   * heading order around `cx,cy`. Outline plus a ringed fan fill, like
+   * terrainRing but with a different radius on every spoke, drawn through
+   * the terrain like the rings (depthTest off).
+   */
+  function terrainShape(cx, cy, shape, colour, { opacity = 0.95, fill = 0.10 } = {}) {
+    const g = new THREE.Group();
+    const n = shape.length;
+    const at = (i, f) => {
+      const p = shape[i % n];
+      const x = cx + (p.x - cx) * f, y = cy + (p.y - cy) * f;
+      return [x, y];
+    };
+    const pts = [];
+    for (let i = 0; i <= n; i++) { const [x, y] = at(i, 1); pts.push(new THREE.Vector3(x * MM, groundY(x, y) + 0.06, y * MM)); }
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity, depthTest: false, depthWrite: false }));
+    line.renderOrder = 50;
+    g.add(line);
+    if (fill > 0) {
+      const rings = 8, v = [], idx = [], row = n + 1;
+      for (let k = 0; k <= rings; k++) {
+        for (let i = 0; i <= n; i++) { const [x, y] = at(i, k / rings); v.push(x * MM, groundY(x, y) + 0.04, y * MM); }
+      }
+      for (let k = 0; k < rings; k++) for (let i = 0; i < n; i++) {
+        const a = k * row + i, b = a + 1, c = a + row, d = c + 1;
+        idx.push(a, c, d, a, d, b);
+      }
+      const dg = new THREE.BufferGeometry();
+      dg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+      dg.setIndex(idx);
+      const disc = new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: fill, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
+      disc.renderOrder = 49;
+      g.add(disc);
+    }
+    return g;
   }
   function showGhost(p, from) {
     if (ghostLine) { scene.remove(ghostLine); ghostLine = null; }
@@ -1112,7 +1164,7 @@ export function createArena(host, state, handlers = {}) {
 
   return {
     sync, setMarkers, clearMarkers, highlightUnits, floatText, floatAtUnit, pulse, pulseUnit,
-    setRanges, setMoveCircle, showGhost, insideMove: (x, y) => insideMove(x, y), setViewport,
+    setRanges, setMoveCircle, showGhost, insideMove: (x, y) => insideMove(x, y), moveShape, setViewport,
     beginDrag, endDrag, screenAngle,
     camera, controls, renderer, scene, fx, cues,
     get ready() { return ready; }, whenReady: readyPromise,

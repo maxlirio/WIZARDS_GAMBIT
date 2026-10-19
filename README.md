@@ -22,8 +22,9 @@ the enemy's top-right, your hand (big enough to read) along the bottom, and the
 spell action → end turn. Every control sits next to what it acts on: click one of
 your spells and a popover beside its cell offers rotate (with the face it would
 turn to, its reach, and how many enemies are in range), shift and destroy;
-click a unit and a popover over its head offers strike, summon and hold, while
-the blue circle on the ground shows where it may walk. When a card asks a
+click a unit and the tray offers strike, summon and hold, while the blue shape
+on the ground shows exactly where it can walk (what a wall or a cliff cuts off is
+not lit). When a card asks a
 question, the answers glow on the table or the field and are listed under the
 question. Hover anything to read it in the inspector. **Tab** hides the panels,
 **H** homes the camera, **Esc** cancels.

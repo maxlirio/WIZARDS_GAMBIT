@@ -61,7 +61,7 @@ export const fallDamageFor = (drop) => (drop <= FALL_SAFE ? 0 : 1 + idiv(drop - 
  * ledger wants the distance, and the view wants the path.
  */
 export function walk(state, body, dir, budget, {
-  allowFall = false, climb = true, ignoreUnits = false, probe = false, vec = null,
+  allowFall = false, climb = true, ignoreUnits = false, probe = false, vec = null, stopAfter = 0,
 } = {}) {
   // `vec` walks an exact heading (integer, scale DIR_SCALE) instead of one of
   // the 64 table directions: a unit told to walk to a POINT must head at that
@@ -69,7 +69,11 @@ export function walk(state, body, dir, budget, {
   const [ux, uy] = vec || DIR64[dir & 63];
   const x0 = body.x, y0 = body.y, z0 = body.z;
   const self = isUnitBody(body) ? null : body.id;
-  const maxSteps = imin(idiv(budget, STEP), MAX_STEPS);
+  // `stopAfter`: a walk TO A POINT stops once it has covered that distance,
+  // while still spending the whole budget on the way (climb steps cost more
+  // than they cover, so capping the budget at the distance stopped a 2.6 m
+  // walk up a plateau at 2.2 m -- short of the spot the player clicked).
+  const maxSteps = imin(imin(idiv(budget, STEP), MAX_STEPS), stopAfter > 0 ? idiv(stopAfter + STEP - 1, STEP) : MAX_STEPS);
   let taken = 0, cost = 0, climbed = 0;
   let blockedBy = null, fell = false, airborneFrom = -1;
 

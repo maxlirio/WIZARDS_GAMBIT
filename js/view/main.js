@@ -32,7 +32,7 @@ import { FINDS, FIND_IDS, spellbookPage } from '../rules/learn.js';
 import { seedRng, pick } from '../rules/rng.js';
 import * as profile from '../profile.js';
 import { makeCtx } from '../rules/resolve.js';
-import { moveBudget, canMoveTo } from '../rules/units.js';
+import { moveBudget, canMoveTo, moveReach } from '../rules/units.js';
 import { rangeOrigins } from '../field/query.js';
 import { cardSVG, centreSVG, faceListHTML, SCHOOL_INK, runeGlyphInline } from './cards.js';
 import { createArena, SCHOOL_HEX, pushSlideMs } from './arena3d.js';
@@ -744,7 +744,34 @@ function renderHand() {
 /* ================================================================ inspector */
 
 let hideTimer = 0;
-function showInspector() { clearTimeout(hideTimer); $('#inspector').classList.add('show'); }
+/**
+ * The inspector shares the right column with the enemy table above it and
+ * the tray and log below it. It is FITTED between them from measured
+ * geometry, never from CSS guesses: on a short window the CSS top ran it
+ * straight over the tray's buttons and the log (user: "a bunch of the text
+ * boxes cover each other"). When the gap is too small to be useful it docks
+ * beside the column instead, over the battlefield.
+ */
+function fitInspector() {
+  const el = $('#inspector');
+  const theirs = $('#theirs')?.getBoundingClientRect();
+  const tray = $('#tray')?.getBoundingClientRect();
+  const log = $('#logwrap')?.getBoundingClientRect();
+  const hand = $('#hand')?.getBoundingClientRect();
+  if (!theirs) return;
+  const floorY = Math.min(tray && tray.height ? tray.top : Infinity, log && log.height ? log.top : Infinity,
+    hand && hand.height ? hand.top : window.innerHeight) - 10;
+  const top = theirs.bottom + 10;
+  const room = floorY - top;
+  if (room >= 240) {
+    el.style.top = `${top}px`; el.style.right = ''; el.style.maxHeight = `${room}px`;
+  } else {
+    const side = Math.min(hand && hand.height ? hand.top : window.innerHeight, tray && tray.height && tray.left < theirs.left ? tray.top : Infinity) - 10;
+    el.style.top = `${theirs.top}px`; el.style.right = `${window.innerWidth - theirs.left + 12}px`;
+    el.style.maxHeight = `${Math.max(160, side - theirs.top)}px`;
+  }
+}
+function showInspector() { clearTimeout(hideTimer); fitInspector(); $('#inspector').classList.add('show'); }
 function hideInspector() { clearTimeout(hideTimer); hideTimer = setTimeout(() => $('#inspector').classList.remove('show'), 180); }
 
 function inspectSpell(sp) {
@@ -1026,6 +1053,7 @@ function matchSentence(m) {
     return `${cardName(theirs.uid)} (its ${CORNER_NAME[theirs.pos]} corner against this card's ${CORNER_NAME[mine.pos]}, ${rune === 'WILD' ? 'wild' : RUNE_NAME[rune]})`;
   }).filter(Boolean);
   const names = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+  if (m.why === 'copy') return `${me} matched ${names}; the neighbour has turned. The match lets a Keyword cross between the two — copy one, or copy nothing.`;
   return `${me} matches ${names}. Each neighbour will turn and resolve in the order you choose; the matched corners are ringed in gold.`;
 }
 
@@ -1231,7 +1259,7 @@ function renderHighlights() {
   if (S.phase === 'unit' && sel?.kind === 'unit') {
     const u = S.field.units.find((x) => x.id === sel.id);
     if (u && la.some((a) => a.type === 'unit' && a.id === u.id && a.act === 'move')) {
-      arena.setMoveCircle({ x: u.x, y: u.y, r: moveBudget(S, u) });
+      arena.setMoveCircle({ x: u.x, y: u.y, r: moveBudget(S, u), shape: moveReach(S, u) });
     }
     const hl = { [sel.id]: 0xffffff };
     for (const a of la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'strike')) hl[a.target] = 0xff3030;

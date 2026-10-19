@@ -197,7 +197,55 @@ export function canMoveTo(state, u, x, y) {
   // direction floors to just outside the circle on the diagonals. The walk is
   // capped at the budget regardless, so the slack moves nobody further.
   const r = moveBudget(state, u) + 25;
-  return d2 >= STEP * STEP && d2 <= r * r;
+  if (d2 < STEP * STEP || d2 > r * r) return false;
+  // Inside the circle is not enough: the walk has to GET there. A boulder, a
+  // cliff or another unit in the way stops the walk short, and a spot you
+  // cannot reach is not offered (user: "it says you can move somewhere but
+  // doesn't let you move there"). Judged by the same walk the move makes.
+  const { dist, dir, vec } = headingTo(u, x, y);
+  const reach = trialWalk(state, u, dir, moveBudget(state, u), { vec, stopAfter: dist });
+  return reach.mm + STEP > dist;
+}
+
+/**
+ * The heading a walk to a point takes. A point that lies ON one of the 64
+ * table rays -- which is what every sampled move is -- walks that ray's exact
+ * vector; a vector re-derived from the point's offset is a millimetre off and
+ * can brush a shard the sampled walk slipped past, so the engine's own
+ * samples were being refused as illegal. Any other point walks straight at it.
+ */
+export function headingTo(u, x, y) {
+  const dx = x - u.x, dy = y - u.y;
+  const dist = isqrt(dx * dx + dy * dy);
+  const dir = bearing(u.x, u.y, x, y);
+  const [ux, uy] = DIR64[dir];
+  // Within 2 mm of the ray counts: a sample at 1299 mm reads back as 1298
+  // through the integer square root, and the rounding must not matter.
+  const ex = idiv(ux * dist, DIR_SCALE) - dx, ey = idiv(uy * dist, DIR_SCALE) - dy;
+  const onRay = ex >= -2 && ex <= 2 && ey >= -2 && ey <= 2;
+  const vec = onRay || dist === 0 ? [ux, uy] : [idiv(dx * DIR_SCALE, dist), idiv(dy * DIR_SCALE, dist)];
+  return { dist, dir, vec };
+}
+
+/**
+ * The move circle's TRUE outline: how far this unit's walk really gets along
+ * each of 128 headings (the 64 table directions and their midpoints). The HUD
+ * draws this shape instead of a plain disc, so what is lit is exactly what a
+ * click can do. Midpoint headings are a hair short of unit length (0.1%),
+ * which the 100mm step swallows.
+ */
+export function moveReach(state, unit) {
+  const mm = moveBudget(state, unit);
+  const out = [];
+  if (!mm || unit.dead || unit.acted) return out;
+  for (let i = 0; i < 64; i++) {
+    const [ax, ay] = DIR64[i], [bx, by] = DIR64[(i + 1) & 63];
+    for (const vec of [[ax, ay], [idiv(ax + bx, 2), idiv(ay + by, 2)]]) {
+      const r = trialWalk(state, unit, i, mm, { vec });
+      out.push({ x: r.x, y: r.y, z: r.z, mm: r.mm });
+    }
+  }
+  return out;
 }
 
 /** Perform one unit action. A generator: summoning asks where. */
@@ -208,12 +256,9 @@ export function* doUnitAction(state, action) {
   if (action.act === 'pass') { u.acted = true; return true; }
 
   if (action.act === 'move') {
-    const dx = action.x - u.x, dy = action.y - u.y;
-    const dist = isqrt(dx * dx + dy * dy);
+    const { dist, dir, vec } = headingTo(u, action.x, action.y);
     if (dist < STEP) { u.acted = true; return false; }
-    const vec = [idiv(dx * DIR_SCALE, dist), idiv(dy * DIR_SCALE, dist)];
-    const r = walk(state, u, bearing(u.x, u.y, action.x, action.y), imin(dist, moveBudget(state, u)),
-      { allowFall: false, climb: true, vec });
+    const r = walk(state, u, dir, moveBudget(state, u), { allowFall: false, climb: true, vec, stopAfter: dist });
     bump(state.players[u.owner].ledger, 'moves');
     u.acted = true;
     recheckSupport(state);

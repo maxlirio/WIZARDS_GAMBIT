@@ -210,7 +210,7 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .toast.out { opacity: 0; transform: translateX(20px); }
 
 /* ------------------------------------------------------------ tray (the one flow button) */
-#tray { position: absolute; right: 12px; bottom: 172px; width: var(--right-w); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 4; }
+#tray { position: absolute; right: 12px; bottom: 172px; width: var(--right-w); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 5; }
 #tray .hintline { font-size: 13px; color: #e6dcc2; background: #0b0a08c8; border: 1px solid #2d2719; padding: 7px 12px; border-radius: 9px; width: 100%; text-align: left; backdrop-filter: blur(6px); }
 #tray .hintline b { color: var(--gold); }
 #tray .thinking { font: 600 14px Cinzel, serif; color: var(--p1); display: flex; align-items: center; gap: 10px; background: #0b0a08c8; padding: 8px 14px; border-radius: 9px; border: 1px solid #3a1a1a; }
@@ -225,7 +225,7 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
   position: absolute; right: 12px; top: calc(66px + var(--cell-s) * 3 + var(--cell-s) * .55 + 86px); width: var(--right-w); z-index: 4; pointer-events: none;
   background: var(--glass-2); border: 1px solid var(--line-2); border-radius: 12px; padding: 12px; font-size: 13px;
   box-shadow: 0 10px 40px #000c; opacity: 0; transform: translateY(-4px); transition: opacity .15s, transform .15s; backdrop-filter: blur(8px);
-  max-height: calc(100vh - 66px - var(--cell-s) * 3 - var(--cell-s) * .55 - 100px); overflow: hidden;
+  max-height: calc(100vh - 66px - var(--cell-s) * 3 - var(--cell-s) * .55 - 100px); overflow: hidden; box-sizing: border-box;
 }
 #inspector.show { opacity: 1; transform: none; }
 .ibig { width: 150px; float: right; margin: 0 0 6px 10px; }
@@ -304,7 +304,7 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 @media (max-width: 1180px) {
   :root { --cell: clamp(78px, 9vw, 110px); --cell-s: 56px; --right-w: 250px; --hand: 120px; }
   #theirs { padding: 6px 8px; }
-  #inspector { top: auto; bottom: calc(var(--hand) + 10px); max-height: 50vh; }
+  #inspector { max-height: 50vh; }
   #logwrap { display: none; }
   .hcard:hover { transform: translateY(-30%) scale(1.9); }
   #flow .step span { display: none; }

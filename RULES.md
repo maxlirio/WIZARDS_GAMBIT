@@ -137,10 +137,11 @@ Before that, in the Unit Phase, **each friendly unit acts once**:
 - **mage** — move, attack an adjacent enemy, or summon a golem unit adjacent to itself
 - **golem unit** — move, or attack an adjacent enemy
 
-**A move goes anywhere inside the unit's move circle** — its move distance, with
-passives and keywords applied — not to a set of chosen spots. The unit walks straight
-for the point; terrain decides where it actually stops (a wall, a cliff it cannot
-climb, another body).
+**A move goes anywhere the unit can actually walk to within its move distance** (with
+passives and keywords applied) — not to a set of chosen spots. The unit walks straight
+for the point. A spot the straight walk cannot reach — behind a wall, up a cliff it
+cannot climb, through another body — is not a legal move at all, and the lit shape on
+the ground is exactly the walk's real reach, not a plain circle.
 
 ### Rotation lock
 

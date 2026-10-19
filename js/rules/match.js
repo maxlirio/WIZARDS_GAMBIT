@@ -207,6 +207,10 @@ export function* chainFrom(state, p, uid) {
     if (!s2 || prohibited(state, s2)) { fx(state, 'matchLocked', { vertex: hit.vertex, site: hit.site, uids: hit.uids }); continue; }
     if (s2.turnsThisAction >= REVOLUTION) { fx(state, 'matchExhausted', { vertex: hit.vertex, site: hit.site, uids: hit.uids }); continue; }
 
+    // The corners as they MET, read before the turn changes them: the HUD
+    // rings these on the copy offer so the player can see why it is asked.
+    const met = { uid, why: 'copy', sites: [{ uids: [...hit.uids], corners: cornersOf(state, p, hit) }] };
+
     // Mandatory and unconditional. A COLOUR LOCK DOES NOT STOP THIS -- the lock
     // restrains the player, not the board. Only a printed prohibition does.
     turn(state, other, { dir: 'left', forced: true, silent: true });
@@ -219,7 +223,7 @@ export function* chainFrom(state, p, uid) {
     // The keyword copy comes BEFORE the effect, because the point of the
     // mechanic is that putting [Ignore Height] on a push changes the push you
     // are about to make. Offered after, it could only ever matter next turn.
-    yield* offerCopy(state, hit.uids);
+    yield* offerCopy(state, hit.uids, { match: met });
     refresh(state);
 
     state.chain.resolutions++;

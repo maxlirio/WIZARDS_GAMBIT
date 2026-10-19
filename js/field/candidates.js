@@ -132,14 +132,14 @@ export function moveDirs(state, unit) {
  * action, and a probe that nudged the real unit by one step would be an
  * evaluator that slowly rearranges the board it is thinking about.
  */
-export function trialWalk(state, unit, dir, budget) {
+export function trialWalk(state, unit, dir, budget, { vec = null, stopAfter = 0 } = {}) {
   // The ghost KEEPS the real unit's id on purpose. blockingUnit excludes
   // `ignore` by id, so a ghost with a fresh id would collide with the body it
   // was copied from on its very first step and every direction would report
   // zero.
   const ghost = { ...unit, keywords: [...(unit.keywords || [])] };
   const before = { x: ghost.x, y: ghost.y };
-  const r = walk(state, ghost, dir, budget, { allowFall: false, climb: true, probe: true });
+  const r = walk(state, ghost, dir, budget, { allowFall: false, climb: true, probe: true, vec, stopAfter });
   return { mm: r.mm, x: ghost.x, y: ghost.y, z: ghost.z, blockedBy: r.blockedBy, from: before };
 }
 

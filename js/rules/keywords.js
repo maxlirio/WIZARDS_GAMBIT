@@ -190,7 +190,7 @@ export function fireFor(names, hook, ctx, payload) {
  *
  * A generator, because it asks questions, so it has to be able to park.
  */
-export function* offerCopy(state, uids) {
+export function* offerCopy(state, uids, { match = null } = {}) {
   const spells = uids.map((u) => findSpell(state, u)).filter(Boolean);
   if (spells.length < 2) return false;
 
@@ -217,8 +217,12 @@ export function* offerCopy(state, uids) {
   // replayed on every subsequent question -- so a recorded label is a saved
   // game that breaks when the wording of a prompt is edited.
   const options = [-1, ...pairs.map((_, i) => i)];
-  const labels = ['(copy nothing)', ...pairs.map((x) => `${x.kw}: ${x.from} to ${x.to}`)];
-  const choice = yield ask.pick(options, { prompt: 'Copy a Keyword?', labels });
+  // Labels name the CARDS. "Inevitable: 12 to 14" told the player nothing
+  // about why the question had appeared; the match that earned the offer is
+  // passed along so the HUD can ring the corners that met.
+  const name = (u) => defOf(state, findSpell(state, u)).name;
+  const labels = ['(copy nothing)', ...pairs.map((x) => `[${x.kw}] from ${name(x.from)} onto ${name(x.to)}`)];
+  const choice = yield ask.pick(options, { prompt: 'Copy a Keyword?', labels, kind: 'copy', match });
   if (choice === null || choice < 0) return false;
   const picked = pairs[choice];
   if (!picked) return false;
