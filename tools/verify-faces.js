@@ -46,7 +46,11 @@ import { keywordsOf, KEYWORD_NAMES } from '../js/rules/keywords.js';
 import { TIER_CAP } from '../js/rules/golems.js';
 import { livingUnits, mageOf, findUnit } from '../js/field/query.js';
 import { placeBody } from '../js/field/move.js';
-import { M, mm } from '../js/field/fixed.js';
+import { M, mm, within } from '../js/field/fixed.js';
+import { apply } from '../js/engine.js';
+import { springTrap } from '../js/rules/ops.js';
+import { hurt } from '../js/rules/combat.js';
+import { propSpec } from '../js/field/arena.js';
 
 const flag = (n) => process.argv.includes(`--${n}`);
 const argv = (n) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? process.argv[i + 1] : null; };
@@ -70,7 +74,10 @@ export function claimsOf(def, face) {
   const c = [];
   const num = (s) => Math.round(parseFloat(s) * M);
 
-  const range = t.match(/within ([\d.]+)m/);
+  // The RANGE is the first "within Xm" that is measured from the caster. A
+  // "within 1m of the run" (Blazing Charge) or "within 1.5m of it"
+  // (Stoneburst) is a radius around something else, and is not the reach.
+  const range = t.match(/within ([\d.]+)m(?! of (the run|it|one|a burning))/);
   if (range) c.push({ kind: 'range', mm: num(range[1]) });
 
   const dmg = t.match(/[Dd]eal (\d+) damage/);
@@ -137,6 +144,18 @@ export function claimsOf(def, face) {
 
   const grant = t.match(/[Gg]rant a Spell \[([^\]]+)\]/);
   if (grant) c.push({ kind: 'grantsKeyword', kw: grant[1] });
+
+  // The physical red tranche. Each phrase names an event the engine leaves a
+  // note for, or a status the board shows, so each is checkable rather than
+  // taken on trust.
+  if (/[Kk]nock (down|each of them down|.*flat)/.test(t)) c.push({ kind: 'knocks' });
+  if (/set it burning|catches fire/.test(t)) c.push({ kind: 'burns' });
+  if (/[Ii]gnite/.test(t)) c.push({ kind: 'ignites' });
+  const crack = t.match(/[Cc]rack a terrain piece[^.]* for (\d)/);
+  if (crack) c.push({ kind: 'propDamage', n: Number(crack[1]) });
+  if (/[Ss]hatter a terrain piece/.test(t)) c.push({ kind: 'shatters' });
+  if (/[Ii]t falls|[Tt]he fall hurts/.test(t)) c.push({ kind: 'falls' });
+  if (/[Dd]rop a boulder/.test(t)) c.push({ kind: 'spawnsBoulder' });
 
   if (face.cost && face.cost.length) c.push({ kind: 'costPaid' });
   if (face.passive || face.passive2) c.push({ kind: 'passiveDeclared' });
@@ -232,6 +251,19 @@ function stage(defs, cardId, numeral, opts = {}) {
   const far = rangeClaim ? rangeClaim.mm + 2500 : FAR;
   // JUST INSIDE the claimed range...
   placeBody(state, theirs, mine.x + near, 4500);
+  // A second enemy BESIDE the first, not burning: the fire-spreading faces
+  // need someone within 1m of a burning enemy to catch it, and a face that
+  // says "an enemy" has two to choose between. Created BEFORE the out-of-range
+  // body so that body keeps the highest id -- the "ignores its range" planted
+  // fault hits the last id it is offered, and must still reach it.
+  const bystander = {
+    body: 'unit', id: ++state.field.nextUnitId, owner: 1, kind: 'golem', def: 'CLAY_HAND', golemUid: null,
+    hp: 9, maxHp: 9, move: 1000, atk: 1, reach: 900,
+    x: theirs.x + 600, y: 5100, z: 0, support: { kind: 'ground' },
+    acted: false, dead: false, poison: 0, keywords: [],
+  };
+  placeBody(state, bystander, bystander.x, bystander.y);
+  state.field.units.push(bystander);
   // ...and JUST OUTSIDE it. This body is the test.
   const outside = {
     body: 'unit', id: ++state.field.nextUnitId, owner: 1, kind: 'golem', def: 'CLAY_HAND', golemUid: null,
@@ -260,14 +292,24 @@ function stage(defs, cardId, numeral, opts = {}) {
   state.field.props.push({ id: 'vrock', kind: 'boulder', x: theirs.x, y: 3300, z: 0,
     removedUntil: null, body: 'prop', support: { kind: 'ground' }, hp: 4, burning: null, litBy: null, destroyed: false });
   placeBody(state, state.field.props.at(-1), theirs.x, 3300);
-  // And a tree beside them, so a fire face has something to set alight.
-  state.field.props.push({ id: 'vtree', kind: 'tree', x: theirs.x + 700, y: 5300, z: 0,
+  // And a tree beside them, so a fire face has something to set alight. Just
+  // INSIDE the claimed range (the enemy sits at range - 600) and within a
+  // scorch of the enemy, so "ignite within 3m" has a tree to light and a
+  // fire bolt's splash reaches it.
+  state.field.props.push({ id: 'vtree', kind: 'tree', x: theirs.x - 600, y: 5200, z: 0,
     removedUntil: null, body: 'prop', support: { kind: 'ground' }, hp: 3, burning: null, litBy: null, destroyed: false });
-  placeBody(state, state.field.props.at(-1), theirs.x + 700, 5300);
+  placeBody(state, state.field.props.at(-1), theirs.x - 600, 5200);
+  // The in-range enemy is ALREADY burning (one turn left) and so is the
+  // out-of-range one: a face that feeds on burning units has something to
+  // feed on, a face that sets units burning must ADD to it to be seen, and a
+  // "burning enemies within 4m" face has one outside 4m it must not touch.
+  theirs.burn = 1; theirs.burnBy = 0;
+  outside.burn = 2; outside.burnBy = 0;
+
 
   refresh(state);
   state.tableDirty = [false, false];
-  return { state, card, friend, foeCard, wardCard, outside, ally, mine, theirs, cell, faceIndex, def };
+  return { state, card, friend, foeCard, wardCard, outside, ally, mine, theirs, bystander, cell, faceIndex, def };
 }
 
 /**
@@ -325,7 +367,8 @@ function snapshotOf(st) {
     // touches nothing else, and [Stun] and [Poison] work the same way. Without
     // them, "declares a cost but nothing was spent" fired on a cost that was
     // paid perfectly.
-    acted: Object.fromEntries(state.field.units.map((u) => [u.id, `${u.acted ? 'A' : ''}${u.poison || 0}`])),
+    acted: Object.fromEntries(state.field.units.map((u) => [u.id, `${u.acted ? 'A' : ''}${u.poison || 0}b${u.burn || 0}`])),
+    burn: Object.fromEntries(state.field.units.map((u) => [u.id, u.burn || 0])),
     pos: Object.fromEntries(state.field.units.map((u) => [u.id, `${u.x},${u.y}`])),
     // A hex leaves only a prohibition behind, so it is part of the record too.
     rots: Object.fromEntries(spellsOn(state, 0).concat(spellsOn(state, 1)).map((s) => [s.uid, `${s.rot}${s.noTurnUntil !== null && s.noTurnUntil !== undefined ? 'H' : ''}`])),
@@ -356,6 +399,7 @@ const PASS = 'PASS', FAIL = 'FAIL', UNCHECKED = 'UNCHECKED';
 const POSITIVE = new Set([
   'damage', 'travel', 'draws', 'vp', 'vpScaling', 'vpAny', 'enemySpellsOnly',
   'rotateDir', 'grantsKeyword', 'destroysSpell', 'effectful',
+  'knocks', 'burns', 'ignites', 'propDamage', 'shatters', 'falls', 'spawnsBoulder',
 ]);
 
 function judge(st, run, claim) {
@@ -374,7 +418,9 @@ function judge(st, run, claim) {
       // The out-of-range body must never even be OFFERED. Checking only that it
       // was not hit would pass a face that offered it and happened not to pick
       // it, which is most of them under a fixed answer policy.
-      if (!offered.length && !touchedUnits.length && !movedUnits.length) return [UNCHECKED, 'nothing was targeted'];
+      // A face that works on terrain (ignite, crack) leaves its mark on the
+      // props record instead of on a unit; that is a targeting too.
+      if (!offered.length && !touchedUnits.length && !movedUnits.length && before.props === after.props) return [UNCHECKED, 'nothing was targeted'];
       if (allOptions.includes(outside.id)) return [FAIL, `offered the unit ${claim.mm + 2500}mm away as a target for a ${claim.mm}mm range`];
       if (touchedUnits.includes(outside.id) || movedUnits.includes(outside.id)) return [FAIL, 'reached a unit outside its range'];
       return [PASS, ''];
@@ -388,7 +434,18 @@ function judge(st, run, claim) {
       return [PASS, ''];
     }
     case 'travel': {
-      if (!movedUnits.length) return [UNCHECKED, 'nothing moved'];
+      // Terrain travels too: a pushed rock is held to the printed force
+      // exactly as a pushed unit is (mass only ever SHORTENS the slide).
+      const propPos = (snap) => Object.fromEntries(snap.props.split('|').filter(Boolean).map((e) => { const [id, xyz] = e.split(':'); return [id, xyz]; }));
+      const pb = propPos(before), pa = propPos(after);
+      const movedProps = Object.keys(pa).filter((id) => pb[id] && pb[id] !== pa[id]);
+      for (const id of movedProps) {
+        const [bx, by] = pb[id].split(',').map(Number);
+        const [ax, ay] = pa[id].split(',').map(Number);
+        const d = Math.round(Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2));
+        if (d > claim.mm + 150) return [FAIL, `prints ${claim.mm}mm of travel but moved terrain ${id} ${d}mm`];
+      }
+      if (!movedUnits.length) return movedProps.length ? [PASS, ''] : [UNCHECKED, 'nothing moved'];
       // Realised travel may be SHORT -- terrain -- but never long. A printed
       // "push 2m" that moved somebody 3m is a bug; one that moved them 1.2m is
       // the whole point of leaving the grid.
@@ -404,8 +461,13 @@ function judge(st, run, claim) {
       const drew = after.hand - before.hand + Math.max(0, before.deck - after.deck - (after.hand - before.hand));
       const handGain = after.hand - before.hand;
       if (handGain === 0 && before.deck === after.deck) return [UNCHECKED, 'no cards moved (a cost may have been declined)'];
-      if (handGain < claim.n && before.deck - after.deck < claim.n) {
-        return [FAIL, `prints draw ${claim.n} but the hand gained ${handGain} and the deck lost ${before.deck - after.deck}`];
+      // The hand holds five: a face that prints "draw 3" into a hand of four
+      // may legitimately draw one. The claim is the cards the hand had ROOM for.
+      const room = Math.max(0, 5 - before.hand);
+      const want = Math.min(claim.n, room);
+      if (want === 0) return [UNCHECKED, 'the hand was already full'];
+      if (handGain < want && before.deck - after.deck < want) {
+        return [FAIL, `prints draw ${claim.n} (room for ${want}) but the hand gained ${handGain} and the deck lost ${before.deck - after.deck}`];
       }
       return [PASS, ''];
     }
@@ -491,7 +553,14 @@ function judge(st, run, claim) {
       // the effect; the mage paying it is not the effect hitting its own side.
       const paysInBlood = (st.def.faces[st.faceIndex].cost || []).some((c) => c.id === 'mageWound');
       // HURT, not touched: a drain heals your own mage, which is the point of it.
-      const hurtOwn = (id) => after.hp[id] < before.hp[id];
+      // And hurt BY THE FACE, not by the battlefield: a tree pulled toward
+      // your mage topples onto it, a unit thrown into your golem slams it --
+      // that is physics doing what the card set in motion, not the face
+      // choosing its own side as a target. Only the damage the face dealt
+      // directly counts.
+      const collateral = new Set(['impact', 'topple', 'fall']);
+      const hurtOwn = (id) => (state.fx || []).slice(before.fxAt)
+        .some((f) => f.kind === 'damage' && f.id === id && !collateral.has(f.cause));
       if (hurtOwn(ally.id) || (hurtOwn(mine.id) && !paysInBlood)) return [FAIL, 'hit its own side'];
       return offered.length || touchedUnits.length ? [PASS, ''] : [UNCHECKED, 'no enemy was in reach'];
     }
@@ -561,6 +630,52 @@ function judge(st, run, claim) {
       const answered = offered.some((o) => (o.options || []).length > 0);
       if (!answered) return [UNCHECKED, 'nothing was in reach to act on'];
       return [FAIL, 'asked a question, was answered, and changed nothing'];
+    }
+    case 'knocks': {
+      // A knockdown leaves a note AND a spent action on an enemy.
+      const notes = (state.fx || []).slice(before.fxAt).filter((f) => f.kind === 'knockdown');
+      const enemyFloored = notes.some((f) => { const u = findUnit(state, f.id); return u && u.owner !== 0; });
+      if (!enemyFloored) return touchedUnits.length || offered.length ? [FAIL, 'prints a knockdown but no enemy was floored'] : [UNCHECKED, 'nothing was in reach to knock down'];
+      for (const f of notes) { const u = findUnit(state, f.id); if (u && u.owner !== 0 && !u.acted) return [FAIL, `knocked unit ${f.id} down but it still has its action`]; }
+      if (allOptions.includes(ally.id) || allOptions.includes(mine.id)) return [FAIL, 'offered a friendly unit to knock down'];
+      return [PASS, ''];
+    }
+    case 'burns': {
+      // Set burning: an ENEMY's burn count went up (the stage has one already alight).
+      const lit = Object.keys(after.burn).map(Number).filter((id) => after.burn[id] > before.burn[id]);
+      if (lit.some((id) => id === ally.id || id === mine.id)) return [FAIL, 'set its own side burning'];
+      if (lit.length) return [PASS, ''];
+      return touchedUnits.length || offered.length ? [FAIL, 'prints "burning" but no enemy burn count rose'] : [UNCHECKED, 'nothing was in reach to burn'];
+    }
+    case 'ignites': {
+      const lit = (state.fx || []).slice(before.fxAt).some((f) => f.kind === 'ignite');
+      if (lit) return [PASS, ''];
+      return offered.length ? [FAIL, 'prints "ignite" but nothing caught fire'] : [UNCHECKED, 'no burnable piece was in reach'];
+    }
+    case 'propDamage': {
+      const hpOf = (snap) => Object.fromEntries(snap.props.split('|').filter(Boolean).map((e) => { const f = e.split(':'); return [f[0], Number(f[3])]; }));
+      const hb = hpOf(before), ha = hpOf(after);
+      const cracked = Object.keys(hb).filter((id) => ha[id] !== undefined && ha[id] < hb[id]);
+      if (!cracked.length) return offered.length ? [FAIL, `prints "crack for ${claim.n}" but no terrain lost hit points`] : [UNCHECKED, 'no terrain in reach'];
+      const worst = Math.max(...cracked.map((id) => hb[id] - ha[id]));
+      return worst >= claim.n ? [PASS, ''] : [FAIL, `prints "crack for ${claim.n}" but took ${worst}`];
+    }
+    case 'shatters': {
+      const gone = (state.fx || []).slice(before.fxAt).some((f) => f.kind === 'shatter');
+      if (gone) return [PASS, ''];
+      return offered.length ? [FAIL, 'prints "shatter" but no terrain piece was destroyed'] : [UNCHECKED, 'no terrain in reach'];
+    }
+    case 'falls': {
+      // A hurl or a skyfall must end in a landing note with a real drop.
+      const notes = (state.fx || []).slice(before.fxAt);
+      const fell = notes.some((f) => f.kind === 'hurl' && f.mm > 0) || notes.some((f) => f.kind === 'falls' && (f.landed || []).some((l) => l.drop > 0));
+      if (fell) return [PASS, ''];
+      return offered.length ? [FAIL, 'prints a fall but nothing fell'] : [UNCHECKED, 'no unit was in reach to drop'];
+    }
+    case 'spawnsBoulder': {
+      const nb = (snap) => snap.props.split('|').filter((e) => e.startsWith('m')).length;
+      if (nb(after) > nb(before)) return [PASS, ''];
+      return offered.length ? [FAIL, 'prints "drop a boulder" but no new boulder is on the field'] : [UNCHECKED, 'nowhere to drop it'];
     }
     case 'gateBlocks':
       // Checked separately, below, by staging the gate as unmet.
@@ -668,6 +783,36 @@ const FAULTS = [
     })),
   },
   {
+    name: 'a thunderclap that hurts but never floors anyone',
+    apply: (defs) => mutate(defs, 'THUNDERCLAP', 'IV', (f) => ({
+      ...f,
+      *effect(ctx) { for (const id of ctx.enemyUnits(2000)) ctx.hit(id, 2); },
+    })),
+  },
+  {
+    name: 'an immolation that never sets anyone burning',
+    apply: (defs) => mutate(defs, 'IMMOLATE', 'I', (f) => ({
+      ...f,
+      *effect(ctx) {
+        const ids = ctx.enemyUnits(3000);
+        if (ids.length) ctx.hit(ids[0], 1);
+      },
+    })),
+  },
+  {
+    name: 'a meteor that hurts but leaves no boulder',
+    apply: (defs) => mutate(defs, 'METEOR_CALL', 'IV', (f) => ({
+      ...f,
+      *effect(ctx) {
+        const pts = ctx.skyPoints(5000);
+        if (!pts.length) return;
+        const i = yield ctx.ask.pick(pts.map((_, k) => k), { prompt: 'where?' });
+        if (i === null) return;
+        for (const id of ctx.unitsNear(pts[i].x, pts[i].y, 1000)) ctx.hit(id, 3);
+      },
+    })),
+  },
+  {
     name: 'a face implemented under the wrong numeral',
     apply: (defs) => {
       // EMBER_LASH's I (2 damage) and II (1 damage to all) swapped. Nothing
@@ -684,6 +829,33 @@ const FAULTS = [
   },
 ];
 
+// The two trap faults, appended so the list above reads as it did.
+FAULTS.push(
+  {
+    name: 'a trap that springs on its owner\'s own action',
+    apply: (defs) => mutate(defs, 'SNARE', 'I', (f) => ({
+      ...f,
+      on: {
+        // No "is it the opponent acting" guard: the owner's own golem walking
+        // up to the owner's mage sets it off.
+        afterMove: function* (ctx, payload) {
+          const mover = findUnit(ctx.state, payload.id), mage = mageOf(ctx.state, ctx.p);
+          if (!mover || !mage || !within(mover, mage, 2000)) return;
+          springTrap(ctx.state, ctx.spell.uid);
+          hurt(ctx.state, mover, 1, { cause: 'spell', byP: ctx.p });
+        },
+      },
+    })),
+  },
+  {
+    name: 'a trap that never springs',
+    apply: (defs) => mutate(defs, 'MIRROR_WARD', 'I', (f) => ({
+      ...f,
+      replace: { afterDamage: (ctx, payload) => payload },
+    })),
+  },
+);
+
 function mutate(defs, id, numeral, fn) {
   const d = defs[id];
   const i = NUMERALS.indexOf(numeral);
@@ -699,6 +871,7 @@ function verify(defs, { quiet = false } = {}) {
   for (const def of Object.keys(defs).sort().map((k) => defs[k])) {
     if (ONLY && def.id !== ONLY) continue;
     if (def.kind === 'golem') continue;
+    if (def.kind === 'trap') continue;             // judged by verifyTraps, through its trigger
     for (const face of def.faces) {
       const claims = claimsOf(def, face);
       const runs = [];
@@ -752,7 +925,7 @@ function verify(defs, { quiet = false } = {}) {
 function verifyGates(defs) {
   const out = [];
   for (const def of Object.keys(defs).sort().map((k) => defs[k])) {
-    if (def.kind === 'golem') continue;
+    if (def.kind === 'golem' || def.kind === 'trap') continue;
     for (const face of def.faces) {
       if (!face.gate) continue;
       let st;
@@ -792,11 +965,179 @@ function verifyGates(defs) {
 import { gateMet } from '../js/rules/gates.js';
 const gatesOf = () => ({ gateMet });
 
+/* ============================================================ traps */
+
+/**
+ * A TRAP is judged through its TRIGGER, not by resolving its face: the face
+ * has no effect to resolve. Each trap is staged twice through the real entry
+ * points -- an enemy damage spell resolved against the owner's mage, or an
+ * enemy unit walking up to it through `apply` -- once as the OPPONENT'S
+ * action, where it must spring and its printed reaction must be visible on
+ * the board, and once as the OWNER'S OWN action meeting the same geometry,
+ * where it must stay set. A trap that springs on its owner is the fault
+ * `--selftest` plants, and one that never springs is the other.
+ */
+function stageTrap(defs, cardId) {
+  const state = createGame({ seed: 11, defs, decks: [[], []], findable: [], config: { strict: true } });
+  for (const u of state.field.units) u.id += 500;
+  state.field.nextUnitId += 500;
+  state.nextUid += 1000;
+  const trap = makeCard(state, cardId, 0);
+  trap.playedTo = 0; trap.plays = 1; trap.concealed = true;
+  place(state, 0, trap, 0);
+  // A damage face for either side: the first red card whose side I bolts an
+  // enemy unit, so the stage does not depend on one card's current numbers.
+  const boltId = Object.keys(defs).sort().find((k) => defs[k].school === 'red' && defs[k].kind === 'spell'
+    && /^Deal (\d+) damage to an enemy unit within/.test(defs[k].faces[0].text));
+  if (!boltId) throw new Error('no red "Deal N damage to an enemy unit" side I to stage with');
+  const bolt = Number(defs[boltId].faces[0].text.match(/^Deal (\d+)/)[1]);
+  const foeCard = makeCard(state, boltId, 1); foeCard.playedTo = 1; foeCard.plays = 1; place(state, 1, foeCard, 1);
+  // Everyone on player 1's flattened spawn circle, so a walk is never
+  // stopped short by a rock the seed happened to put there.
+  const mine = mageOf(state, 0), theirs = mageOf(state, 1);
+  placeBody(state, mine, 13300, 6000);
+  placeBody(state, theirs, 14800, 6000);
+  const ally = {
+    body: 'unit', id: ++state.field.nextUnitId, owner: 0, kind: 'golem', def: 'CLAY_HAND', golemUid: null,
+    hp: 9, maxHp: 9, move: 2000, atk: 1, reach: 900,
+    x: 13300, y: 8200, z: 0, support: { kind: 'ground' },
+    acted: false, dead: false, poison: 0, keywords: [],
+  };
+  placeBody(state, ally, ally.x, ally.y);
+  state.field.units.push(ally);
+  refresh(state);
+  state.tableDirty = [false, false];
+  return { state, trap, foeCard, bolt, mine, theirs, ally, def: defs[cardId] };
+}
+
+/** Resolve a face with every question answered first-option, like a real duel. */
+function resolveFully(state, card, index) {
+  let r = runEffect(state, { kind: 'verify' }, () => resolveSide(state, card, index, {}));
+  for (let i = 0; i < 40 && !r.done; i++) {
+    const req = r.pending;
+    const answer = req.type === 'confirm' ? true : req.type === 'some' ? req.options.slice(0, req.count) : (req.options[0] ?? null);
+    r = answerPending(state, answer, () => () => resolveSide(state, card, index, {}), refresh);
+  }
+  refresh(state);
+  return r.done;
+}
+
+const sprungIn = (st) => (st.state.fx || []).some((f) => f.kind === 'trapSpring' && f.uid === st.trap.uid);
+const stillSet = (st) => { const t = findSpell(st.state, st.trap.uid); return !!t && t.cell === 0 && t.concealed === true; };
+const inDiscard = (st) => st.state.players[0].discard.some((c) => c.uid === st.trap.uid && !c.concealed);
+
+/** What each trap's printed reaction must leave on the board. */
+const TRAP_REACTION = {
+  EARTH_WALL: (st, before) => {
+    const wall = st.state.field.props.find((pr) => pr.kind === 'earthwall');
+    if (!wall) return [FAIL, 'no earth wall was raised'];
+    if (wall.hp >= propSpec('earthwall').hp && !wall.destroyed) return [FAIL, 'the wall rose but took no damage'];
+    if (st.mine.hp !== before.mineHp) return [FAIL, `the wall rose but the unit still took ${before.mineHp - st.mine.hp}`];
+    const dSrc = Math.hypot(wall.x - st.theirs.x, wall.y - st.theirs.y), dVic = Math.hypot(wall.x - st.mine.x, wall.y - st.mine.y);
+    if (dVic > 1800 || dSrc > Math.hypot(st.theirs.x - st.mine.x, st.theirs.y - st.mine.y)) return [FAIL, 'the wall is not between the spell and its target'];
+    return [PASS, ''];
+  },
+  MIRROR_WARD: (st, before) => {
+    if (st.mine.hp !== before.mineHp) return [FAIL, `the mage still took ${before.mineHp - st.mine.hp}`];
+    if (before.theirsHp - st.theirs.hp !== st.bolt) return [FAIL, `prints "dealt to the enemy mage instead" but it took ${before.theirsHp - st.theirs.hp} of ${st.bolt}`];
+    return [PASS, ''];
+  },
+  SNARE: (st, before) => {
+    if (before.theirsHp - st.theirs.hp !== 1) return [FAIL, `prints 1 damage but the mover took ${before.theirsHp - st.theirs.hp}`];
+    if (!(st.theirs.heldUntil > st.state.turn)) return [FAIL, 'prints "loses its next action" but no hold was set'];
+    return [PASS, ''];
+  },
+  SPRING_TRAP: (st, before) => {
+    const was = Math.hypot(before.theirsX - st.mine.x, before.theirsY - st.mine.y);
+    const now = Math.hypot(st.theirs.x - st.mine.x, st.theirs.y - st.mine.y);
+    if (now <= was + 300) return [FAIL, `prints "flung away" but the mover is ${Math.round(now)}mm away, was ${Math.round(was)}`];
+    if (now - was > 4 * 750 + 150) return [FAIL, `force 4 buys 3000mm but the mover travelled ${Math.round(now - was)}`];
+    return [PASS, ''];
+  },
+};
+
+function verifyTraps(defs) {
+  const out = [];
+  const say = (def, claim, verdict, why = '') => out.push({ def: def.id, numeral: 'I', claim, verdict, why });
+  for (const def of Object.keys(defs).sort().map((k) => defs[k])) {
+    if (def.kind !== 'trap') continue;
+    const face = def.faces[0];
+    const byDamage = !!face.replace?.afterDamage;
+    const byMove = !!face.on?.afterMove;
+    if (!byDamage && !byMove) { say(def, 'springs', FAIL, 'has neither a damage nor a move trigger'); continue; }
+
+    /* -------- the opponent acts: it must spring, and react as printed */
+    let st;
+    try {
+      st = stageTrap(defs, def.id);
+      const { state, foeCard, mine, theirs } = st;
+      const before = { mineHp: mine.hp, theirsHp: theirs.hp, theirsX: theirs.x, theirsY: theirs.y };
+      state.active = 1;
+      if (byDamage) {
+        state.phase = 'spell';
+        resolveFully(state, foeCard, 0);
+      } else {
+        // The enemy mage walks up to 1.2m from the owner's mage -- inside
+        // every move trap's printed distance -- through the real action.
+        state.phase = 'unit';
+        theirs.acted = false;
+        apply(state, { type: 'unit', id: theirs.id, act: 'move', x: mine.x + 1200, y: mine.y });
+      }
+      // A question parks and REPLAYS from a snapshot, which replaces every
+      // unit object: read the bodies back by id before judging them.
+      st.mine = findUnit(state, mine.id); st.theirs = findUnit(state, theirs.id); st.ally = findUnit(state, st.ally.id);
+      if (!sprungIn(st)) say(def, 'springs', FAIL, byDamage ? 'an enemy spell damaged the owner\'s mage and the trap stayed set' : 'an enemy unit ended its move beside the owner\'s mage and the trap stayed set');
+      else if (stillSet(st) || !inDiscard(st)) say(def, 'springs', FAIL, 'sprang but did not leave for the discard revealed');
+      else {
+        say(def, 'springs', PASS);
+        const judge = TRAP_REACTION[def.id];
+        if (judge) { const [v, why] = judge(st, before); say(def, 'reaction', v, why); }
+        else say(def, 'reaction', UNCHECKED, 'no printed-reaction check for this trap');
+      }
+      for (const e of state.triggerErrors || []) say(def, 'no errors', FAIL, e.error);
+    } catch (e) { say(def, 'springs', FAIL, `threw: ${e.message}`); }
+
+    /* -------- the owner acts, same geometry: it must stay set */
+    try {
+      st = stageTrap(defs, def.id);
+      const { state, mine, ally } = st;
+      state.active = 0;
+      if (byDamage) {
+        // The owner's own spell wounds the owner's own mage (a cost, a
+        // redirected blast): every point of damage passes through here.
+        state.phase = 'spell';
+        hurt(state, mine, 1, { cause: 'spell', byP: 0 });
+      } else {
+        state.phase = 'unit';
+        ally.acted = false; mine.acted = true;
+        apply(state, { type: 'unit', id: ally.id, act: 'move', x: mine.x, y: mine.y + 900 });
+      }
+      st.mine = findUnit(state, mine.id);
+      if (sprungIn(st) || !stillSet(st)) say(def, 'ownActionSafe', FAIL, 'sprang on its owner\'s own action');
+      else say(def, 'ownActionSafe', PASS);
+    } catch (e) { say(def, 'ownActionSafe', FAIL, `threw: ${e.message}`); }
+
+    /* -------- the opponent acts but the condition is NOT met: still set */
+    if (byMove) {
+      try {
+        st = stageTrap(defs, def.id);
+        const { state, theirs } = st;
+        state.active = 1; state.phase = 'unit'; theirs.acted = false;
+        apply(state, { type: 'unit', id: theirs.id, act: 'move', x: theirs.x, y: theirs.y - 1500 });
+        if (sprungIn(st)) say(def, 'conditionNeeded', FAIL, 'sprang on an enemy move that ended out of its printed distance');
+        else say(def, 'conditionNeeded', PASS);
+      } catch (e) { say(def, 'conditionNeeded', FAIL, `threw: ${e.message}`); }
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ report */
 
 const base = verify(CARDS);
 const gates = verifyGates(CARDS);
-const all = [...base.filter((r) => r.claim !== 'gateBlocks'), ...gates];
+const traps = verifyTraps(CARDS);
+const all = [...base.filter((r) => r.claim !== 'gateBlocks'), ...gates, ...traps];
 
 const counts = { PASS: 0, FAIL: 0, UNCHECKED: 0 };
 for (const r of all) counts[r.verdict]++;
@@ -821,7 +1162,7 @@ if (SELFTEST) {
     let caught = false, detail = '';
     try {
       const defs = fault.apply({ ...CARDS });
-      const r = [...verify(defs), ...verifyGates(defs)];
+      const r = [...verify(defs), ...verifyGates(defs), ...verifyTraps(defs)];
       const newFails = r.filter((x) => x.verdict === FAIL);
       caught = newFails.length > fails.length;
       detail = newFails.slice(0, 2).map((x) => `${x.def}:${x.numeral} [${x.claim}]`).join(', ');

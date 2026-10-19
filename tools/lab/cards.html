@@ -12,7 +12,7 @@
 </head>
 <body>
 <script type="module">
-import { cardSVG } from '../../js/view/cards.js';
+import { cardSVG, cardBackSVG } from '../../js/view/cards.js';
 import { CARDS } from '../../js/rules/spells/index.js';
 const q = new URLSearchParams(location.search);
 const size = +(q.get('size') || 560);
@@ -20,9 +20,9 @@ const ids = (q.get('ids') || 'EMBER_LASH:0,CHANGE:0,FUSE:3,TALLY:0').split(',');
 await document.fonts.ready;
 for (const spec of ids) {
   const [id, r] = spec.split(':');
-  const def = CARDS[id]; if (!def) continue;
+  const def = CARDS[id]; if (!def && id !== 'BACK') continue;
   const d = document.createElement('div'); d.className = 'c'; d.style.width = `${size}px`; d.style.height = `${size}px`;
-  d.innerHTML = cardSVG(def, { rot: +(r || 0) });
+  d.innerHTML = id === 'BACK' ? cardBackSVG() : cardSVG(def, { rot: +(r || 0) });   // BACK: a face-down trap
   const svg = d.querySelector('svg'); if (svg) { svg.setAttribute('width', size); svg.setAttribute('height', size); }
   document.body.appendChild(d);
 }

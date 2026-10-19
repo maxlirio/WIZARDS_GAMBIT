@@ -80,8 +80,11 @@ export function respawnMage(state, p) {
     old.dead = false;
     old.hp = old.maxHp;
     old.poison = 0;
+    old.burn = 0;
+    old.burnBy = null;
     old.keywords = [];
     old.acted = false;
+    old.heldUntil = null;
     placeBody(state, old, s.x, s.y);
   } else {
     makeMage(state, p);
@@ -297,7 +300,24 @@ export const pendingUnits = (state, p) =>
   unitsOf(state, p).filter((u) => !u.acted).sort((a, b) => a.id - b.id);
 
 export function startUnitTurn(state, p) {
-  for (const u of livingUnits(state)) if (u.owner === p) u.acted = false;
+  for (const u of livingUnits(state)) {
+    if (u.owner !== p) continue;
+    // A SNARED unit (printed Snare: "it loses its next action") sits this
+    // turn out. `heldUntil` is the turn number it applies to and expires by
+    // comparison, exactly like a rotation prohibition -- no cleanup pass.
+    u.acted = u.heldUntil !== null && u.heldUntil !== undefined && u.heldUntil >= state.turn;
+  }
+}
+
+/** Take a unit's NEXT action: it may not act on its owner's coming turn. */
+export function holdUnit(state, u) {
+  if (!u || u.dead) return false;
+  // The owner's next turn is one turn away if they are not active now, two
+  // if they are (their own units cannot be snared on their own turn, but the
+  // arithmetic is kept honest regardless).
+  u.heldUntil = state.turn + (state.active === u.owner ? 2 : 1);
+  fx(state, 'held', { id: u.id, until: u.heldUntil });
+  return true;
 }
 
 /** [Poison] bites at the start of its victim's turn. */
@@ -305,6 +325,38 @@ export function tickPoison(state, p) {
   for (const u of [...livingUnits(state)].sort((a, b) => a.id - b.id)) {
     if (u.owner !== p || !u.poison) continue;
     hurt(state, u, u.poison, { cause: 'poison', byP: 1 - p });
+  }
+}
+
+/* ------------------------------------------------------------ burning */
+
+/**
+ * Set a UNIT alight. `burn` is how many of its own turn starts the fire still
+ * bites on (1 damage each); a second immolation ADDS turns rather than
+ * resetting them, like poison stacks. `burnBy` is who gets the credit, so a
+ * unit that burns to death scores for whoever lit it.
+ *
+ * The mirror of a burning terrain piece (field/push.js::ignite), kept apart
+ * on purpose: a tree spreads to other trees and burns away, a unit just
+ * hurts until the fire is out.
+ */
+export function setBurning(state, u, turns, { byP = null } = {}) {
+  if (!u || u.dead || turns <= 0) return false;
+  const fresh = !(u.burn > 0);
+  u.burn = (u.burn || 0) + turns;
+  u.burnBy = byP ?? u.burnBy ?? null;
+  if (fresh && byP !== null && byP !== undefined && byP !== u.owner) bump(state.players[byP].ledger, 'unitsBurned');
+  fx(state, 'burning', { id: u.id, turns: u.burn, by: byP });
+  return true;
+}
+
+/** The fire on a unit bites at the start of its owner's turn, then counts down. */
+export function tickBurn(state, p) {
+  for (const u of [...livingUnits(state)].sort((a, b) => a.id - b.id)) {
+    if (u.owner !== p || !(u.burn > 0)) continue;
+    hurt(state, u, 1, { cause: 'burn', byP: u.burnBy ?? null });
+    u.burn -= 1;
+    if (u.burn <= 0) { u.burn = 0; u.burnBy = null; fx(state, 'burnOut', { id: u.id }); }
   }
 }
 

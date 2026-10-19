@@ -21,6 +21,7 @@ import { seedRng, int, pick } from '../js/rules/rng.js';
 import { chooseAction, answerFor } from '../js/ai/ai.js';
 import { invariants, monotonic } from './invariants.js';
 import { NUMERALS } from '../js/rules/orient.js';
+import { findSpell } from '../js/rules/ops.js';
 
 const arg = (name, dflt) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -68,6 +69,7 @@ const coverage = new Map();     // 'CARD:III' -> count
 const endings = new Map();
 let failures = 0, games = 0, totalSteps = 0, totalTurns = 0;
 let chainLinks = 0, longestChain = 0;
+let trapsSet = 0, trapsSprung = 0;
 const vpFrom = { objective: 0, mage: 0, golem: 0 };
 
 for (let g = 0; g < GAMES; g++) {
@@ -94,6 +96,9 @@ for (let g = 0; g < GAMES; g++) {
       if (f.kind === 'resolveStart') coverage.set(`${f.def}:${f.numeral}`, (coverage.get(`${f.def}:${f.numeral}`) || 0) + 1);
       if (f.kind === 'match') chainLinks++;
       if (f.kind === 'chainEnd' && f.resolutions > longestChain) longestChain = f.resolutions;
+      // A trap's one face "resolves" by springing, so that is its coverage.
+      if (f.kind === 'trapSpring') { trapsSprung++; coverage.set(`${f.def}:I`, (coverage.get(`${f.def}:I`) || 0) + 1); }
+      if (f.kind === 'play' && state.defs[findSpell(state, f.uid)?.def]?.kind === 'trap') trapsSet++;
     }
     fxSeen = state.fx.length;
   };
@@ -175,6 +180,7 @@ console.log(`mean steps/turns     ${games ? Math.round(totalSteps / games) : 0} 
 console.log(`endings              ${[...endings].map(([k, v]) => `${k} x${v}`).join(', ') || '-'}`);
 console.log(`VP by source         objectives ${vpFrom.objective}, mages ${vpFrom.mage}, golems ${vpFrom.golem}`);
 console.log(`chain links / max    ${chainLinks} total, longest ${longestChain}`);
+console.log(`traps set / sprung   ${trapsSet} / ${trapsSprung}`);
 console.log(`face coverage        ${hit.length}/${faces.length} (${Math.round((hit.length * 100) / faces.length)}%)`);
 if (cold.length && cold.length <= 40) console.log(`never resolved       ${cold.join(' ')}`);
 else if (cold.length) console.log(`never resolved       ${cold.length} faces`);

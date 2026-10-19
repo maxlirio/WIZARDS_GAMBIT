@@ -19,6 +19,7 @@ import { spellsOn, defOf } from './ops.js';
 import { livingUnits, unitsOf, onHighGround, rangeOrigins, mageOf } from '../field/query.js';
 import { keywordsOf } from './keywords.js';
 import { CELLS } from './table.js';
+import { within } from '../field/fixed.js';
 
 const L = (state, p) => state.players[p].ledger;
 
@@ -97,6 +98,23 @@ export const FINDS = Object.freeze({
   tithed:       { text: 'Have a golem card spent by attrition.', test: (s, p) => L(s, p).golemCardsLost >= 1 },
   aegis:        { text: 'Let your mage be killed twice.', test: (s, p) => L(s, p).mageDeaths >= 2 },
   houndPack:    { text: 'Summon eight golem units in one duel.', test: (s, p) => L(s, p).summons >= 8 },
+
+  /* ---------------------------------------------------------------- traps */
+  // Found by being in the situation the trap punishes: the Spellbook teaches
+  // you the snare after you have been cornered yourself.
+  snared:       { text: 'Have an enemy unit within 2m of your mage.', test: (s, p) => { const m = mageOf(s, p); return !!m && !m.dead && livingUnits(s).some((u) => u.owner !== p && within(u, m, 2000)); } },
+  mirrored:     { text: 'Have two Spells of yours destroyed by the opponent.', test: (s, p) => L(s, p).spellsDestroyed - L(s, p).spellsSacrificed >= 2 },
+  ambushed:     { text: 'Have an enemy unit within 1.5m of one of your golem units.', test: (s, p) => unitsOf(s, p).some((g) => g.kind === 'golem' && livingUnits(s).some((u) => u.owner !== p && within(u, g, 1500))) },
+
+  /* ------------------------------------------- red, the physical tranche */
+  starfall:     { text: 'Shove terrain a total of 12m.', test: (s, p) => L(s, p).terrainPushMm >= 12000 },
+  rubble:       { text: 'Shatter two terrain pieces and deal 15 damage.', test: (s, p) => L(s, p).propsBroken >= 2 && L(s, p).damageDealt >= 15 },
+  floored:      { text: 'Knock three enemy units flat in one duel.', test: (s, p) => L(s, p).knockdowns >= 3 },
+  hotFooted:    { text: 'Move your units 25 times and deal 10 damage.', test: (s, p) => L(s, p).moves >= 25 && L(s, p).damageDealt >= 10 },
+  ballista:     { text: 'Hit a unit with a thrown terrain piece twice.', test: (s, p) => L(s, p).terrainImpacts >= 2 },
+  kindled:      { text: 'Set three units ablaze in one duel.', test: (s, p) => L(s, p).unitsBurned >= 3 },
+  wildfire:     { text: 'Light five fires in one duel.', test: (s, p) => L(s, p).firesLit >= 5 },
+  skyborne:     { text: 'Cause four falls in one duel.', test: (s, p) => L(s, p).fallsCaused >= 4 },
 });
 
 export const FIND_IDS = Object.freeze(Object.keys(FINDS).sort());

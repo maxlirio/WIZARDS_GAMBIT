@@ -146,8 +146,12 @@ export function locate(state, uid) {
 /** The cells a card of this def may be PLAYED onto. */
 export function homeCells(def) {
   if (def.kind === 'golem') return [];
-  return HOME[def.kind === 'artifact' ? 'artifact' : def.school] || [];
+  // A trap is played face down into any EMPTY grey corner, like an artifact.
+  return HOME[def.kind === 'artifact' || def.kind === 'trap' ? 'artifact' : def.school] || [];
 }
+
+/** Is this card a face-down trap? One predicate, so no caller tests the kind by hand. */
+export const isTrap = (state, card) => !!card && defOf(state, card).kind === 'trap';
 
 export const onHomeColour = (state, spell) => {
   const def = defOf(state, spell);
@@ -165,6 +169,9 @@ export const onHomeColour = (state, spell) => {
  */
 export function prohibited(state, spell) {
   if (!spell) return true;
+  // A trap has one face and no corners: there is nothing to rotate TO, so no
+  // rotation -- voluntary, forced or from an effect -- ever moves it.
+  if (isTrap(state, spell)) return true;
   if (spell.noTurnUntil !== null && spell.noTurnUntil >= state.turn) return true;
   return !!ensureFresh(state)?.noTurn?.has(spell.uid);
 }
@@ -208,6 +215,7 @@ export function makeCard(state, defId, owner) {
     keywords: [],            // COPIED keywords only. Printed ones live on the def.
     noTurnUntil: null,
     turnsThisAction: 0,
+    concealed: false,        // a trap on the table is face down; see playFromHand
   };
 }
 
@@ -282,6 +290,10 @@ export function playFromHand(state, p, uid, cell) {
   // What the owner's counters read at this moment, so a gold objective can ask
   // for work done SINCE this card arrived (gates.js counted). Plain numbers.
   card.ledgerAtPlay = { ...state.players[p].ledger };
+  // A TRAP lands face down. Both engines hold the full state -- concealment
+  // is a matter for the view -- but the flag is real game state: a concealed
+  // card has no runes in play and springs on its own (traps.js).
+  card.concealed = defOf(state, card).kind === 'trap';
   place(state, p, card, cell);
   state.players[p].ledger.spellsPlayed++;
   fx(state, 'play', { uid, p, cell });
@@ -348,6 +360,8 @@ export function setRot(state, uid, rot, { forced = false, quiet = false } = {}) 
 export function shift(state, uid, cell) {
   const sp = findSpell(state, uid);
   if (!sp || sp.cell === null) return false;
+  // A trap stays in the corner it was set in: it is never shifted, by anyone.
+  if (isTrap(state, sp)) return false;
   if (!orthoNeighbours(sp.cell).includes(cell)) return false;
   if (occupied(state, sp.owner, cell)) return false;
   const from = sp.cell, p = sp.owner;
@@ -379,6 +393,7 @@ export function destroy(state, uid, { by = null, byP = null } = {}) {
   card.keywords = [];        // copied keywords do not survive leaving the table
   card.noTurnUntil = null;
   card.turnsThisAction = 0;
+  card.concealed = false;    // a trap destroyed unsprung is revealed in the discard
   state.players[card.owner].discard.push(card);
   state.players[card.owner].ledger.spellsDestroyed++;
   // The card beneath it (if any) is now showing: ITS corners are the fresh ones.
@@ -393,6 +408,33 @@ export function destroy(state, uid, { by = null, byP = null } = {}) {
   return card;
 }
 
+/**
+ * A TRAP SPRINGS. Its reaction has already run (traps.js); this is the card
+ * leaving the table: revealed, then into its owner's discard, its corner
+ * freed. Not `destroy`: nobody destroyed it, it did its job, so it counts
+ * against no "Spells destroyed" ledger and fires no afterDestroy.
+ *
+ * Called synchronously from inside a replacement handler or a queued
+ * listener, so it does nothing that could park: no question, no resolution.
+ */
+export function springTrap(state, uid) {
+  const at = locate(state, uid);
+  if (!at || at.zone !== 'table') return null;
+  const card = extract(state, uid);
+  const def = defOf(state, card);
+  fx(state, 'trapSpring', { uid, p: at.player, cell: at.cell, def: def.id, name: def.name });
+  card.cell = null;
+  card.rot = 0;
+  card.keywords = [];
+  card.noTurnUntil = null;
+  card.turnsThisAction = 0;
+  card.concealed = false;
+  state.players[card.owner].discard.push(card);
+  // The corner is empty now; nothing on it is fresh.
+  markDirty(state, at.player, null);
+  return card;
+}
+
 /* ------------------------------------------------------------ hand/deck */
 
 /**
@@ -403,10 +445,16 @@ export function destroy(state, uid, { by = null, byP = null } = {}) {
  * discard every time it scores. The round trip through the discard IS the VP
  * throttle, so the discard has to be able to come back.
  */
+export const HAND_MAX = 5;
+
 export function draw(state, p, n = 1) {
   const pl = state.players[p];
   const got = [];
   for (let i = 0; i < n; i++) {
+    // FIVE CARDS IS THE HAND. A full hand draws nothing -- not the turn's
+    // draw, not a card's "draw a card" (user: "a five card hand limit that
+    // actually you can't draw cards if you have five").
+    if (pl.hand.length >= HAND_MAX) { fx(state, 'handFull', { p, n: n - i }); break; }
     if (!pl.deck.length) {
       if (!pl.discard.length) break;
       pl.deck = shuffle(state.rng, pl.discard);

@@ -70,7 +70,7 @@ const speedOf = (force, mass) => clamp(idiv(force * 25, imax(1, mass)), 5, 100);
  * you into it -- unless the push carries [Levitate].
  */
 export function push(state, body, dir, force, {
-  depth = 0, byP = null, crush = false, levitate = false, chain = null, mm = null, speed = null,
+  depth = 0, byP = null, crush = false, levitate = false, chain = null, mm = null, speed = null, settle = true,
 } = {}) {
   const log = chain || [];
   if (!body || body.dead) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
@@ -134,6 +134,9 @@ export function push(state, body, dir, force, {
     if (isUnitBody(body) && byP !== null) {
       bump(state.players[byP].ledger, 'unitsPushed');
       bump(state.players[byP].ledger, 'pushMm', total);
+    } else if (!isUnitBody(body) && byP !== null) {
+      // Terrain you shoved, by distance: the Spellbook's "shove terrain 12m".
+      bump(state.players[byP].ledger, 'terrainPushMm', total);
     }
     fx(state, 'push', {
       id: body.id, body: body.body, mm: total, dir, from: { x: x0, y: y0 },
@@ -145,7 +148,9 @@ export function push(state, body, dir, force, {
     if (depth === 0) fx(state, 'pushResult', { id: body.id, want: budget, got: total, body: body.body });
   }
 
-  if (depth === 0) {
+  // `settle: false` leaves the falls QUEUED for the caller to resolve: a
+  // Skyfall throws a unit through the air and wants to credit its landing.
+  if (depth === 0 && settle) {
     recheckSupport(state);
     const landed = resolveFalls(state, hurt);
     for (const l of landed) {
@@ -176,11 +181,16 @@ function impact(state, body, mass, remaining, blockedBy, dir, v, { byP, crush, d
     id: body.id, body: body.body, into: { kind: blockedBy.kind, id: blockedBy.id ?? null },
     dmg, at: { x: body.x, y: body.y, z: body.z }, dir, speed: v,
   });
+  // A thrown rock that lands on somebody: the Spellbook's "hit a unit with a
+  // thrown terrain piece", counted before the damage so a kill still counts.
+  if (!isUnitBody(body) && other && isUnitBody(other) && byP !== null && byP !== undefined) {
+    bump(state.players[byP].ledger, 'terrainImpacts');
+  }
   if (dmg > 0) {
-    if (isUnitBody(body)) { hurt(state, body, dmg, { cause: 'impact', byP }); knockdown(state, body, dmg, dir); }
+    if (isUnitBody(body)) { hurt(state, body, dmg, { cause: 'impact', byP }); knockdown(state, body, dmg, dir, byP); }
     else smashProp(state, body, dmg, { byP, cause: 'impact' });
     if (other) {
-      if (isUnitBody(other)) { hurt(state, other, dmg, { cause: 'impact', byP }); knockdown(state, other, dmg, dir); }
+      if (isUnitBody(other)) { hurt(state, other, dmg, { cause: 'impact', byP }); knockdown(state, other, dmg, dir, byP); }
       else smashProp(state, other, dmg, { byP, cause: 'impact' });
     }
   }
@@ -194,10 +204,22 @@ function impact(state, body, mass, remaining, blockedBy, dir, v, { byP, crush, d
 }
 
 /** Slammed hard enough and a unit is winded: it loses its action this turn. */
-function knockdown(state, u, dmg, dir) {
+function knockdown(state, u, dmg, dir, byP = null) {
   if (!u || u.dead || dmg < KNOCKDOWN_DMG) return;
+  knockDown(state, u, dir, { byP });
+}
+
+/**
+ * Knock a unit flat outright: it loses its action this turn. The one funnel
+ * for every knockdown -- an impact's, a topple's, a Thunderclap's -- so the
+ * view hears about each and the ledger credits whoever did it.
+ */
+export function knockDown(state, u, dir = 0, { byP = null } = {}) {
+  if (!u || u.dead) return false;
   u.acted = true;
+  if (byP !== null && byP !== undefined && byP !== u.owner) bump(state.players[byP].ledger, 'knockdowns');
   fx(state, 'knockdown', { id: u.id, dir });
+  return true;
 }
 
 /**
@@ -225,7 +247,7 @@ export function topple(state, prop, dir, { byP = null } = {}) {
   for (const id of hits) {
     const u = findUnit(state, id);
     hurt(state, u, spec.tipDmg, { cause: 'topple', byP });
-    knockdown(state, u, spec.tipDmg, dir);
+    knockdown(state, u, spec.tipDmg, dir, byP);
   }
   shatterProp(state, prop, { byP, cause: 'topple' });
   return true;

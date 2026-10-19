@@ -360,3 +360,26 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
   background: radial-gradient(circle, #e6f4ff 0%, #9a66ff 45%, transparent 70%); box-shadow: 0 0 14px #9a66ff; }
 .bond.spent { opacity: .35; animation: none; filter: saturate(.4); }
 @keyframes bondpulse { 0%, 100% { opacity: .75; } 50% { opacity: 1; } }
+
+/* ------------------------------------------------------------ traps */
+/* A trap on the table: the owner's is dimmed and badged; the enemy's is a
+   card back. When one springs, the real card flashes up over the cell for a
+   moment and then slides off toward the discard. */
+.card-svg .trap-word { font: 900 150px Cinzel, serif; letter-spacing: .12em; }
+.card-svg .trap-word.sm { font-size: 72px; letter-spacing: .18em; }
+.card.on-table.trap .cbody { position: absolute; inset: 0; }
+.card.on-table.trap.mine { opacity: .62; filter: saturate(.7); }
+.cell.trap-set:hover .card.on-table.trap.mine { opacity: .9; }
+.trapbadge { font: 700 9px Cinzel, serif; letter-spacing: .08em; color: #e8ecf3; background: #1b1f27; border: 1px solid #c3cad677; padding: 1px 5px; border-radius: 4px; }
+.table.small .trapbadge { font-size: 7px; padding: 0 4px; }
+.trapreveal { position: absolute; inset: 0; z-index: 5; pointer-events: none; animation: trapreveal 1.9s ease-in forwards; filter: drop-shadow(0 0 14px #fff) drop-shadow(0 8px 20px #000); }
+.trapreveal .card-svg { width: 100%; height: 100%; }
+@keyframes trapreveal {
+  0% { transform: scale(.6) rotateY(90deg); opacity: 0; }
+  12% { transform: scale(1.18) rotateY(0deg); opacity: 1; }
+  22% { transform: scale(1.08); }
+  78% { transform: scale(1.08) translateY(0); opacity: 1; }
+  100% { transform: scale(.5) translateY(140%); opacity: 0; }
+}
+.cell.flash-trap { animation: flashTrap 1.6s ease-out; }
+@keyframes flashTrap { 0% { box-shadow: 0 0 0 4px #fff, 0 0 70px #e8ecf3; filter: brightness(2.4); } 100% { } }

@@ -56,6 +56,10 @@ export function emptyLedger() {
     terrainRemoved: 0,
     propsBroken: 0,           // terrain pieces you shattered
     firesLit: 0,              // pieces you set alight
+    terrainPushMm: 0,         // how far you have shoved terrain, in total
+    terrainImpacts: 0,        // units hit by a terrain piece you threw
+    knockdowns: 0,            // enemy units you knocked flat
+    unitsBurned: 0,           // units you set burning (the status, not the terrain)
     climbs: 0,
     highGroundEnds: 0,        // turns ended with a friendly unit on high ground
 
@@ -94,7 +98,10 @@ export const DIAGNOSTIC = Object.freeze([
   'reshuffles', 'cardsFound', 'inertResolutions', 'fallDamage',
   'golemCardsLost', 'objectivesScored', 'vpFromObjectives', 'vpFromKills',
   'unitsLost', 'mageDeaths', 'forcedRotations', 'artifactsPlayed', 'golemsPlayed',
-  'spellsPlayed', 'propsBroken', 'firesLit',
+  'spellsPlayed',
+  // propsBroken and firesLit WERE instruments; the red terrain cards'
+  // Spellbook conditions (rubble, wildfire) now read them, so they are game
+  // counters like any other.
 ]);
 
 export const bump = (ledger, key, by = 1) => {

@@ -83,6 +83,10 @@ export { REVOLUTION };
  * orient.js says so in its header and verify-faces.js plants exactly this fault.
  */
 export function runeAtCorner(state, spell, pos) {
+  // A trap has NO corners: face down, nothing shows, and even a wildcard
+  // beside it has nothing to agree with. `null` is "no rune here", and
+  // `runesMatch` below refuses it against everything, WILD included.
+  if (defOf(state, spell).kind === 'trap') return null;
   const d = ensureFresh(state);
   if (d.wildCorners.has(spell.uid)) return WILD;
   const runes = d.runeOverride.get(spell.uid) || defOf(state, spell).runes;
@@ -93,7 +97,7 @@ export function runeAtCorner(state, spell, pos) {
  * Do two touching corners match? A wildcard matches anything, including
  * another wildcard.
  */
-const runesMatch = (a, b) => a === WILD || b === WILD || a === b;
+const runesMatch = (a, b) => a !== null && b !== null && (a === WILD || b === WILD || a === b);
 
 /**
  * Every site that matches right now.

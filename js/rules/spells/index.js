@@ -13,6 +13,7 @@ import './green.js';
 import './purple.js';
 import './gold.js';
 import './grey.js';
+import './traps.js';
 import './golems.js';
 
 import { validateGate } from '../gates.js';
@@ -57,16 +58,18 @@ export { CARDS, allCards, bySchool, byKind, inertReport };
  * Spellbook buys you is knowing which conditions find which cards, and being
  * able to aim a match at them.
  *
- * One of each school plus an artifact and a golem, so every cell on the table
- * is reachable from the opening hand and no school is dead on turn one. The
- * duplicate Change and Ember Lash are deliberate: a ten-card deck with ten
- * unique cards draws like a toolbox, and you want at least one card you expect
- * to see twice.
+ * One of each school plus an artifact, a trap and a golem, so every cell on
+ * the table is reachable from the opening hand and no school is dead on turn
+ * one. The duplicate Ember Lash is deliberate: a ten-card deck with ten unique
+ * cards draws like a toolbox, and you want at least one card you expect to see
+ * twice. The second Change gave way to EARTH WALL (2026-10-19) so that a
+ * face-down trap is in every real duel: the opponent has to play around a
+ * grey corner they cannot read.
  */
 export const STANDARD_DECK = Object.freeze([
   'EMBER_LASH', 'EMBER_LASH',
   'SHIFT',
-  'CHANGE', 'CHANGE',
+  'CHANGE', 'EARTH_WALL',
   'FUSE',
   'TALLY', 'RECKONING',
   'FOCUS_STONE',

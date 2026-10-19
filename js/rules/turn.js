@@ -15,7 +15,7 @@ import { fx, draw } from './ops.js';
 import { emit } from './triggers.js';
 import { refresh } from './derive.js';
 import {
-  respawnMage, startUnitTurn, tickPoison, recordHighGround, pendingUnits,
+  respawnMage, startUnitTurn, tickPoison, tickBurn, recordHighGround, pendingUnits,
 } from './units.js';
 import { mageOf } from '../field/query.js';
 import { tickFire } from '../field/push.js';
@@ -39,6 +39,8 @@ export function beginTurn(state) {
   if (state.turn > 1) draw(state, p, 1);
   refresh(state);
   tickPoison(state, p);
+  // A unit set alight (Immolate) burns at the start of its own turns.
+  tickBurn(state, p);
   // Whatever is burning bites now, on EVERY turn start -- fire takes no sides.
   tickFire(state);
   fx(state, 'turnStart', { p, turn: state.turn });

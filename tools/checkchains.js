@@ -369,7 +369,10 @@ for (const [label, layout] of CASES) {
   // hand-built cases cover the shapes that were thought of; this covers the
   // ones that were not.
   const rng = seedRng(0xfeed);
-  const pool = Object.keys(ADVERSARIAL).sort().concat(Object.keys(CARDS).filter((k) => CARDS[k].kind !== 'golem').sort());
+  // Traps are left out: they have no corners and never sit anywhere but a
+  // grey corner at rot 0 (the invariants hold them to it), so a trap on a
+  // random cell at a random rotation is a board the game cannot reach.
+  const pool = Object.keys(ADVERSARIAL).sort().concat(Object.keys(CARDS).filter((k) => CARDS[k].kind !== 'golem' && CARDS[k].kind !== 'trap').sort());
   let worstChain = 0, worstAction = 0, broken = 0;
   for (let i = 0; i < FUZZ; i++) {
     const layout = [];

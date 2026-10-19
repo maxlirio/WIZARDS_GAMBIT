@@ -117,7 +117,7 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     return g;
   }
 
-  const builders = { boulder, pillar, shard, wall, floater, tree };
+  const builders = { boulder, pillar, shard, wall, floater, tree, earthwall };
 
   function makeProp(pr) {
     const r = propR(pr) * MM, h = propH(pr) * MM;
@@ -149,6 +149,70 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
       update: (dt, now) => P.update?.(dt, now),
     });
     return g;
+  }
+
+  /* ------------------------------------------------------------ earthwall */
+
+  /**
+   * A berm of PACKED EARTH heaved up by the Earth Wall trap: a rough slab,
+   * widest at the foot, in dark soil tones with stones and roots showing
+   * through the broken face and sods of turf along the crest. Built from
+   * jittered blocks and lumps so no two are the same; it rises through the
+   * arena's `raised` scale tween, and as it breaks its clods fall away.
+   */
+  function earthwall(P) {
+    const { r, h, rnd, body } = P;
+    const len = r * 2, thick = r * 0.62;
+    const soil = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+    const col = new THREE.Color();
+    const fixed = [];
+    // The slab: a slanted heap of coarse blocks, each one leaning out a
+    // little, dark wet earth at the base shading to drier dust at the top.
+    const rows = 4, rowH = h / rows;
+    for (let row = 0; row < rows; row++) {
+      const w = len * (1.04 - row * 0.09), d = thick * (1.1 - row * 0.14);
+      let x = -w / 2;
+      while (x < w / 2 - 0.05) {
+        const bw = Math.min(0.26 + rnd() * 0.3, w / 2 - x);
+        const bh = rowH * (0.85 + rnd() * 0.35);
+        const geo = new THREE.BoxGeometry(bw, bh, d * (0.85 + rnd() * 0.3), 2, 2, 2);
+        jitter(geo, 0.22, Math.floor(rnd() * 1e6) + 1);
+        const t = row / (rows - 1);
+        // sRGB hex, not setRGB: linear values this dark render as tan.
+        // Wet umber at the foot, drier and dustier toward the crest.
+        col.setHex([0x3b2a1c, 0x4a3524, 0x5a4330, 0x6a5440][row]).offsetHSL(0, 0, (rnd() - 0.5) * 0.06);
+        paint(geo, col);
+        const m = new THREE.Matrix4().compose(
+          new THREE.Vector3(x + bw / 2, row * rowH + bh / 2 - 0.02, (rnd() - 0.5) * 0.08),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.18, (rnd() - 0.5) * 0.12, (rnd() - 0.5) * 0.14)),
+          new THREE.Vector3(1, 1, 1));
+        fixed.push(geo.applyMatrix4(m));
+        x += bw * 0.92;
+      }
+    }
+    // Stones caught in the dirt, and pale roots torn through the face.
+    for (let i = 0; i < 9; i++) {
+      const g = blobGeo(0.07 + rnd() * 0.1, rnd, { x: (rnd() - 0.5) * len * 0.9, y: 0.1 + rnd() * h * 0.8, z: (rnd() < 0.5 ? -1 : 1) * thick * 0.5, flat: 0.8 });
+      fixed.push(paint(g, col.setHex([0x6e675d, 0x7d7569, 0x8c8478, 0x5f5952][Math.floor(rnd() * 4)])));
+    }
+    for (let i = 0; i < 5; i++) {
+      const root = new THREE.CylinderGeometry(0.012, 0.03, 0.25 + rnd() * 0.3, 5);
+      root.rotateZ(1.2 + rnd() * 0.8); root.rotateY(rnd() * 6.28);
+      root.translate((rnd() - 0.5) * len * 0.8, 0.15 + rnd() * h * 0.5, (rnd() < 0.5 ? -1 : 1) * thick * 0.52);
+      fixed.push(paint(root, col.setHex(0xa8906a)));
+    }
+    body.add(new THREE.Mesh(mergeGeometries(fixed.map((g) => (g.index ? g.toNonIndexed() : g))), soil));
+    // Sods of turf along the crest, grass side up, and the loose clods at
+    // the foot that the heave threw out -- shown one by one as it breaks.
+    const specs = [];
+    for (let i = 0; i < 6; i++) specs.push([0x55702e, 0.09 + rnd() * 0.08, { x: (rnd() - 0.5) * len * 0.85, y: h - 0.02, z: (rnd() - 0.5) * thick * 0.6, flat: 0.35 }]);
+    const fixedN = specs.length;
+    for (let i = 0; i < 6; i++) specs.push([0x3a2d1f, 0.06 + rnd() * 0.07, { x: (rnd() - 0.5) * len * 1.3, y: 0.03, z: (rnd() < 0.5 ? -1 : 1) * (thick * 0.6 + rnd() * 0.3) }]);
+    const lump = lumps(mats.lump, specs, rnd, fixedN);
+    body.add(lump);
+    P.lean.base = 0;
+    P.lean.extra = 0.1;
+    P.damage = (f) => { let n = 0; for (let i = 0; i < 6; i++) if (f > 0.1 + i * 0.15) n = i + 1; lump.userData.show(n); };
   }
 
   /* ------------------------------------------------------------ boulder */

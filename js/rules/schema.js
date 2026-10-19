@@ -17,7 +17,7 @@ import { NUMERALS } from './orient.js';
 // 'golem' is a pseudo-school: golem cards go into slots, not onto cells, so
 // HOME has no entry for it and CELL_COLOR can never equal it.
 export const SCHOOLS = Object.freeze(['red', 'blue', 'green', 'purple', 'gold', 'grey', 'golem']);
-export const KINDS = Object.freeze(['spell', 'artifact', 'golem']);
+export const KINDS = Object.freeze(['spell', 'artifact', 'golem', 'trap']);
 export const TIERS = Object.freeze(['A', 'B', 'C']);
 
 /**
@@ -86,6 +86,7 @@ export function makeDef(spec) {
   // A 'spell' on grey would be playable nowhere (grey cells take artifacts), and
   // a golem authored as red would be summonable from a cell that has no slot.
   if (kind === 'artifact' && school !== 'grey') bad(id, 'artifacts must be grey');
+  if (kind === 'trap' && school !== 'grey') bad(id, 'traps must be grey -- they are played face down into a grey corner');
   if (kind === 'spell' && (school === 'grey' || school === 'golem')) {
     bad(id, `a ${school} card cannot be a plain spell`);
   }
@@ -113,6 +114,31 @@ export function makeDef(spec) {
     });
   }
   if (spec.tier || spec.unit) bad(id, 'tier/unit are golems only');
+
+  /* ----------------------------------------------------------------- traps */
+  // A TRAP has ONE face, side I, and no corner runes. It is played face down
+  // into a grey corner, never rotates (there is nothing to rotate to), never
+  // matches (no corners), and springs on its own when its trigger is met
+  // during the opponent's turn -- see js/rules/traps.js. Like a golem card it
+  // is not four-sided, so the schema refuses sides II-IV rather than letting
+  // three unreachable faces be authored.
+  if (kind === 'trap') {
+    if (spec.runes) bad(id, 'a trap card has no corner runes');
+    for (const n of ['II', 'III', 'IV']) if (spec[n]) bad(id, `a trap card has no side ${n}`);
+    const f = spec.I;
+    if (!f) bad(id, 'a trap needs side I');
+    for (const k of Object.keys(f)) if (!FACE_KEYS.includes(k)) bad(id, `side I: unknown key '${k}'`);
+    if (!f.text || !/^TRAP:/.test(f.text)) bad(id, 'a trap\'s text must start with "TRAP:"');
+    if (!f.replace && !f.on) bad(id, 'a trap needs a trigger: a `replace` or an `on` hook');
+    if (f.effect || f.passive || f.passive2 || f.cost || f.gate || f.objective) bad(id, 'a trap face is only its trigger and reaction');
+    return Object.freeze({
+      id, name: spec.name, school, kind,
+      keywords: Object.freeze([...new Set(spec.keywords || [])].sort()),
+      runes: Object.freeze([]),
+      faces: Object.freeze([Object.freeze({ ...f, numeral: 'I', index: 0 })]),
+      found: spec.found || null, flavour: spec.flavour || null,
+    });
+  }
 
   /* ---------------------------------------------------------------- runes */
   const runes = spec.runes;

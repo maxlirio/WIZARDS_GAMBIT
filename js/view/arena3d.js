@@ -189,6 +189,7 @@ export function createArena(host, state, handlers = {}) {
       if (u.dead) {
         if (rec && !rec.actor.dead) {
           if (rec.slide) { endSlide(rec.slide); rec.slide = null; }
+          if (rec.burning) { rec.burning = false; fx.unburn(`u${u.id}`); }
           rec.actor.die();
           const kept = rec;
           actors.delete(u.id);
@@ -221,12 +222,20 @@ export function createArena(host, state, handlers = {}) {
       rec.target.set(u.x * MM, u.z * MM, u.y * MM);
       const name = handlers.unitLabel ? handlers.unitLabel(u) : u.kind === 'mage' ? 'Mage' : (s.defs[u.def]?.name || 'Golem');
       const pips = Array.from({ length: u.maxHp }, (_, i) => `<i class="${i < u.hp ? 'f' : ''}"></i>`).join('');
-      const html = `<b>${name}</b><span class="hp">${pips}</span>${u.poison ? `<em class="poi">☠${u.poison}</em>` : ''}${u.acted && s.active === u.owner && s.phase === 'unit' ? '<em>done</em>' : ''}`;
+      const html = `<b>${name}</b><span class="hp">${pips}</span>${u.poison ? `<em class="poi">☠${u.poison}</em>` : ''}${u.burn > 0 ? `<em class="poi" style="color:#ff9a3a">🔥${u.burn}</em>` : ''}${u.acted && s.active === u.owner && s.phase === 'unit' ? '<em>done</em>' : ''}`;
       if (rec.label.innerHTML !== html) rec.label.innerHTML = html;
       rec.label.classList.toggle('acted', !!u.acted && s.active === u.owner);
+      // A burning UNIT (Immolate): small flames ride on the body while the
+      // status lasts, driven off the state like a burning tree's.
+      const alight = u.burn > 0;
+      if (alight && !rec.burning) {
+        rec.burning = true;
+        const p0 = rec.actor.root.position;
+        fx.burn(`u${u.id}`, p0.x, p0.y + 0.3, p0.z, 0.22, rec.actor.height * 0.6, { rate: 0.45 });
+      } else if (!alight && rec.burning) { rec.burning = false; fx.unburn(`u${u.id}`); }
     }
     for (const [id, rec] of actors) {
-      if (!seen.has(id)) { if (rec.slide) endSlide(rec.slide); rec.gather?.cancel(); scene.remove(rec.actor.root); rec.label.remove(); rec.actor.dispose(); actors.delete(id); }
+      if (!seen.has(id)) { if (rec.slide) endSlide(rec.slide); rec.gather?.cancel(); if (rec.burning) { rec.burning = false; fx.unburn(`u${id}`); } scene.remove(rec.actor.root); rec.label.remove(); rec.actor.dispose(); actors.delete(id); }
     }
     for (const pr of s.field.props) {
       let m = propMeshes.get(pr.id);
@@ -236,15 +245,20 @@ export function createArena(host, state, handlers = {}) {
         propMeshes.set(pr.id, m);
         m.position.set(pr.x * MM, pr.z * MM, pr.y * MM);
         if (pr.raised) { m.scale.y = 0.01; fx.tween(0.7, (t) => { m.scale.y = 0.01 + fx.ease.out(t) * 0.99; }); fx.dust(pr.x * MM, pr.z * MM, pr.y * MM, { n: 30, size: 0.8 }); fx.shake(0.05, 0.4); }
+        // Earth heaving up throws clods and a darker dust than stone does.
+        if (pr.raised && pr.kind === 'earthwall') { fx.debris(pr.x * MM, pr.z * MM + 0.3, pr.y * MM, { n: 14, colour: 0x4a3a28, size: 0.1, spread: m.userData.r * 1.1, up: 3.5 }); fx.dust(pr.x * MM, pr.z * MM, pr.y * MM, { n: 36, size: 0.9, colour: 0x5a4a36, spread: 0.6, up: 1.6 }); fx.shake(0.08, 0.5); }
       }
       m.userData.target = new THREE.Vector3(pr.x * MM, pr.z * MM, pr.y * MM);
       // The engine has already written the piece off, but its fall has not
       // played yet: it stays up, whole and unburst, until the topple cue ends.
       if (topplePending.has(pr.id)) continue;
+      // A meteor's boulder is on the engine's field before its streak has
+      // played: it stays out of sight until the cue puts it down.
+      if (meteorPending.has(pr.id)) { m.visible = false; continue; }
       const on = propOnBoard(s, pr);
       if (m.visible && !on && pr.destroyed && !m.userData.shattered) {
         m.userData.shattered = true;
-        fx.debris(pr.x * MM, pr.z * MM, pr.y * MM, { n: pr.kind === 'shard' ? 8 : 12, colour: pr.kind === 'shard' ? 0x7fdcff : pr.kind === 'tree' ? 0x2a1d12 : 0x6b6358, size: m.userData.r * 0.45, spread: m.userData.r, up: 3 + m.userData.h });
+        fx.debris(pr.x * MM, pr.z * MM, pr.y * MM, { n: pr.kind === 'shard' ? 8 : 12, colour: pr.kind === 'shard' ? 0x7fdcff : pr.kind === 'tree' ? 0x2a1d12 : pr.kind === 'earthwall' ? 0x4a3a28 : 0x6b6358, size: m.userData.r * 0.45, spread: m.userData.r, up: 3 + m.userData.h });
         fx.shake(0.06, 0.35);
         fx.unburn(pr.id);
         if (pr.kind === 'tree') {
@@ -281,6 +295,7 @@ export function createArena(host, state, handlers = {}) {
   }
   const stumps = [];
   const topplePending = new Set();   // prop ids whose topple cue is scheduled but not finished
+  const meteorPending = new Set();   // boulder ids whose meteor streak has not landed yet
 
   /* ---------------------------------------------------------- markers */
   const markerGroup = new THREE.Group();
@@ -432,15 +447,16 @@ export function createArena(host, state, handlers = {}) {
       if (!rec) return;
       // The body reacts to WHAT hit it: a flinch, a flail of burning robes, a
       // stiff spasm, or being slammed flat.
-      const crushing = cause === 'crush' || cause === 'rock' || cause === 'impact' || cause === 'topple';
-      const kind = cause === 'fire' ? 'fire' : cause === 'lightning' ? 'lightning' : crushing ? 'crush' : 'blow';
+      const crushing = cause === 'crush' || cause === 'rock' || cause === 'impact' || cause === 'topple' || cause === 'shrapnel';
+      const fiery = cause === 'fire' || cause === 'burn' || cause === 'charge';
+      const kind = fiery ? 'fire' : cause === 'lightning' || cause === 'thunder' ? 'lightning' : crushing ? 'crush' : 'blow';
       // A slam's cue (impact, topple) has just thrown the body down; the
       // damage note that follows it only adds the number, not a second fall.
       if (performance.now() - rec.crushedAt > 1200) rec.actor.hit(kind);
       const p = rec.actor.root.position;
-      const col = cause === 'fire' ? 0xff7a20 : cause === 'lightning' ? 0xb8ecff : cause === 'poison' ? 0x7fe04a : cause === 'fall' || crushing ? 0xd9c9a8 : 0xff4040;
+      const col = fiery ? 0xff7a20 : cause === 'lightning' || cause === 'thunder' ? 0xb8ecff : cause === 'poison' ? 0x7fe04a : cause === 'fall' || crushing ? 0xd9c9a8 : 0xff4040;
       fx.pools.sparks.emit({ x: p.x, y: p.y + rec.actor.height * 0.5, z: p.z, n: 14, spread: 0.2, vspread: 3, vy: 1.5, life: 0.5, size: 0.1, sizeEnd: 0.02, color: 0xffffff, colorEnd: col, gravity: -8 });
-      floatAtUnit(id, `−${amount}`, cause === 'fire' ? 'dmg fire' : 'dmg');
+      floatAtUnit(id, `−${amount}`, fiery ? 'dmg fire' : 'dmg');
       if (cause === 'fall' || crushing) fx.shake(0.05, 0.3);
     },
     heal(id, amount) { const p = unitPos(id); if (p) fx.motes(p.x, p.y, p.z, 0x6cf09a, { n: 28 }); floatAtUnit(id, `+${amount}`, 'heal'); },
@@ -607,6 +623,156 @@ export function createArena(host, state, handlers = {}) {
     fall(id, drop) {
       const rec = actors.get(id);
       if (rec && drop > 300) floatAtUnit(id, `fell ${(drop / 1000).toFixed(1)}m`, 'fall');
+      // A body a Skyfall held in the air comes down now: gravity, then a thump.
+      if (rec && rec.airborne && rec.airY > 0) {
+        const h0 = rec.airY, dur = Math.max(0.3, Math.sqrt(2 * h0 / 9.8));
+        if (rec.actor.tumble) rec.actor.tumble(dur);
+        fx.tween(dur, (t) => { rec.airY = h0 * (1 - t * t); }, () => {
+          rec.airY = 0; rec.airborne = false;
+          const p = rec.actor.root.position;
+          fx.dust(p.x, p.y, p.z, { n: 26 + drop / 100, size: 0.7 }); fx.ring(p.x, p.y, p.z, 1.4 + drop / 2000, 0xd9c9a8, { dur: 0.5 }); fx.shake(0.06 + drop / 30000, 0.35);
+        });
+      }
+    },
+    /** Skyfall: the unit is hauled `mm` straight up and hangs there until it is thrown and falls. */
+    lift(id, mm) {
+      const rec = actors.get(id);
+      if (!rec) return;
+      const h = mm * MM;
+      rec.airborne = true;
+      if (rec.actor.jump) rec.actor.jump(10);
+      fx.tween(0.45, (t) => { rec.airY = fx.ease.out(t) * h; }, () => { rec.airY = h; });
+      const p = rec.actor.root.position;
+      fx.motes(p.x, p.y, p.z, 0xffa64a, { n: 30, up: 3.5, r: 0.4 });
+      fx.ring(p.x, p.y, p.z, 1.2, 0xffa64a, { dur: 0.5, width: 0.1 });
+      fx.flash(p.x, p.y + 1, p.z, 0xffa64a, 8, 0.4, 5);
+    },
+    /**
+     * Meteor Call: a glowing rock streaks down out of the sky onto `at`
+     * (engine mm), explodes, cracks the ground and throws dust and stone.
+     * The engine's boulder is revealed by meteorLand at the same moment.
+     */
+    meteorIncoming(at, radius = 1000) {
+      const B = new THREE.Vector3(at.x * MM, at.z * MM, at.y * MM);
+      // From high and to one side, so the streak crosses the frame rather
+      // than dropping straight down out of the sky the camera cannot see.
+      const A = B.clone().add(new THREE.Vector3(-7, 8.5, 4));
+      fx.bolt(A, B, { colour: 0xff7a1a, dur: 0.85, size: 0.7, arc: 0.3, trail: 'fire', light: 24, onArrive: () => {
+        const r = Math.max(1.2, radius * MM * 1.4);
+        fx.explosion(B.x, B.y, B.z, { r, colour: 0xff8a2a });
+        fx.ring(B.x, B.y, B.z, r * 2.4, 0xffd090, { dur: 0.55, width: 0.2 });
+        fx.debris(B.x, B.y + 0.2, B.z, { n: 18, colour: 0x6b6358, size: 0.16, spread: 0.6, up: 5 });
+        fx.debris(B.x, B.y + 0.2, B.z, { n: 10, colour: 0x3a2a20, size: 0.1, spread: 1.2, up: 3 });
+        fx.dust(B.x, B.y, B.z, { n: 60, size: 1.1, spread: 0.8, up: 2.2, colour: 0x7a6a55 });
+        fx.scorch(B.x, B.y, B.z, r * 1.1);
+        fx.shake(0.22, 0.6);
+      } });
+    },
+    meteorPending(propId) { meteorPending.add(propId); },
+    meteorLand(propId, at) {
+      meteorPending.delete(propId);
+      const m = propMeshes.get(propId);
+      if (!m) return;
+      m.visible = true;
+      m.position.set(at.x * MM, at.z * MM, at.y * MM);
+      // Hot from the fall: a glow that cools, and a settle as it beds in.
+      const inner = m.userData.inner;
+      inner.scale.set(1.25, 0.8, 1.25);
+      fx.tween(0.5, (t) => { const k = 1 - fx.ease.out(t); inner.scale.set(1 + 0.25 * k, 1 - 0.2 * k, 1 + 0.25 * k); }, () => inner.scale.setScalar(1));
+      fx.burn(propId + ':hot', m.position.x, m.position.y, m.position.z, m.userData.r * 0.8, m.userData.h * 0.5, { rate: 0.6 });
+      fx.tween(2.2, () => {}, () => fx.unburn(propId + ':hot'));
+    },
+    /** Stoneburst: the piece bursts outward, chips flying at everyone near it. */
+    shrapnel(propId, at, radius = 1500) {
+      const m = propMeshes.get(propId);
+      const P = m ? m.position.clone() : new THREE.Vector3(at.x * MM, at.z * MM, at.y * MM);
+      const r = radius * MM;
+      const colour = m?.userData.kind === 'shard' ? 0x7fdcff : m?.userData.kind === 'tree' ? 0x2a1d12 : 0x6b6358;
+      fx.flash(P.x, P.y + 0.8, P.z, 0xfff0d0, 18, 0.3, 7);
+      fx.ring(P.x, P.y, P.z, r * 1.3, 0xd9c9a8, { dur: 0.45, width: 0.14 });
+      fx.debris(P.x, P.y + 0.5, P.z, { n: 28, colour, size: 0.12, spread: 0.3, up: 4.5 });
+      fx.pools.sparks.emit({ x: P.x, y: P.y + 0.6, z: P.z, n: 90, spread: 0.2, radial: 7, radialSpread: 3, vy: 1.5, life: 0.6, lifeSpread: 0.25, size: 0.07, sizeEnd: 0.02, color: 0xffffff, colorEnd: colour, gravity: -9, drag: 0.8 });
+      fx.dust(P.x, P.y, P.z, { n: 40, size: 0.8, spread: 0.6, up: 1.6 });
+      fx.shake(0.14, 0.4);
+    },
+    /** Thunderclap: a crack of light at the caster and a shock ring that floors the circle. */
+    thunderclap(p, at, radius = 2000) {
+      const m = mageOf(p);
+      const P = m ? m.actor.root.position.clone() : new THREE.Vector3(at.x * MM, at.z * MM, at.y * MM);
+      const r = radius * MM;
+      m?.actor.cast('raise');
+      fx.lightning(P.clone().add(new THREE.Vector3(0.3, 7, -0.2)), P.clone().add(new THREE.Vector3(0, 1.6, 0)), { colour: 0xcfeeff });
+      fx.flash(P.x, P.y + 1.6, P.z, 0xdff6ff, 40, 0.35, r * 2.5, { flicker: 0.6 });
+      fx.ring(P.x, P.y, P.z, r, 0xdff6ff, { dur: 0.45, width: 0.12 });
+      fx.ring(P.x, P.y, P.z, r * 0.8, 0xffffff, { dur: 0.7, width: 0.5, opacity: 0.5, thin: false });
+      fx.burst(P.x, P.y + 1.2, P.z, 0xbfe8ff, { n: 40, r: 0.5, up: 2 });
+      fx.dust(P.x, P.y, P.z, { n: 50, size: 0.7, spread: r * 0.5, up: 1.4 });
+      fx.shake(0.16, 0.45);
+    },
+    /**
+     * Blazing Charge: the mage dashes from `from` to `to` over `dur` ms with
+     * fire streaming off it. The sync has already put the engine's target at
+     * `to`; the body is set back and run from there.
+     */
+    charge(id, from, to, dir = 0, mm = 3000, dur = 700) {
+      const rec = actors.get(id);
+      if (!rec) return;
+      const pos = rec.actor.root.position;
+      const A = new THREE.Vector3(from.x * MM, from.z * MM, from.y * MM);
+      const B = new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM);
+      pos.set(A.x, A.y, A.z);
+      rec.actor.lookAt(B.x, B.z);
+      fx.flash(A.x, A.y + 1, A.z, 0xff9a3a, 14, 0.4, 6);
+      fx.ring(A.x, A.y, A.z, 1.0, 0xff9a3a, { dur: 0.4, width: 0.12 });
+      rec.carry = { from: A, to: B, dur: dur / 1000, t: 0 };
+      rec.actor.moving = true;
+      let acc = 0;
+      fx.tween(dur / 1000, (t, dt) => {
+        acc += dt * 160;
+        const x = A.x + (B.x - A.x) * t, y = A.y + (B.y - A.y) * t, z = A.z + (B.z - A.z) * t;
+        while (acc >= 1) {
+          acc -= 1;
+          fx.pools.fire.emit({ x, y: y + 0.5 + Math.random() * 0.8, z, n: 1, spread: 0.2, vy: 1.2, vspread: 0.5, life: 0.45, lifeSpread: 0.15, size: 0.45, sizeEnd: 0.9, color: 0xffd0a0, colorEnd: 0x4a1206, alpha: 0.8, drag: 1.5, fade: 2, anim: 1, rotJitter: 0.4, spinJitter: 1 });
+          if (Math.random() < 0.5) fx.pools.sparks.emit({ x, y: y + 0.6, z, n: 1, spread: 0.2, vy: 1.5, vspread: 1.2, life: 0.8, size: 0.05, sizeEnd: 0.015, color: 0xfff0b0, colorEnd: 0xff4a10, gravity: -4, drag: 0.6 });
+        }
+        if (Math.random() < 0.35) fx.dust(x, y, z, { n: 2, size: 0.35, up: 0.6 });
+      }, () => {
+        fx.scorch(A.x + (B.x - A.x) * 0.5, A.y, A.z + (B.z - A.z) * 0.5, 0.5);
+        fx.dust(B.x, B.y, B.z, { n: 16, size: 0.6 });
+        fx.flash(B.x, B.y + 1, B.z, 0xff9a3a, 12, 0.3, 5);
+        fx.shake(0.05, 0.3);
+      });
+    },
+    /** Cannonade: the caster takes aim; the shot itself is the push cue that follows. */
+    cannonade(propId, targetId) {
+      const m = propMeshes.get(propId);
+      const t = unitTop(targetId);
+      if (!m || !t) return;
+      const owner = mageOf(cur?.active ?? 0);
+      owner?.actor.lookAt(m.position.x, m.position.z);
+      owner?.actor.cast('shoot');
+      fx.beam(m.position.clone().add(new THREE.Vector3(0, m.userData.h * 0.5, 0)), t, 0xffb070, { dur: 0.35, width: 0.06 });
+      fx.flash(m.position.x, m.position.y + m.userData.h * 0.5, m.position.z, 0xffb070, 10, 0.3, 5);
+      fx.ring(m.position.x, m.position.y, m.position.z, m.userData.r * 2.2, 0xffb070, { dur: 0.35, width: 0.1 });
+    },
+    /** Immolate: a unit catches fire. The flames themselves are driven by the sync. */
+    burnUnit(id) {
+      const p = unitPos(id);
+      if (!p) return;
+      fx.explosion(p.x, p.y, p.z, { r: 0.55 });
+      floatAtUnit(id, 'burning', 'dmg fire');
+    },
+    /** Flame Line: a wave of fire rolls out from the caster through the trees. */
+    flameLine(p, radius = 3000) {
+      const m = mageOf(p);
+      if (!m) return;
+      const P = m.actor.root.position;
+      const r = radius * MM;
+      m.actor.cast('raise');
+      fx.ring(P.x, P.y, P.z, r, 0xff8a2a, { dur: 0.8, width: 0.35, opacity: 0.8, thin: false });
+      fx.flash(P.x, P.y + 1, P.z, 0xff9a3a, 22, 0.5, r * 2, { flicker: 0.4 });
+      fx.pools.fire.emit({ x: P.x, y: P.y + 0.4, z: P.z, n: 120, spread: 0.3, radial: r * 1.8, radialSpread: r * 0.6, vy: 1.2, life: 0.7, lifeSpread: 0.25, size: 0.5, sizeEnd: 1.0, color: 0xffcc90, colorEnd: 0x3a0e06, alpha: 0.75, drag: 2.5, gravity: 0.6, fade: 2, anim: 1, rotJitter: 0.5, spinJitter: 1.5 });
+      fx.shake(0.06, 0.4);
     },
     hurl(id, mm) {
       const rec = actors.get(id);
@@ -1068,6 +1234,13 @@ export function createArena(host, state, handlers = {}) {
     for (const [id, rec] of actors) {
       const { actor } = rec;
       const pos = actor.root.position;
+      // The air offset (a hurl, a skyfall) sits on top of the ground height
+      // and is taken off again first thing each frame, so it never
+      // accumulates: `pos` IS the root position, and adding airY to it every
+      // frame sent a lifted body climbing out of the scene by its own height
+      // sixty times a second.
+      pos.y -= rec.airApplied || 0;
+      rec.airApplied = 0;
       const tgt = rec.target;
       // Walk toward the engine's point on the ground plane; height follows
       // the ground or falls.
@@ -1117,8 +1290,10 @@ export function createArena(host, state, handlers = {}) {
         pos.y += dy * Math.min(1, dt * 10);
       }
       actor.airY = rec.airY || 0;
+      rec.airApplied = actor.airY;
       actor.root.position.y = pos.y + actor.airY;
       actor.update(dt, now);
+      if (rec.burning) fx.moveEmitter(`u${id}`, pos.x, actor.root.position.y + 0.3, pos.z);
       const hl = highlights.get(id);
       if (hl !== undefined) { rec.base.material.color.setHex(hl); rec.base.scale.setScalar(1.25 + Math.sin(now / 160) * 0.18); rec.base.material.opacity = 1; }
       else { rec.base.material.color.setHex(TEAM[rec.unit.owner]); rec.base.scale.setScalar(1); rec.base.material.opacity = 0.75; }

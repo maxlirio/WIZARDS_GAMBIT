@@ -34,7 +34,7 @@ import * as profile from '../profile.js';
 import { makeCtx } from '../rules/resolve.js';
 import { moveBudget, canMoveTo, moveReach } from '../rules/units.js';
 import { rangeOrigins } from '../field/query.js';
-import { cardSVG, centreSVG, faceListHTML, SCHOOL_INK, runeGlyphInline } from './cards.js';
+import { cardSVG, centreSVG, faceListHTML, SCHOOL_INK, runeGlyphInline, cardBackSVG } from './cards.js';
 import { createArena, SCHOOL_HEX, pushSlideMs } from './arena3d.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -329,7 +329,7 @@ function golemNumber(u) {
 }
 const pName = (p) => (HUMAN === null ? `P${p + 1}` : p === HUMAN ? 'You' : FOE());
 const pCls = (p) => `p${p}`;
-const propName = (id) => { const pr = S.field.props.find((x) => x.id === id); return pr ? ({ boulder: 'boulder', pillar: 'standing stone', shard: 'crystal', wall: 'wall', floater: 'floating rock', tree: 'tree' }[pr.kind] || pr.kind) : 'terrain'; };
+const propName = (id) => { const pr = S.field.props.find((x) => x.id === id); return pr ? ({ boulder: 'boulder', pillar: 'standing stone', shard: 'crystal', wall: 'wall', floater: 'floating rock', tree: 'tree', earthwall: 'wall of earth' }[pr.kind] || pr.kind) : 'terrain'; };
 
 /* ================================================================ fx */
 
@@ -344,6 +344,7 @@ function flushFx() {
   const later = (ms, fn) => { const my = gameId; timers.push(setTimeout(() => { if (my === gameId && arena) fn(); }, FAST ? 0 : ms)); };
   let castCtx = null;        // the face resolving right now: {p, element, big, face}
   let holdDamage = 0;        // ms to delay the next damage cue (a rock still falling)
+  let tMeteor = 0;           // when the last meteor strikes, so its boulder appears then
   const cues = () => arena.cues;
   for (const f of S.fx.slice(fxSeen)) {
     const line = narrate(f);
@@ -423,11 +424,28 @@ function flushFx() {
       case 'dropRock': { const { id, from, to, onto } = f; later(t, () => cues().dropRock(id, from, to, onto)); holdDamage = 1050; t += 1200; break; }
       case 'swap': { const { a, b } = f; later(t, () => cues().swap(a, b)); t += 500; break; }
       case 'raiseWall': t += 500; break;
+      // A TRAP SPRINGS: the cell flashes, the real card is shown for a
+      // moment, then it leaves for the discard. Everything after waits.
+      case 'trapSpring': { const note = f; later(t, () => revealTrap(note)); t += 1700; break; }
+      case 'snared': case 'sprung': t += 150; break;
       case 'heal': { const { id, amount } = f; later(t, () => cues().heal(id, amount)); t += 250; break; }
       case 'poisoned': { const id = f.id; later(t, () => cues().poison(id)); t += 150; break; }
       case 'levitate': { const id = f.id; later(t, () => cues().levitate(id, f.mm)); t += 400; break; }
       case 'terrainRemoved': { const id = f.id; later(t, () => cues().terrainRemoved(id)); t += 300; break; }
       case 'ignite': { const id = f.id; later(t, () => cues().ignite(id)); t += 200; break; }
+      // --- the red physical tranche. Payloads are documented at each engine fx() site.
+      // A rock out of the sky: the streak takes 900ms, the hits land with it.
+      case 'meteor': { const { at, radius } = f; tMeteor = t + 900; later(t, () => cues().meteorIncoming(at, radius)); holdDamage = 900; t += 1000; break; }
+      // The new boulder appears at the moment of impact, not after the pushes it caused.
+      case 'meteorLand': { const { id, at } = f; cues().meteorPending(id); later(tMeteor || t, () => cues().meteorLand(id, at)); break; }
+      case 'shrapnel': { const { at, radius, id } = f; later(t, () => cues().shrapnel(id, at, radius)); t += 300; break; }
+      case 'thunderclap': { const { p, at, radius } = f; later(t, () => cues().thunderclap(p, at, radius)); t += 350; break; }
+      case 'charge': { const { id, from, to, dir, mm } = f; const dur = 250 + (mm / 1000) * 160; later(t, () => cues().charge(id, from, to, dir, mm, dur)); t += dur + 80; break; }
+      case 'cannonade': { const { id, at } = f; later(t, () => cues().cannonade(id, at)); t += 250; break; }
+      case 'burning': { const id = f.id; later(t, () => cues().burnUnit(id)); t += 200; break; }
+      case 'burnOut': t += 100; break;
+      case 'lift': { const { id, mm } = f; later(t, () => cues().lift(id, mm)); t += 450; break; }
+      case 'flameLine': { const { p, radius } = f; later(t, () => cues().flameLine(p, radius)); t += 300; break; }
       case 'propHit': { const id = f.id; later(t, () => cues().propHit(id, f.amount)); t += 120; break; }
       case 'shatter': t += 400; break;
       case 'summon': { const id = f.id; later(t + 60, () => cues().summon(id)); t += 500; break; }
@@ -460,7 +478,17 @@ function narrate(f) {
   const m = (mm) => `${(mm / 1000).toFixed(1)}m`;
   switch (f.kind) {
     case 'turnStart': return `<hr><span class="turn">Turn ${f.turn}</span> — ${P(f.p)}`;
-    case 'play': return `${P(f.p)} play${f.p === HUMAN ? '' : 's'} ${N(f.uid)} to the ${CELL_COLOR[f.cell]} cell`;
+    case 'play': {
+      // A trap set by the other side is named only when it springs.
+      const sp = findSpell(S, f.uid);
+      if (sp && defOf(S, sp).kind === 'trap' && HUMAN !== null && f.p !== HUMAN) return `${P(f.p)} sets a <b>face-down TRAP</b> into a grey corner`;
+      if (sp && defOf(S, sp).kind === 'trap') return `${P(f.p)} set${f.p === HUMAN ? '' : 's'} ${N(f.uid)} face down into the grey cell`;
+      return `${P(f.p)} play${f.p === HUMAN ? '' : 's'} ${N(f.uid)} to the ${CELL_COLOR[f.cell]} cell`;
+    }
+    case 'trapSpring': return `<span class="gold">⚠ ${f.p === HUMAN ? 'Your' : HUMAN === null ? `${pName(f.p)}'s` : `${FOE()}'s`} trap springs: <b>${esc(f.name || f.def)}</b></span>`;
+    case 'snared': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is snared`;
+    case 'held': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} loses its next action`;
+    case 'sprung': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is flung away from ${esc(unitName(f.from))}`;
     case 'golemCard': return `${P(f.p)} set${f.p === HUMAN ? '' : 's'} ${N(f.uid)} into golem slot ${'ABC'[f.slot] || f.slot}`;
     case 'rotate': return `↺ ${N(f.uid)} turns ${f.dir} to <b>${NUMERALS[f.rot]}</b>`;
     case 'shift': return `⇄ ${N(f.uid)} shifts from cell ${f.from} to ${f.to}`;
@@ -509,25 +537,57 @@ function narrate(f) {
     case 'levitate': return `&nbsp;&nbsp;&nbsp;&nbsp;lifts a ${esc(propName(f.id))} ${m(f.mm)}`;
     case 'relocate': return `&nbsp;&nbsp;&nbsp;&nbsp;relocates ${esc(unitName(f.id))}`;
     case 'reshuffle': return `${P(f.p)} shuffle${f.p === HUMAN ? '' : 's'} the discard back into the deck`;
+    case 'handFull': return `<i>${P(f.p)} ${f.p === HUMAN ? 'hold' : 'holds'} five cards — nothing is drawn</i>`;
     case 'prohibited': return `&nbsp;&nbsp;&nbsp;&nbsp;${N(f.uid)} may not rotate again this turn`;
     case 'chainEnd': return f.resolutions > 1 ? `<i>a chain of ${f.resolutions}</i>` : null;
     case 'hurl': return `&nbsp;&nbsp;&nbsp;&nbsp;hurls ${esc(unitName(f.id))} ${(f.mm / 1000).toFixed(0)}m into the air`;
     case 'dropRock': return `&nbsp;&nbsp;&nbsp;&nbsp;drops a ${esc(propName(f.id))} on ${esc(unitName(f.onto))}`;
     case 'swap': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.a))} and ${esc(unitName(f.b))} swap places`;
-    case 'raiseWall': return `&nbsp;&nbsp;&nbsp;&nbsp;a stone wall rises out of the ground`;
+    case 'raiseWall': return f.prop === 'earthwall' ? `&nbsp;&nbsp;&nbsp;&nbsp;<b>dirt heaves up into a wall</b> in the spell's path` : `&nbsp;&nbsp;&nbsp;&nbsp;a stone wall rises out of the ground`;
     case 'heal': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="green">${esc(unitName(f.id))} regains ${f.amount}</span>`;
     case 'recall': return `&nbsp;&nbsp;&nbsp;&nbsp;returns ${N(f.uid)} to hand`;
     case 'reanimate': return `&nbsp;&nbsp;&nbsp;&nbsp;${N(f.uid)} rises from the discard`;
     case 'poisoned': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is poisoned (${f.n})`;
     case 'mageLife': return `${P(f.p)} mage now has ${f.maxHp} life`;
     case 'ignite': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">a ${esc(propName(f.id))} catches fire</span>`;
+    case 'meteor': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">☄ a meteor comes down</span>${f.hits?.length ? ` on ${f.hits.map((id) => esc(unitName(id))).join(', ')}` : ''}`;
+    case 'meteorLand': return `&nbsp;&nbsp;&nbsp;&nbsp;a new boulder lies where it struck`;
+    case 'shrapnel': return `&nbsp;&nbsp;&nbsp;&nbsp;<b>a ${esc(propName(f.id))} bursts into shrapnel</b>${f.hits?.length ? ` — ${f.hits.map((id) => esc(unitName(id))).join(', ')}` : ''}`;
+    case 'thunderclap': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">⚡ THUNDERCLAP</span>${f.hits?.length ? ` — ${f.hits.map((id) => esc(unitName(id))).join(', ')} floored` : ' — nobody close enough'}`;
+    case 'charge': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} charges ${m(f.mm)}${f.hits?.length ? `, through ${f.hits.map((id) => esc(unitName(id))).join(', ')}` : ''}${f.rammed !== null && f.rammed !== undefined ? ` and rams ${esc(unitName(f.rammed))}` : ''}`;
+    case 'cannonade': return `&nbsp;&nbsp;&nbsp;&nbsp;fires a ${esc(propName(f.id))} at ${esc(unitName(f.at))}`;
+    case 'burning': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">${esc(unitName(f.id))} is set burning</span> (${f.turns} turn${f.turns === 1 ? '' : 's'})`;
+    case 'burnOut': return `&nbsp;&nbsp;&nbsp;&nbsp;the fire on ${esc(unitName(f.id))} goes out`;
+    case 'lift': return `&nbsp;&nbsp;&nbsp;&nbsp;lifts ${esc(unitName(f.id))} ${m(f.mm)} into the air`;
+    case 'flameLine': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">fire runs through the trees</span>${f.lit?.length ? ` (${f.lit.length} alight)` : ''}`;
     case 'burntOut': return `&nbsp;&nbsp;&nbsp;&nbsp;a ${esc(f.kind)} burns away to ash`;
     case 'propHit': return `&nbsp;&nbsp;&nbsp;&nbsp;a ${esc(propName(f.id))} cracks (${f.amount})${f.hp <= 0 ? '' : `, ${f.hp} left`}`;
-    case 'shatter': return `&nbsp;&nbsp;&nbsp;&nbsp;<b>a ${esc(f.kind === 'pillar' ? 'standing stone' : f.kind === 'shard' ? 'crystal' : f.kind)} shatters</b>`;
+    case 'shatter': return `&nbsp;&nbsp;&nbsp;&nbsp;<b>a ${esc(f.kind === 'pillar' ? 'standing stone' : f.kind === 'shard' ? 'crystal' : f.kind === 'earthwall' ? 'wall of earth' : f.kind)} shatters</b>`;
     case 'win': return `<span class="gold big">★ ${P(f.p)} win${f.p === HUMAN ? '' : 's'} — ${esc(f.reason)}</span>`;
     case 'draw': return `<b>a draw at the turn cap</b>`;
     default: return null;
   }
+}
+
+/**
+ * The moment a trap goes off, on the table: a flash on its corner, the real
+ * card face up over the cell for a second and a half, then it slides away
+ * to the discard. The engine has already moved the card, so this is an
+ * overlay the table render does not touch.
+ */
+function revealTrap(f) {
+  const cell = document.querySelector(`#table${f.p} .cell[data-cell="${f.cell}"]`);
+  const def = CARDS[f.def];
+  if (!cell || !def) return;
+  cell.querySelectorAll('.trapreveal').forEach((e) => e.remove());
+  const el = document.createElement('div');
+  el.className = 'trapreveal';
+  el.innerHTML = cardSVG(def);
+  cell.appendChild(el);
+  cell.classList.remove('flash-trap'); void cell.offsetWidth; cell.classList.add('flash-trap');
+  toast(`${f.p === HUMAN ? 'Your' : HUMAN === null ? `${pName(f.p)}'s` : `${FOE()}'s`} trap springs — <b>${esc(def.name)}</b>`, f.p === HUMAN ? 'good' : 'bad');
+  const my = gameId;
+  timers.push(setTimeout(() => { if (my === gameId) el.remove(); }, FAST ? 0 : 1900));
 }
 
 function logLine(html, kind = '') {
@@ -671,6 +731,22 @@ function renderTable(p) {
     }
     const def = defOf(S, sp);
     cell.classList.add('filled');
+    if (def.kind === 'trap') {
+      // A SET TRAP. The opponent sees a card back with the seal and nothing
+      // to read; its owner sees the card dimmed, marked concealed. Both
+      // engines hold the whole state -- what is hidden is hidden here.
+      const hidden = sp.concealed && HUMAN !== null && p !== HUMAN;
+      const key = `${sp.uid}:${hidden ? 'back' : 'face'}`;
+      if (cell.dataset.uid !== key) {
+        slot.innerHTML = `<div class="card on-table trap${hidden ? ' back' : ' mine'}"><div class="cbody">${hidden ? cardBackSVG() : cardSVG(def)}</div></div>`;
+        cell.dataset.uid = key;
+      }
+      cell.classList.toggle('trap-set', true);
+      badges.innerHTML = hidden ? '<span class="trapbadge" title="a face-down trap: it springs when you trigger it">TRAP</span>'
+        : '<span class="trapbadge" title="face down; springs on its own during your opponent\'s turn">TRAP · concealed</span>';
+      return;
+    }
+    cell.classList.remove('trap-set');
     if (cell.dataset.uid !== String(sp.uid)) {
       slot.innerHTML = `<div class="card on-table"><div class="cbody">${cardSVG(def, { rot: 0, centre: false, lit: false })}</div><div class="ccentre"></div></div>`;
       cell.dataset.uid = sp.uid;
@@ -786,6 +862,15 @@ function hideInspector() { clearTimeout(hideTimer); hideTimer = setTimeout(() =>
 
 function inspectSpell(sp) {
   const def = defOf(S, sp);
+  if (sp.concealed && HUMAN !== null && sp.owner !== HUMAN) {
+    // The enemy's trap: you may know a trap is there, not which.
+    $('#inspector').innerHTML = `
+      <div class="ibig">${cardBackSVG()}</div>
+      <div class="ihead" style="color:${SCHOOL_INK.grey}">A concealed trap <small>face down · grey corner</small></div>
+      <p>Set by your opponent. It springs on its own the first time you trigger it — a spell that would damage one of their units, a unit of yours walking up to theirs — and you read it as it goes off. Your "destroy an enemy Spell" effects can clear it unseen.</p>`;
+    showInspector();
+    return;
+  }
   inspectDef(def, activeIndex(sp), keywordsOf(S, sp), sp);
 }
 
@@ -801,7 +886,7 @@ function inspectDef(def, rot = 0, kws = null, card = null) {
   if (def.found) extra += `<div class="dim">Found by: ${esc(FINDS[def.found]?.text || def.found)}</div>`;
   $('#inspector').innerHTML = `
     <div class="ibig">${cardSVG(def, { rot, keywords: keys })}</div>
-    <div class="ihead" style="color:${SCHOOL_INK[school]}">${esc(def.name)} <small>${def.kind === 'golem' ? `golem · tier ${def.tier}` : def.kind === 'artifact' ? 'artifact · grey corners' : `${def.school} spell`}</small></div>
+    <div class="ihead" style="color:${SCHOOL_INK[school]}">${esc(def.name)} <small>${def.kind === 'golem' ? `golem · tier ${def.tier}` : def.kind === 'artifact' ? 'artifact · grey corners' : def.kind === 'trap' ? 'trap · face down on a grey corner' : `${def.school} spell`}</small></div>
     <div class="faces">${faceListHTML(def, rot)}</div>
     ${kwHtml}${extra}`;
   showInspector();
@@ -1465,6 +1550,7 @@ function openRules() {
     <p class="runes">${R('SPIRAL')} Spiral — turning &amp; shifting &nbsp; ${R('SHARD')} Shard — destruction &amp; damage &nbsp; ${R('WHEEL')} Wheel — pushing &amp; terrain &nbsp; ${R('LATTICE')} Lattice — cards, keywords, scoring</p>
     <p><b>[Keywords]</b> are copied onto the other card on a match — put [Ignore Height] on a push, [Poison] on a fireball.</p>
     <p><b>Units:</b> click a unit, then anywhere inside its blue circle to walk there; click a red-ringed enemy to strike; the mage can summon a golem beside itself. Mages have 5 life unless a passive raises it. Golem tiers cap how many are out at once: C three, B two, A one. A golem card that has deployed and then lost every unit is spent.</p>
+    <p><b>Traps</b> are grey cards set <b>face down</b> into an empty grey corner. They have one side, no runes, never match and never turn. The first time its trigger is met on your <i>opponent's</i> turn — a spell about to hit your unit, an enemy walking up to your mage — the trap springs on its own: it is revealed, its reaction happens at once (an Earth Wall heaves up and takes the fireball instead of you), and it goes to your discard. Your opponent can see a trap is set, not which; their "destroy an enemy Spell" effects can clear it.</p>
     <p><b>Everything on the field can be affected.</b> Every rock, stone, crystal, wall and tree has weight and hit points: force spells throw them and crack them, fire lights the trees — and a burning tree bites everyone beside it each turn, then spreads. Climb walls, fall off ledges, shove rocks out from under people.</p>
     <p><b>The Spellbook</b> remembers the ways you've found new spells, across every duel.</p>
     <p class="dim">Camera: drag to orbit, wheel to zoom, right-drag to pan, <b>H</b> to go home. <b>Tab</b> hides the panels. <b>Esc</b> cancels.</p>
@@ -1497,6 +1583,8 @@ window.WG = {
   },
   get busy() { return busy; },
   get arena() { return arena; },
+  /** Test hook: play the trap-springing reveal on a cell (tools/lab/shoot-traps.mjs). */
+  revealTrap, render,
 };
 
 function boot() {

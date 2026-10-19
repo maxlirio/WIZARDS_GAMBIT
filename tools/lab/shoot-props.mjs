@@ -16,7 +16,7 @@ const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ?
 const port = +arg('port', 8321);
 const shots = arg('shots', join(tmpdir(), 'wg-props'));
 const states = arg('states', 'normal,burning,damaged').split(',');
-const kinds = arg('kinds', 'boulder,pillar,shard,wall,floater,tree').split(',');
+const kinds = arg('kinds', 'boulder,pillar,shard,wall,floater,tree,earthwall').split(',');
 const dist = +arg('dist', 2.8);
 const W = +arg('w', 900), H = +arg('h', 700);
 mkdirSync(shots, { recursive: true });

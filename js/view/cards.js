@@ -120,10 +120,18 @@ export function cardSVG(def, opts = {}) {
       <path d="M500 300 L700 500 L500 700 L300 500 Z"/>
     </g>`;
 
+  // FACE DOWN: what the opponent sees of a set trap. The frame, the TRAP
+  // seal, and nothing to read -- no name, no text, no runes.
+  if (opts.back) return cardBackSVG({ ink, deep, id, defs, frame });
+
   let body = '';
   if (def.kind === 'golem') {
     // Golem cards are not four-sided: a statline and a tier, drawn as a seal.
     body = `<g transform="translate(500 500)" fill="none" stroke="${ink}" stroke-width="10" opacity=".8">${quad('M0 -395 L55 -340 L0 -285 L-55 -340 Z')}</g>`;
+  } else if (def.kind === 'trap') {
+    // A trap has one side and no corners: its text on the top band, the
+    // seal where the runes would be, and the centre reads the whole thing.
+    body = `<g transform="rotate(0 500 500)">${rimBand(def.faces[0], ink, opts.lit !== false)}</g>${trapSeal(ink, 0.55, { inner: false })}`;
   } else {
     const bands = def.faces.map((f, p) =>
       `<g transform="rotate(${p * 90} 500 500)">${rimBand(f, ink, opts.lit !== false && p === (rot & 3))}</g>`).join('');
@@ -195,10 +203,58 @@ export function centreSVG(def, rot, opts = {}) {
     <g class="card-centre">${centreMarkup(def, rot, opts.keywords || def.keywords || [], ink)}</g></svg>`;
 }
 
+/* ------------------------------------------------------------ traps */
+
+/** The TRAP seal: four jaws closing on a point, with C4 symmetry like a rune. */
+function trapSeal(ink, opacity = 0.8, { inner = true } = {}) {
+  // The jaws sit OUTSIDE the panel on a face-up card (where a golem's seal
+  // goes), so they never cross the text; the back has the room to close them
+  // in on the word.
+  return `<g transform="translate(500 500)" fill="none" stroke="${ink}" stroke-width="12" stroke-linejoin="round" opacity="${opacity}">
+    ${inner ? [0, 180].map((a) => `<path d="M0 -300 L70 -215 L0 -150 L-70 -215 Z" transform="rotate(${a})"/>`).join('') : quad('M0 -395 L55 -340 L0 -285 L-55 -340 Z')}
+    ${quad('M-330 -330 L-250 -330 L-330 -250 Z')}
+    <circle r="372" stroke-width="4" opacity=".6"/>
+  </g>`;
+}
+
+/**
+ * A face-down card: what the opponent sees of a trap in a grey corner. The
+ * same frame as any card, then the seal and the word, big, and nothing else.
+ * `parts` lets cardSVG pass its frame in; called bare it builds a grey one.
+ */
+export function cardBackSVG(parts = null) {
+  const ink = parts?.ink || SCHOOL_INK.grey;
+  const deep = parts?.deep || SCHOOL_DEEP.grey;
+  const id = parts?.id || `b${++gid}`;
+  const defs = parts?.defs || `<defs>
+    <radialGradient id="${id}g" cx="50%" cy="50%" r="70%">
+      <stop offset="0" stop-color="${deep}" stop-opacity="1"/><stop offset="0.7" stop-color="#07080b"/><stop offset="1" stop-color="#020203"/>
+    </radialGradient>
+    <filter id="${id}f" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>`;
+  const frame = parts?.frame || `
+    <rect x="6" y="6" width="988" height="988" rx="40" fill="url(#${id}g)" stroke="${ink}" stroke-width="7" filter="url(#${id}f)"/>
+    <rect x="210" y="210" width="580" height="580" rx="10" fill="none" stroke="${ink}" stroke-width="12" opacity=".75"/>`;
+  // A woven back: diagonal hatching inside the panel, so it reads as a back
+  // and not as a blank face.
+  const weave = `<g stroke="${ink}" stroke-width="2" opacity=".14">${Array.from({ length: 23 }, (_, i) => `<path d="M${232 + i * 24} 232 L232 ${232 + i * 24}"/><path d="M${768 - i * 24} 768 L768 ${768 - i * 24}"/>`).join('')}</g>`;
+  return `<svg viewBox="0 0 1000 1000" class="card-svg card-back" xmlns="http://www.w3.org/2000/svg">${defs}
+    <g class="card-body">${frame}${weave}${trapSeal(ink, 0.9)}
+      <text x="500" y="548" text-anchor="middle" class="trap-word" fill="${ink}">TRAP</text>
+      <text x="500" y="120" text-anchor="middle" class="rim-n" fill="${ink}" opacity=".7">CONCEALED</text>
+    </g></svg>`;
+}
+
 function centreMarkup(def, rot, kws, ink) {
   const active = def.kind === 'golem' ? null : def.faces[rot & 3];
   let centre = `<text x="500" y="${active ? 288 : 330}" text-anchor="middle" class="nm" fill="${ink}" ${def.name.length > 13 ? 'textLength="520" lengthAdjust="spacingAndGlyphs"' : ''}>${esc(def.name)}</text>`;
-  if (def.kind === 'golem') {
+  if (def.kind === 'trap') {
+    // One side, read whole: the word, then the trigger and reaction.
+    centre += `<text x="500" y="372" text-anchor="middle" class="trap-word sm" fill="${ink}">TRAP</text>`;
+    wrap(def.faces[0].text.replace(/^TRAP:\s*/, ''), 24, 5).forEach((l, i) => {
+      centre += `<text x="500" y="${440 + i * 50}" text-anchor="middle" class="ctr now">${esc(l)}</text>`;
+    });
+  } else if (def.kind === 'golem') {
     const u = def.unit || {};
     centre += `<text x="500" y="470" text-anchor="middle" class="big" fill="${ink}">${def.tier}</text>
       <text x="500" y="560" text-anchor="middle" class="ctr">${u.hp} hp · ${u.move / 1000}m · ${u.atk} dmg</text>`;
@@ -245,6 +301,11 @@ function centreMarkup(def, rot, kws, ink) {
 /** A face list for the inspector: all four, the active one lit. */
 export function faceListHTML(def, rot = 0) {
   if (def.kind === 'golem') return `<p>${esc(def.text)}</p>`;
+  if (def.kind === 'trap') {
+    const f = def.faces[0];
+    return `<div class="face on"><span class="fn">TRAP</span><span class="ft">${esc(f.text.replace(/^TRAP:\s*/, ''))}</span></div>
+      <p class="dim">Set face down into an empty grey corner. It springs on its own, the first time its trigger is met on your opponent's turn, then goes to your discard.</p>`;
+  }
   return def.faces.map((f) => `<div class="face${f.index === (rot & 3) ? ' on' : f.index === ((rot + 1) & 3) ? ' next' : ''}">
     <span class="fn">${f.numeral}</span><span class="fr">${runeGlyphInline(def.runes[f.index], SCHOOL_INK[def.school])}</span>
     <span class="ft">${esc(f.text)}${f.reach ? ` <em class="fr-m">${(f.reach / 1000).toFixed(1)}m</em>` : ''}${f.cost?.length ? ' <em class="fr-c">cost</em>' : ''}${f.element ? ` <em class="fr-e ${f.element}">${f.element}</em>` : ''}</span></div>`).join('');

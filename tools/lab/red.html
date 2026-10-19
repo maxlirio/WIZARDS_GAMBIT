@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Red lab</title>
+<!-- The red physical tranche, cue by cue, on the REAL battlefield: a mage, an
+     enemy mage and a golem staged on a seeded arena beside a boulder and a
+     tree, then meteor -> shrapnel -> thunderclap -> charge -> burn -> skyfall
+     -> flame line played by hand so each can be photographed. window.LAB
+     drives it from tools/lab/shoot-red.mjs. ?seed=N picks the arena. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../css/style.css">
+<style>
+  #info { position: fixed; left: 10px; top: 8px; z-index: 5; color: #fff; font: 12px ui-monospace, monospace; text-shadow: 0 1px 2px #000; pointer-events: none; }
+  #bar { position: fixed; left: 10px; bottom: 8px; z-index: 5; display: flex; gap: 4px; flex-wrap: wrap; }
+  #bar a { color: #ffb070; background: #0008; padding: 2px 6px; border-radius: 3px; text-decoration: none; cursor: pointer; font: 12px ui-monospace, monospace; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="arena"></div>
+<div id="info">red lab</div>
+<div id="bar"></div>
+<script type="module">
+import { createGame } from '../../js/engine.js';
+import { heightAt } from '../../js/field/arena.js';
+import { createArena } from '../../js/view/arena3d.js';
+
+const Q = new URLSearchParams(location.search);
+const S = createGame({ seed: +(Q.get('seed') || 11) });
+const A = S.arena;
+const MM = 1 / 1000;
+
+/* ---- the stage: flattest ground the arena has, the mage 3 m west of centre */
+const mage = S.field.units.find((u) => u.owner === 0 && u.kind === 'mage');
+const foe = S.field.units.find((u) => u.owner === 1 && u.kind === 'mage');
+let CX = Math.round(A.w / 2), CY = Math.round(A.h / 2), bestRange = Infinity;
+for (let x = 4500; x <= A.w - 6500; x += 500) for (let y = 3000; y <= A.h - 3000; y += 500) {
+  let lo = Infinity, hi = -Infinity;
+  for (let dx = -3500; dx <= 3000; dx += 500) for (let dy = -2000; dy <= 2000; dy += 500) { const h = heightAt(A, x + dx, y + dy); lo = Math.min(lo, h); hi = Math.max(hi, h); }
+  if (hi - lo < bestRange) { bestRange = hi - lo; CX = x; CY = y; }
+}
+const put = (b, x, y) => { b.x = x; b.y = y; b.z = heightAt(A, x, y); b.support = { kind: 'ground' }; };
+put(mage, CX - 3000, CY);
+put(foe, CX + 1200, CY + 500);
+// An enemy golem beside the enemy mage.
+const golem = { body: 'unit', id: 90, owner: 1, kind: 'golem', def: 'CLAY_HAND', golemUid: null, hp: 9, maxHp: 9, move: 1000, atk: 1, reach: 900, x: 0, y: 0, z: 0, support: { kind: 'ground' }, acted: false, dead: false, poison: 0, keywords: [] };
+put(golem, CX + 2600, CY + 1500);
+S.field.units.push(golem);
+for (const pr of S.field.props) put(pr, A.w - 900, 600 + 450 * S.field.props.indexOf(pr));
+const boulder = { id: 'bLAB', kind: 'boulder', x: 0, y: 0, z: 0, removedUntil: null, hp: 4, burning: null, litBy: null, destroyed: false };
+const tree = { id: 'tLAB', kind: 'tree', x: 0, y: 0, z: 0, removedUntil: null, hp: 3, burning: null, litBy: null, destroyed: false };
+put(boulder, CX + 300, CY - 1900);
+put(tree, CX - 1600, CY - 2600);
+S.field.props.push(boulder, tree);
+
+const arena = createArena(document.querySelector('#arena'), S, { quality: Q.get('q') || 'high', seat: 0, unitLabel: (u) => (u.owner === 0 ? 'Your mage' : u.kind === 'mage' ? 'Enemy mage' : 'Clay Hand') });
+await arena.whenReady;
+arena.sync(S);
+const info = document.querySelector('#info');
+
+function view(kind = 'close') {
+  const t = { x: CX * MM, y: 0.6, z: CY * MM };
+  if (kind === 'game') arena.home();
+  else if (kind === 'side') { arena.camera.position.set(t.x - 1.5, 3.2, t.z + 6.5); arena.controls.target.set(t.x - 0.5, 0.8, t.z); }
+  else { arena.camera.position.set(t.x - 6.5, 5.2, t.z + 6.5); arena.controls.target.set(t.x + 0.3, 0.9, t.z - 0.3); }
+  arena.controls.update();
+}
+view(Q.get('cam') || 'close');
+
+/* ---- the cues, each staged the way the real timeline would stage it */
+let nMeteor = 0;
+const STEPS = {
+  /** A meteor comes down beside the enemy mage; a new boulder lies there. */
+  meteor() {
+    const at = { x: CX + 1500, y: CY - 300, z: heightAt(A, CX + 1500, CY - 300) };
+    const id = `m${++nMeteor}`;
+    S.field.props.push({ id, kind: 'boulder', x: at.x, y: at.y, z: at.z, scale: 100, removedUntil: null, hp: 4, burning: null, litBy: null, destroyed: false, fell: true });
+    arena.cues.meteorPending(id);
+    arena.sync(S);
+    arena.cues.meteorIncoming(at, 1000);
+    setTimeout(() => { arena.cues.meteorLand(id, at); arena.cues.hit(foe.id, 3, 'rock'); arena.cues.hit(golem.id, 3, 'rock'); }, 880);
+  },
+  /** The boulder bursts into shrapnel; the enemy mage is hit and thrown. */
+  shrapnel() {
+    arena.cues.shrapnel(boulder.id, { x: boulder.x, y: boulder.y, z: boulder.z }, 1500);
+    setTimeout(() => { arena.cues.hit(foe.id, 2, 'shrapnel'); arena.cues.hit(golem.id, 2, 'shrapnel'); }, 120);
+    setTimeout(() => { boulder.destroyed = true; arena.sync(S); }, 450);
+  },
+  /** The mage steps in and claps: a ring, and the two enemies go down. */
+  thunderclap() {
+    put(mage, CX + 200, CY - 200);
+    arena.sync(S);
+    setTimeout(() => {
+      arena.cues.thunderclap(0, { x: mage.x, y: mage.y, z: mage.z }, 2000);
+      setTimeout(() => { arena.cues.hit(foe.id, 2, 'thunder'); arena.cues.hit(golem.id, 2, 'thunder'); arena.cues.knockdown(foe.id, 0); arena.cues.knockdown(golem.id, 4); }, 180);
+    }, 600);
+  },
+  /** The mage charges 3 m east past the enemy mage, trailing fire. */
+  charge() {
+    put(mage, CX - 3000, CY);
+    arena.sync(S);
+    setTimeout(() => {
+      const from = { x: mage.x, y: mage.y, z: mage.z };
+      put(mage, CX, CY);
+      arena.sync(S);
+      arena.cues.charge(mage.id, from, { x: mage.x, y: mage.y, z: mage.z }, 0, 3000, 730);
+      setTimeout(() => arena.cues.hit(foe.id, 2, 'charge'), 650);
+    }, 300);
+  },
+  /** The enemy mage is set burning: an ignition, then flames that ride it. */
+  burn() {
+    foe.burn = 2;
+    arena.cues.burnUnit(foe.id);
+    arena.sync(S);
+  },
+  burnOut() { foe.burn = 0; arena.sync(S); },
+  /** Skyfall: the golem is lifted 2 m, thrown 3 m east, and comes down. */
+  skyfall() {
+    const from = { x: golem.x, y: golem.y };
+    arena.cues.lift(golem.id, 2000);
+    setTimeout(() => {
+      // Thrown north-west (bearing 40), across the frame and over the enemy mage.
+      put(golem, golem.x - 2121, golem.y - 2121);
+      arena.sync(S);
+      arena.cues.push(golem.id, 'unit', 3000, from, 40, 4, 100, { x: golem.x, y: golem.y, z: golem.z });
+    }, 500);
+    setTimeout(() => { arena.cues.fall(golem.id, 2000); setTimeout(() => arena.cues.hit(golem.id, 2, 'fall'), 500); }, 1250);
+  },
+  /** Flame Line: the wave rolls out from the mage and the tree catches. */
+  flameLine() {
+    arena.cues.flameLine(0, 3000);
+    setTimeout(() => { tree.burning = S.turn + 2; tree.litBy = 0; arena.sync(S); arena.cues.ignite(tree.id); }, 350);
+  },
+  reset() {
+    put(mage, CX - 3000, CY); put(foe, CX + 1200, CY + 500); put(golem, CX + 2600, CY + 1500);
+    foe.burn = 0; golem.burn = 0; boulder.destroyed = false; tree.burning = null;
+    S.field.props = S.field.props.filter((pr) => !pr.id.startsWith('m'));
+    arena.sync(S);
+  },
+};
+function step(name) { STEPS[name]?.(); info.textContent = name; }
+
+const bar = document.querySelector('#bar');
+for (const nm of Object.keys(STEPS)) { const a = document.createElement('a'); a.textContent = nm; a.onclick = () => step(nm); bar.appendChild(a); }
+
+window.LAB = { arena, state: S, step, view, names: Object.keys(STEPS), ready: true };
+</script>
+</body>
+</html>

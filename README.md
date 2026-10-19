@@ -35,7 +35,10 @@ flinching, burning, being shocked, being crushed, thrown, falling, dying, gettin
 up); golems are built out of rock and animated the same way; fire burns,
 lightning arcs, quakes shake the camera, and
 every rock, stone, crystal, wall and tree on the field is something a spell can
-throw, crack or set alight (see `RULES.md` §9). URL options: `?seed=N`,
+throw, crack or set alight (see `RULES.md` §9). **Traps** (`RULES.md` §12) are
+grey cards set face down into a corner that spring on their own during the
+opponent's turn — an Earth Wall heaves dirt up in front of your mage and takes
+the fireball instead. URL options: `?seed=N`,
 `?watch` (two AIs), `?pool` (random 60-card decks), `?ai=greedy|random`,
 `?fast` (no pauses between enemy steps), `?room=CODE` (join an online room).
 Graphics quality is in the New-duel dialog.

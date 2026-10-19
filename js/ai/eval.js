@@ -32,6 +32,7 @@ export const WEIGHTS = Object.freeze({
   goldProgress: 8,      // per unit of 0..1 progress toward one
   development: 9,       // a spell of yours in play
   developmentGold: 4,   // and a little more if it is gold
+  trap: 6,              // a face-down trap of yours waiting in a corner
   hand: 3,
   deck: 1,
   keyword: 4,
@@ -75,6 +76,7 @@ export function matchPotential(state, p) {
       const after = { ...x, rot: (x.rot + 1) & 3 };
       const r = runeAtCorner(state, after, px);
       const o = runeAtCorner(state, y, py);
+      if (r === null || o === null) continue;          // a trap has no corners
       if (r === o || r === 'WILD' || o === 'WILD') { score += WEIGHTS.matchLatent; break; }
     }
   }
@@ -148,7 +150,11 @@ export function evaluate(state, p) {
     const sign = q === p ? 1 : -1;
     const pl = state.players[q];
     for (const sp of spellsOn(state, q)) {
-      s += sign * (WEIGHTS.development + (defOf(state, sp).school === 'gold' ? WEIGHTS.developmentGold : 0));
+      const def = defOf(state, sp);
+      // A trap is worth something modest just for being set: it has no faces
+      // to chain and the bot cannot see what it will catch.
+      if (def.kind === 'trap') { s += sign * WEIGHTS.trap; continue; }
+      s += sign * (WEIGHTS.development + (def.school === 'gold' ? WEIGHTS.developmentGold : 0));
       s += sign * WEIGHTS.keyword * keywordsOf(state, sp).length;
     }
     s += sign * WEIGHTS.hand * pl.hand.length;

@@ -24,7 +24,7 @@
 import { runEffect, answerPending, ask } from './rules/driver.js';
 import * as ops from './rules/ops.js';
 import {
-  spellsOn, topOf, stackAt, occupied, findSpell, defOf, canTurn, prohibited, homeCells,
+  spellsOn, topOf, stackAt, occupied, findSpell, defOf, canTurn, prohibited, homeCells, isTrap,
   playFromHand, deployGolem, turn, shift, destroy, draw, makeCard, fx,
 } from './rules/ops.js';
 import { CELLS, CELL_COLOR, orthoNeighbours, HOME } from './rules/table.js';
@@ -215,7 +215,11 @@ export function spellActions(state, p) {
     if (canTurn(state, sp) && (!face?.gate || gateMet(state, sp, face.gate))) {
       out.push({ type: 'rotate', uid: sp.uid });
     }
-    for (const cell of orthoNeighbours(sp.cell)) if (!occupied(state, p, cell)) out.push({ type: 'shift', uid: sp.uid, cell });
+    // A trap stays where it was set: no shift is offered (rotate is already
+    // refused by canTurn). Destroying your own trap is as legal as ever.
+    if (!isTrap(state, sp)) {
+      for (const cell of orthoNeighbours(sp.cell)) if (!occupied(state, p, cell)) out.push({ type: 'shift', uid: sp.uid, cell });
+    }
     out.push({ type: 'destroy', uid: sp.uid });
   }
 
@@ -274,7 +278,16 @@ export function apply(state, action) {
     const card = state.players[p].hand.find((c) => c.uid === action.uid);
     const def = defOf(state, card);
     if (def.kind === 'golem') { deployGolem(state, p, action.uid, action.slot); did = 'playGolem'; }
-    else {
+    else if (def.kind === 'trap') {
+      // A TRAP is set face down: a full spell action, but it resolves nothing
+      // and checks no matches -- it has no corners to match with. Its
+      // placement is not even "fresh": the table is left exactly as it was.
+      playFromHand(state, p, action.uid, action.cell);
+      emit(state, 'afterPlay', { uid: action.uid, p, cell: action.cell });
+      state.tableDirty[p] = false;
+      if (state.fresh) state.fresh[p] = state.fresh[p].filter((u) => u !== action.uid);
+      did = 'trapSet';
+    } else {
       playFromHand(state, p, action.uid, action.cell);
       if (def.kind === 'artifact') bump(state.players[p].ledger, 'artifactsPlayed');
       emit(state, 'afterPlay', { uid: action.uid, p, cell: action.cell });
@@ -520,7 +533,7 @@ export function hashState(state) {
     const pl = state.players[p];
     for (let c = 0; c < CELLS; c++) {
       const stack = pl.table[c];
-      parts.push(`${p}.${c}[${stack.map((s) => `${s.def}:${s.rot}:${s.keywords.join('+')}:${s.noTurnUntil ?? '-'}`).join('|')}]`);
+      parts.push(`${p}.${c}[${stack.map((s) => `${s.def}:${s.rot}:${s.keywords.join('+')}:${s.noTurnUntil ?? '-'}${s.concealed ? ':C' : ''}`).join('|')}]`);
     }
     parts.push(`${p}g[${pl.golems.map((g) => (g ? `${g.def}:${g.everDeployed ? 1 : 0}:${g.units.join('.')}` : '-')).join('|')}]`);
     parts.push(`${p}h[${pl.hand.map((c) => c.def).join(',')}]`);
@@ -535,7 +548,7 @@ export function hashState(state) {
 
 export function hashField(state) {
   const us = [...state.field.units].sort((a, b) => a.id - b.id)
-    .map((u) => `${u.id}:${u.owner}${u.kind[0]}:${u.x},${u.y},${u.z}:${u.hp}:${u.dead ? 'D' : ''}${u.acted ? 'A' : ''}:${u.poison || 0}:${(u.keywords || []).join('+')}:${u.support?.kind || '-'}${u.support?.id || ''}`);
+    .map((u) => `${u.id}:${u.owner}${u.kind[0]}:${u.x},${u.y},${u.z}:${u.hp}:${u.dead ? 'D' : ''}${u.acted ? 'A' : ''}:${u.poison || 0}:${u.burn || 0}:${(u.keywords || []).join('+')}:${u.support?.kind || '-'}${u.support?.id || ''}:${u.heldUntil ?? '-'}`);
   const ps = [...state.field.props].sort((a, b) => (a.id < b.id ? -1 : 1))
     .map((pr) => `${pr.id}:${pr.x},${pr.y},${pr.z}:${pr.removedUntil ?? '-'}:${pr.hp}:${pr.burning ?? '-'}${pr.destroyed ? 'X' : ''}`);
   return `F[${us.join('|')}][${ps.join('|')}][${[...state.field.pendingFalls].sort().join(',')}]`;

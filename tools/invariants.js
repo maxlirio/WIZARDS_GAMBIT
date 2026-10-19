@@ -35,12 +35,25 @@ export function invariants(state, where = '') {
   for (let p = 0; p < 2; p++) {
     const pl = state.players[p];
     if (pl.table.length !== CELLS) say(`player ${p} table has ${pl.table.length} cells`);
+    if (pl.hand.length > 5) say(`player ${p} holds ${pl.hand.length} cards -- the hand limit is 5`);
     for (let c = 0; c < CELLS; c++) {
       if (pl.table[c].length > 1) say(`player ${p} cell ${c} holds ${pl.table[c].length} cards -- cards never stack`);
       for (let d = 0; d < pl.table[c].length; d++) {
         const sp = pl.table[c][d];
         if (sp.cell !== c) say(`uid ${sp.uid} sits in cell ${c} but says ${sp.cell}`);
         if (sp.owner !== p) say(`uid ${sp.uid} on table ${p} but owned by ${sp.owner}`);
+
+        /* ------------------------------------------------------ traps */
+        // A face-down card is a TRAP, on a grey corner, at rot 0 -- and a
+        // trap on the table is always face down (a sprung trap has already
+        // left for the discard by the time anything can look).
+        if (sp.concealed) {
+          if (defOf(state, sp).kind !== 'trap') say(`uid ${sp.uid} (${sp.def}) is concealed but is not a trap`);
+          if (CELL_COLOR[c] !== 'grey') say(`concealed trap ${sp.uid} sits on ${CELL_COLOR[c]} cell ${c}`);
+          if (sp.rot !== 0) say(`concealed trap ${sp.uid} has rot ${sp.rot}`);
+        } else if (defOf(state, sp).kind === 'trap') {
+          say(`trap ${sp.uid} (${sp.def}) is on the table face up`);
+        }
 
         /* ------------------------------------------------------ rotation */
         if (![0, 1, 2, 3].includes(sp.rot)) say(`uid ${sp.uid} has rot ${sp.rot}`);
@@ -73,6 +86,7 @@ export function invariants(state, where = '') {
       for (const c of pl[zone]) {
         if ((c.keywords || []).length) say(`uid ${c.uid} in ${zone} still carries ${c.keywords.join(',')}`);
         if (c.cell !== null && c.cell !== undefined) say(`uid ${c.uid} in ${zone} still claims cell ${c.cell}`);
+        if (c.concealed) say(`uid ${c.uid} in ${zone} is still concealed`);
       }
     }
 

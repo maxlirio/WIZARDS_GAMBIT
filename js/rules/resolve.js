@@ -18,8 +18,7 @@ import { ask } from './driver.js';
 import {
   spellsOn, defOf, findSpell, destroy, turn, setRot, shift, draw, mill, fx,
   topOf, occupied, canTurn, prohibited, noteCards, playFromHand, homeCells,
-  protectedFrom,
-} from './ops.js';
+  protectedFrom, HAND_MAX } from './ops.js';
 import { activeIndex, NUMERALS } from './orient.js';
 import { CELL_COLOR, above, below, leftOf, rightOf, orthoNeighbours } from './table.js';
 import { gateMet, gateText } from './gates.js';
@@ -36,9 +35,11 @@ import {
   livingUnits, unitsOf, enemiesOf, findUnit, findProp, propsOnBoard, rangeOrigins,
   mageOf, hasLos, surfaceAt,
 } from '../field/query.js';
-import { push, pushAwayFrom, pullToward, levitate, removeTerrain, smashProp, ignite } from '../field/push.js';
-import { propR, propOnBoard, propSpec } from '../field/arena.js';
+import { push, pushAwayFrom, pullToward, levitate, removeTerrain, smashProp, ignite, knockDown } from '../field/push.js';
+import { propR, propOnBoard, propSpec, propBurnable, propBurning, FALL_SAFE } from '../field/arena.js';
 import { walk, placeBody, fallDamageFor, recheckSupport, resolveFalls } from '../field/move.js';
+import { setBurning } from './units.js';
+import { bearing, isqrt, dist2, clamp, DIR64, DIR_SCALE } from '../field/fixed.js';
 import { turnAndResolve } from './match.js';
 import { pushDirs, pushPreferred, ringPoints, elevatedNear, unitTargets, terrainTargets, bodyTargets, dirLabel } from '../field/candidates.js';
 
@@ -67,8 +68,13 @@ export function makeCtx(state, spell, def, face, opts = {}) {
     numeral: face?.numeral, chained: !!opts.chained,
 
     /* ------------------------------------------------- the spell table */
+    // Your own concealed TRAP is never one of "your Spells" to an effect: it
+    // cannot be rotated, shifted or resolved, and offering it would be a dead
+    // option on every "a Spell you control" face. The enemy's effects DO see
+    // it (enemySpells), which is how "destroy an enemy Spell" can clear one.
     friendlySpells: ({ exceptSelf = true } = {}) => spellsOn(state, p)
       .filter((s) => !(exceptSelf && s.uid === spell.uid))
+      .filter((s) => defOf(state, s).kind !== 'trap')
       .map((s) => s.uid).sort((a, b) => a - b),
 
     enemySpells: () => spellsOn(state, enemy)
@@ -255,9 +261,11 @@ export function makeCtx(state, spell, def, face, opts = {}) {
      * drag on the battlefield into one of them, and offers `preferred` as
      * buttons for anyone who would rather click.
      */
-    askDir: (bodyId, prompt, force) => {
+    askDir: (bodyId, prompt, force, { preferred = null } = {}) => {
       const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
-      const pref = body ? pushPreferred(state, p, body) : [];
+      // `preferred` overrides the "away from the caster" default: a charge
+      // wants the bearings TOWARD each enemy, which is what the AI samples.
+      const pref = preferred ? [...new Set(preferred)] : body ? pushPreferred(state, p, body) : [];
       const dirs = pushDirs();
       return ask.pick(dirs, {
         prompt, kind: 'dir', force,
@@ -399,6 +407,8 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       const pl = state.players[p];
       const i = pl.discard.findIndex((c) => c.uid === uid);
       if (i < 0) return false;
+      // The hand limit holds here too: a full hand recalls nothing.
+      if (pl.hand.length >= HAND_MAX) { fx(state, 'handFull', { p, n: 1 }); return false; }
       pl.hand.push(pl.discard.splice(i, 1)[0]);
       fx(state, 'recall', { uid, p });
       return true;
@@ -425,6 +435,208 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       const ids = ctx.enemyUnits(4000);
       if (!ids.length) return 0;
       return ctx.hit(ids[0], amount, { cause: 'unstable' });
+    },
+
+    /* ------------------------------------------------- red's physical payoffs */
+    // Each of these is ONE funnel for a physical event the attack school
+    // needs, built from the same primitives everything else uses: damage goes
+    // through `hit`, pushes through pushAwayFrom/push, terrain through
+    // smash/ignite, and every one leaves a note the view can draw.
+
+    /** Bearings from the caster's origin to each enemy unit, nearest first. */
+    bearingsToEnemies: () => {
+      const o = rangeOrigins(state, p)[0];
+      if (!o) return [];
+      return enemiesOf(state, p)
+        .map((u) => ({ d: bearing(o.x, o.y, u.x, u.y), k: dist2(o.x, o.y, u.x, u.y) }))
+        .sort((a, b) => a.k - b.k || a.d - b.d)
+        .map((x) => x.d);
+    },
+
+    /** Living enemy units within `r` of a point (edge-to-centre), id order. */
+    enemiesNear: (x, y, r) => enemiesOf(state, p)
+      .filter((u) => dist2(u.x, u.y, x, y) <= r * r)
+      .map((u) => u.id).sort((a, b) => a - b),
+    unitsNear: (x, y, r) => livingUnits(state)
+      .filter((u) => dist2(u.x, u.y, x, y) <= r * r)
+      .map((u) => u.id).sort((a, b) => a - b),
+
+    /** A terrain piece's radius (its kind's, scaled per piece). */
+    propRadius: (propId) => { const pr = findProp(state, propId); return pr ? propR(pr) : 0; },
+    /** Enemy units carrying the burn status, id order. */
+    burningEnemies: () => enemiesOf(state, p).filter((u) => u.burn > 0).map((u) => u.id).sort((a, b) => a - b),
+    /** Terrain pieces that can catch fire, within range, not already alight. */
+    burnableProps: (mmDist) => ctx.propsInRange(mmDist).filter((id) => {
+      const pr = findProp(state, id);
+      return pr && propBurnable(pr) && !propBurning(state, pr);
+    }),
+    /** Terrain pieces on fire right now, whatever lit them. */
+    burningProps: () => propsOnBoard(state).filter((pr) => propBurning(state, pr)).map((pr) => pr.id).sort(),
+
+    /** Set a unit burning for `turns` of its own turn starts. */
+    burn: (unitId, turns) => setBurning(state, findUnit(state, unitId), turns, { byP: p }),
+
+    /** Knock a unit flat: it loses its action this turn. */
+    knockdown: (unitId, dir = null) => {
+      const u = findUnit(state, unitId);
+      if (!u) return false;
+      const o = rangeOrigins(state, p)[0];
+      return knockDown(state, u, dir ?? (o ? bearing(o.x, o.y, u.x, u.y) : 0), { byP: p });
+    },
+
+    /**
+     * Landing points for something called down from the sky: a ring at full
+     * range, a ring at half, and the spot under each enemy unit in range. The
+     * unit points come LAST so an index answer stays stable as rings shrink.
+     */
+    skyPoints: (mmDist) => {
+      const o = rangeOrigins(state, p)[0];
+      if (!o) return [];
+      const r = ctx.range(mmDist).mm;
+      const pts = [...ringPoints(state, o, r), ...ringPoints(state, o, idiv(r, 2))];
+      for (const id of ctx.enemyUnits(mmDist)) {
+        const u = findUnit(state, id);
+        pts.push({ x: u.x, y: u.y, z: u.z, dir: bearing(o.x, o.y, u.x, u.y), unit: id });
+      }
+      return pts;
+    },
+
+    /**
+     * A boulder falls out of the sky at a point. Every unit within `radius`
+     * of it takes `amount` and is thrown off it with `force`; the terrain
+     * around it is cracked and shoved (the force sweep); then a new boulder
+     * lies there, terrain like any other -- climbable, pushable, breakable.
+     */
+    meteor: (point, { amount = 3, force = 3, radius = 1000 } = {}) => {
+      if (!point) return null;
+      const { x, y } = point;
+      const o = rangeOrigins(state, p)[0] || { x: x - 1, y };
+      const hits = ctx.unitsNear(x, y, radius);
+      fx(state, 'meteor', { at: { x, y, z: surfaceAt(state, x, y).z }, hits, radius, amount, force });
+      for (const id of hits) {
+        if (state.winner !== null) break;
+        ctx.hit(id, amount, { cause: 'rock' });
+        const u = findUnit(state, id);
+        // Thrown off the point; a unit standing exactly on it goes away from the caster.
+        if (u && !u.dead) ctx.pushFrom(id, u.x === x && u.y === y ? o.x : x, u.x === x && u.y === y ? o.y : y, force);
+      }
+      ctx.sweep(x, y, radius, 'force', { amount, force });
+      if (state.winner !== null) return null;
+      const f = state.field;
+      f.nextPropId = (f.nextPropId ?? f.props.length) + 1;
+      // The rock comes to rest short of any piece it would overlap, along the
+      // line back to the caster, so two rocks never share a footprint.
+      let lx = x, ly = y;
+      const r0 = propSpec('boulder').r;
+      for (let k = 0; k < 10; k++) {
+        const clash = f.props.some((q) => propOnBoard(state, q) && dist2(q.x, q.y, lx, ly) < (propR(q) + r0) ** 2);
+        if (!clash) break;
+        lx = x + idiv((o.x - x) * (k + 1), 10);
+        ly = y + idiv((o.y - y) * (k + 1), 10);
+      }
+      const s = surfaceAt(state, lx, ly);
+      const pr = { id: `m${f.nextPropId}`, kind: 'boulder', x: lx, y: ly, z: s.z, scale: 100,
+        removedUntil: null, body: 'prop', support: s.support, fell: true,
+        hp: propSpec('boulder').hp, burning: null, litBy: null, destroyed: false };
+      f.props.push(pr);
+      fx(state, 'meteorLand', { id: pr.id, at: { x: lx, y: ly, z: s.z } });
+      recheckSupport(state);
+      resolveFalls(state, hurt);
+      return pr.id;
+    },
+
+    /**
+     * Shatter a terrain piece into shrapnel: every unit within `radius` of
+     * its edge takes `amount` and is thrown away from it with `force`, then
+     * the piece is destroyed outright.
+     */
+    shatterTerrain: (propId, { amount = 2, force = 3, radius = 1500 } = {}) => {
+      const pr = findProp(state, propId);
+      if (!pr || !propOnBoard(state, pr)) return 0;
+      const px = pr.x, py = pr.y;
+      const hits = ctx.unitsNear(px, py, radius + propR(pr));
+      fx(state, 'shrapnel', { id: pr.id, at: { x: px, y: py, z: pr.z }, hits, radius });
+      let n = 0;
+      for (const id of hits) {
+        if (state.winner !== null) break;
+        const u = findUnit(state, id);
+        const onIt = u.support?.kind === 'prop' && u.support.id === pr.id;
+        n += ctx.hit(id, amount, { cause: 'shrapnel' }) > 0 ? 1 : 0;
+        // Whoever stood ON it is simply dropped when it goes; the rest are thrown.
+        if (!u.dead && !onIt) ctx.pushFrom(id, px, py, force);
+      }
+      smashProp(state, pr, pr.hp, { byP: p, cause: 'shatter' });
+      return n;
+    },
+
+    /**
+     * The mage runs `mm` along a bearing -- a walk, not a push, so it climbs
+     * what it can and stops at a cliff -- and every enemy within `radius` of
+     * the line it ran takes `amount`. Whoever it rams is shoved on with
+     * `force` along the run.
+     */
+    charge: (dir, mm, { amount = 2, radius = 1000, force = 2 } = {}) => {
+      const m = mageOf(state, p);
+      if (!m || m.dead) return [];
+      const x0 = m.x, y0 = m.y, z0 = m.z;
+      const r = walk(state, m, dir, mm, { allowFall: false, climb: true });
+      const x1 = m.x, y1 = m.y;
+      // Distance from each enemy to the segment run: project, clamp, compare.
+      const [ux, uy] = DIR64[dir & 63];
+      const L = isqrt(dist2(x0, y0, x1, y1));
+      const hits = enemiesOf(state, p).filter((u) => {
+        const t = clamp(idiv((u.x - x0) * ux + (u.y - y0) * uy, DIR_SCALE), 0, L);
+        const cx = x0 + idiv(ux * t, DIR_SCALE), cy = y0 + idiv(uy * t, DIR_SCALE);
+        return dist2(u.x, u.y, cx, cy) <= radius * radius && u.z <= m.z + 1500 && u.z >= m.z - 1500;
+      }).map((u) => u.id).sort((a, b) => a - b);
+      const rammed = r.blockedBy?.kind === 'unit' && hits.includes(r.blockedBy.id) ? r.blockedBy.id : null;
+      fx(state, 'charge', { id: m.id, from: { x: x0, y: y0, z: z0 }, to: { x: x1, y: y1, z: m.z }, dir, mm: r.mm, hits, rammed });
+      for (const id of hits) {
+        if (state.winner !== null) break;
+        ctx.hit(id, amount, { cause: 'charge' });
+      }
+      if (rammed !== null && state.winner === null) {
+        const u = findUnit(state, rammed);
+        if (u && !u.dead) ctx.shove(rammed, dir, force);
+      }
+      recheckSupport(state);
+      resolveFalls(state, hurt);
+      return hits;
+    },
+
+    /**
+     * Lift a unit `up` into the air and throw it with `force` along a
+     * bearing. It flies at that height over whatever is lower, lands where
+     * the force runs out, and the fall is the damage -- credited to the
+     * caster, like a hurl, which is why the push is told not to settle.
+     */
+    skyfall: (unitId, up, dir, force) => {
+      const u = findUnit(state, unitId);
+      if (!u || u.dead) return 0;
+      const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
+      const z0 = u.z;
+      u.z += up;
+      u.support = null;
+      fx(state, 'lift', { id: unitId, mm: up, from: { x: u.x, y: u.y, z: z0 } });
+      push(state, u, dir, pp.force, { byP: p, crush: pp.crush, levitate: true, settle: false });
+      // The landing, by hand: whatever is under it now, no higher than it is.
+      const before = u.z;
+      const s = surfaceAt(state, u.x, u.y, { maxZ: before });
+      u.z = s.z; u.support = s.support;
+      const drop = before - s.z;
+      fx(state, 'falls', { landed: [{ key: `u${u.id}`, drop, z: s.z }] });
+      if (drop > FALL_SAFE) bump(state.players[p].ledger, 'fallsCaused');
+      const dmg = fallDamageFor(drop);
+      const dealt = dmg > 0 ? hurt(state, u, dmg, { cause: 'fall', byP: p, drop }) : 0;
+      recheckSupport(state);
+      resolveFalls(state, hurt);
+      return dealt;
+    },
+
+    /** The enemy unit nearest a point, ties to the lowest id. Null if none. */
+    nearestEnemyTo: (x, y) => {
+      const es = enemiesOf(state, p).sort((a, b) => dist2(a.x, a.y, x, y) - dist2(b.x, b.y, x, y) || a.id - b.id);
+      return es.length ? es[0].id : null;
     },
 
     /* ------------------------------------------------- misc */

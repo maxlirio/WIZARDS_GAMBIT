@@ -267,10 +267,13 @@ export const toHighGround = ({ mm = 3000, range = 4000 } = {}) => ({
   },
 });
 
-export const shoveTerrain = ({ force = 3, range = 4000 } = {}) => ({
+export const shoveTerrain = ({ force = 3, range = 4000, burnableOnly = false } = {}) => ({
   tag: 'move', reach: range,
   *effect(ctx) {
-    const ids = ctx.propsInRange(range, { pushableOnly: true });
+    // `burnableOnly`: Flame Line pushes trees -- burning or not -- so a fire
+    // can be walked into the enemy's lines.
+    const ids = ctx.propsInRange(range, { pushableOnly: true })
+      .filter((id) => !burnableOnly || ctx.burnableProps(99000).includes(id) || ctx.burningProps().includes(id));
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Push which terrain piece?', kind: 'prop' });
     if (id === null) return;
@@ -754,6 +757,261 @@ export const keywordBolt = ({ per = 1, cap = 5, range = 4000 } = {}) => ({
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Deal ${n} damage`, kind: 'unit' });
     if (id !== null) ctx.hit(id, n);
+  },
+});
+
+/* ============================================================ red: the physical payoffs */
+// The attack school's second tranche. Every one of these is something you can
+// SEE happen on the battlefield: a rock out of the sky, a stone bursting into
+// shrapnel, a mage running through a line of golems trailing fire. Each
+// reaches the world through one ctx funnel (resolve.js) and nothing else.
+
+/** Meteor: a boulder falls at a chosen point. Units under it are hit and thrown; the rock stays. */
+export const meteor = ({ amount = 3, force = 3, radius = 1000, range = 5000 } = {}) => ({
+  tag: 'break', reach: range, element: 'force',
+  *effect(ctx) {
+    const pts = ctx.skyPoints(range);
+    if (!pts.length) return;
+    const i = pts.length === 1 ? 0 : yield ctx.ask.pick(pts.map((_, k) => k), {
+      prompt: 'Call the meteor down where?',
+      labels: pts.map((pt) => (pt.unit !== undefined ? `on ${ctx.unit(pt.unit)?.kind === 'mage' ? 'the mage' : 'a golem'}` : ctx.dirLabel(pt.dir))),
+      show: pts.map(({ x, y, z }) => ({ x, y, z })),
+    });
+    if (i === null) return;
+    ctx.meteor(pts[i], { amount, force, radius });
+  },
+});
+
+/** Pull a terrain piece toward the caster. The rock comes to you. */
+export const pullTerrain = ({ force = 3, range = 4000 } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const ids = ctx.propsInRange(range, { pushableOnly: true });
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Pull which terrain piece?', kind: 'prop' });
+    if (id === null) return;
+    ctx.pullIn(id, force);
+  },
+});
+
+/** Take hit points off a terrain piece. Shatters it at zero, like anything else. */
+export const crackTerrain = ({ amount = 1, range = 4000, then = null } = {}) => ({
+  tag: 'break', reach: range,
+  *effect(ctx) {
+    const ids = ctx.propsInRange(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Crack which terrain piece for ${amount}?`, kind: 'prop' });
+    if (id === null) return;
+    ctx.smash(id, amount, { cause: 'crack' });
+    if (then === 'draw') ctx.draw(1);
+  },
+});
+
+/** Burst a terrain piece into shrapnel: everyone near it is hit and thrown off it. */
+export const shatterTerrain = ({ amount = 2, force = 3, radius = 1500, range = 4000 } = {}) => ({
+  tag: 'break', reach: range,
+  *effect(ctx) {
+    const ids = ctx.propsInRange(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Shatter which terrain piece?', kind: 'prop' });
+    if (id === null) return;
+    ctx.shatterTerrain(id, { amount, force, radius });
+  },
+});
+
+/** Knock one enemy flat: it loses its action this turn. */
+export const knockDown = ({ range = 2000 } = {}) => ({
+  tag: 'break', reach: range,
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Knock down which unit?', kind: 'unit' });
+    if (id === null) return;
+    ctx.knockdown(id);
+  },
+});
+
+/** Thunderclap: everyone around the caster is hit and floored at once. */
+export const thunderclap = ({ amount = 2, range = 2000, element = 'lightning' } = {}) => ({
+  tag: 'break', reach: range, element,
+  *effect(ctx) {
+    const o = ctx.origin();
+    if (!o) return;
+    const ids = ctx.enemyUnits(range);
+    ctx.fx('thunderclap', { p: ctx.p, at: { x: o.x, y: o.y, z: o.z }, radius: ctx.range(range).mm, hits: ids });
+    for (const id of ids) {
+      if (ctx.state.winner !== null) break;
+      ctx.hit(id, amount);
+      ctx.knockdown(id);
+    }
+    ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount });
+  },
+});
+
+/** Your mage runs: drag the line, and everyone it passes is burned. */
+export const charge = ({ mm = 3000, amount = 2, radius = 1000, force = 2 } = {}) => ({
+  tag: 'move', reach: mm, element: 'fire',
+  *effect(ctx) {
+    const m = ctx.mage();
+    if (!m || m.dead) return;
+    const d = yield ctx.askDir(m.id, 'Drag the line of the charge', force, { preferred: ctx.bearingsToEnemies() });
+    if (d === null) return;
+    ctx.charge(d, mm, { amount, radius, force });
+    // The run leaves fire on whatever wood it brushed past.
+    const after = ctx.mage();
+    if (after) ctx.sweep(after.x, after.y, SCORCH, 'fire', { amount: 1 });
+  },
+});
+
+/** The mage steps to a point within `mm`: a dash, no damage. */
+export const dashMage = ({ mm = 2000 } = {}) => ({
+  tag: 'move', reach: mm,
+  *effect(ctx) {
+    const m = ctx.mage();
+    if (!m || m.dead) return;
+    const pts = ctx.landingPoints(m.id, mm);
+    if (!pts.length) return;
+    const i = pts.length === 1 ? 0 : yield ctx.ask.pick(pts.map((_, k) => k), {
+      prompt: 'Dash where?', labels: pts.map((pt) => `${ctx.dirLabel(pt.dir)} z${pt.z}`),
+      show: pts.map(({ x, y, z }) => ({ x, y, z })),
+    });
+    if (i === null) return;
+    ctx.relocate(m.id, pts[i]);
+  },
+});
+
+/** Cannonade: a terrain piece is fired at the enemy nearest it. The rock does the hitting. */
+export const cannonade = ({ force = 6, range = 3000 } = {}) => ({
+  tag: 'move', reach: range, element: 'force',
+  *effect(ctx) {
+    const ids = ctx.propsInRange(range, { pushableOnly: true });
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Fire which terrain piece?', kind: 'prop' });
+    if (id === null) return;
+    const pr = ctx.prop(id);
+    const target = ctx.nearestEnemyTo(pr.x, pr.y);
+    if (target === null) return;
+    const t = ctx.unit(target);
+    ctx.fx('cannonade', { id, at: target, from: { x: pr.x, y: pr.y, z: pr.z } });
+    ctx.pullTo(id, t.x, t.y, force);
+  },
+});
+
+/** A hit that leaves the target burning: 1 damage at the start of each of its next `burn` turns. */
+export const immolate = ({ amount = 1, burn = 2, range = 3000 } = {}) => ({
+  tag: 'break', reach: range, element: 'fire',
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Immolate which unit?`, kind: 'unit' });
+    if (id === null) return;
+    const t = ctx.unit(id);
+    ctx.hit(id, amount);
+    ctx.burn(id, burn);
+    if (t) ctx.sweep(t.x, t.y, SCORCH, 'fire', { amount: 1 });
+  },
+});
+
+/** Every burning enemy in range takes `amount` more. Fire fed with fire. */
+export const stokeBurning = ({ amount = 2, range = 4000 } = {}) => ({
+  tag: 'break', reach: range, element: 'fire',
+  *effect(ctx) {
+    const inRange = ctx.enemyUnits(range);
+    for (const id of ctx.burningEnemies()) {
+      if (ctx.state.winner !== null) break;
+      if (inRange.includes(id)) ctx.hit(id, amount);
+    }
+  },
+});
+
+/** Fire jumps: every enemy within `radius` of a burning enemy catches it. */
+export const spreadBurn = ({ radius = 1000, burn = 2 } = {}) => ({
+  tag: 'break',
+  *effect(ctx) {
+    // From the set burning BEFORE the spread, so one face cannot run a fire
+    // down a whole line in a single resolution.
+    const seeds = ctx.burningEnemies().map((id) => ctx.unit(id));
+    const caught = new Set();
+    for (const s of seeds) for (const id of ctx.enemiesNear(s.x, s.y, radius)) if (!(ctx.unit(id).burn > 0)) caught.add(id);
+    for (const id of [...caught].sort((a, b) => a - b)) ctx.burn(id, burn);
+  },
+});
+
+/** The payoff: every burning enemy takes `amount`, and the fire spreads to each enemy near one. */
+export const conflagration = ({ amount = 3, radius = 1500, burn = 2 } = {}) => ({
+  tag: 'break', element: 'fire',
+  *effect(ctx) {
+    const seeds = ctx.burningEnemies().map((id) => ctx.unit(id));
+    const caught = new Set();
+    for (const s of seeds) for (const id of ctx.enemiesNear(s.x, s.y, radius)) if (!(ctx.unit(id).burn > 0)) caught.add(id);
+    for (const s of seeds) {
+      if (ctx.state.winner !== null) break;
+      ctx.hit(s.id, amount);
+      ctx.sweep(s.x, s.y, SCORCH, 'fire', { amount: 1 });
+    }
+    for (const id of [...caught].sort((a, b) => a - b)) { if (ctx.state.winner !== null) break; ctx.burn(id, burn); }
+  },
+});
+
+/** Light one piece of wood in range. */
+export const igniteTerrain = ({ range = 3000 } = {}) => ({
+  tag: 'break', reach: range, element: 'fire',
+  *effect(ctx) {
+    const ids = ctx.burnableProps(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Ignite which terrain piece?', kind: 'prop' });
+    if (id === null) return;
+    ctx.ignite(id);
+  },
+});
+
+/** Every enemy standing within `radius` of a burning piece's edge is hurt. */
+export const fireBite = ({ amount = 1, radius = 1000 } = {}) => ({
+  tag: 'break', element: 'fire',
+  *effect(ctx) {
+    const hit = new Set();
+    for (const pid of ctx.burningProps()) {
+      const pr = ctx.prop(pid);
+      for (const id of ctx.enemiesNear(pr.x, pr.y, radius + ctx.propRadius(pr.id))) hit.add(id);
+    }
+    for (const id of [...hit].sort((a, b) => a - b)) {
+      if (ctx.state.winner !== null) break;
+      ctx.hit(id, amount, { cause: 'fire' });
+    }
+  },
+});
+
+/** Flame Line: light every piece of wood in range, then everyone beside a fire burns. */
+export const flameLine = ({ range = 3000, radius = 1000, amount = 2 } = {}) => ({
+  tag: 'break', reach: range, element: 'fire',
+  *effect(ctx) {
+    const o = ctx.origin();
+    if (!o) return;
+    for (const id of ctx.burnableProps(range)) ctx.ignite(id);
+    ctx.fx('flameLine', { p: ctx.p, at: { x: o.x, y: o.y, z: o.z }, radius: ctx.range(range).mm, lit: ctx.burningProps() });
+    const hit = new Set();
+    for (const pid of ctx.burningProps()) {
+      const pr = ctx.prop(pid);
+      for (const id of ctx.enemiesNear(pr.x, pr.y, radius + ctx.propRadius(pr.id))) hit.add(id);
+    }
+    for (const id of [...hit].sort((a, b) => a - b)) {
+      if (ctx.state.winner !== null) break;
+      ctx.hit(id, amount, { cause: 'fire' });
+    }
+  },
+});
+
+/** Skyfall: lift an enemy into the air and throw it; the landing is the damage. */
+export const skyfall = ({ up = 2000, force = 4, range = 4000 } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Lift which unit?', kind: 'unit' });
+    if (id === null) return;
+    const d = yield ctx.askDir(id, 'Drag to throw it', force);
+    if (d === null) return;
+    ctx.skyfall(id, up, d, force);
   },
 });
 

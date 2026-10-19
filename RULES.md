@@ -36,7 +36,8 @@ GREEN    PURPLE     BLUE        3 4 5    blue    the battlefield
 ```
 
 - A spell may only be **played** onto a cell matching its school. One home cell per
-  school; **artifacts** may be played onto any of the four grey corners.
+  school; **artifacts** and **traps** (§12) may be played onto any of the four grey
+  corners.
 - **A cell holds one card.** Cards never stack: a home cell that is taken must be
   cleared (shifted aside or destroyed) before that school can play again, and a shift
   only goes into an empty neighbouring cell.
@@ -119,6 +120,10 @@ The spell action is exactly one of:
 
 **Every turn begins with a draw** — except the very first turn of the duel, which is
 how going first is paid for. Drawing is not an action.
+
+**The hand holds five cards.** With five in hand you draw nothing — not the turn's
+draw, and not a card's "draw a card" (the effect simply does nothing). A card you
+cannot draw stays on the deck.
 
 | action | what happens |
 |---|---|
@@ -277,9 +282,10 @@ both ends: registered by a Keyword that is actually on a card, **and** called by
 the engine. That second check is not decoration — three Keywords failed it on its
 first run and did nothing whatsoever.
 
-Printed Keywords not carried over, and why: `Counterspell` and `Trap` need a
-replacement effect that can ask a question, which the replacement path
-deliberately cannot do (it runs inside `hurt`, mid-mutation); `Speed Cast` and
+Printed Keywords not carried over, and why: `Counterspell` needs a replacement
+effect that can ask a question, which the replacement path deliberately cannot
+do (it runs inside `hurt`, mid-mutation); `Trap` became a card **kind** rather
+than a Keyword (§12), with every reaction written to need no choice; `Speed Cast` and
 `Reverse N` belong to the mana economy that no longer exists; `Move +N` became
 `[Swift]` and `Unstable N` became `[Unstable]`, because a numeric parameter on a
 Keyword name is a second axis the matcher would have to understand.
@@ -443,12 +449,26 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
   start of every turn** (1 damage to every unit within 0.9m of its edge, whichever side
   it is on, credited to whoever lit it), **spreads** to wood within 1.2m, and after its
   second bite burns away to nothing. Fire takes no sides.
+- **Burning units** (Immolate): a unit set burning takes **1 damage at the start of each
+  of its own turns** for as many turns as it was given (a second immolation adds turns),
+  credited to whoever lit it. It does not spread on its own; Immolate's faces spread it.
+- **Knocked down** outright (Thunderclap): a unit loses its action this turn, exactly as
+  if an impact had floored it.
+- **Felled:** a tree's tipping force is 3, so "push a tree with force 3" is a felling —
+  it falls along the line you drag (Flame Line III).
+- **Meteors** (Meteor Call IV) are new boulders: the rock that fell stays on the field as
+  terrain, climbable and pushable like any other.
+- **Skyfall:** a unit lifted 2m and thrown flies at that height over anything lower,
+  lands where the force runs out, and takes fall damage for the drop from 2m above where
+  it started — more into a pit, less onto a rock or a plateau. Credited to the caster.
 - **Elements.** A face declares what it does to terrain, and the engine applies it in
   one place (`ctx.sweep`), so no card has to know what wood is:
-  - **fire** (Ember Lash, Cinder Rain, Firebrand, Ash Wraith): lights wood in the blast.
-  - **lightning** (Storm Brand): lights wood and bursts crystal.
-  - **force** (Shift, Thornwall's nova, Stone Tide's quake, Undertow's vortex, slams):
-    throws every piece in reach the same way it throws units, and cracks it.
+  - **fire** (Ember Lash, Cinder Rain, Firebrand, Ash Wraith, Immolate, Flame Line,
+    Blazing Charge): lights wood in the blast.
+  - **lightning** (Storm Brand, Thunderclap): lights wood and bursts crystal.
+  - **force** (Shift, Thornwall's nova, Stone Tide's quake, Undertow's vortex, slams,
+    Meteor Call's landing, Cannonade): throws every piece in reach the same way it
+    throws units, and cracks it.
 
 The arena kinds now include a **grove**, a stand of trees where fire is the game.
 - **Range is measured from your mage or one of your golem units** (printed
@@ -567,3 +587,59 @@ A golem card never sits on a cell, never rotates and never matches, so it has no
 faces and no corner runes — the schema refuses to let one be authored with them.
 It is a statline and a tier. Three quarters of a four-sided golem would be
 unreachable by construction.
+
+---
+
+## 12. Traps
+
+A **trap** is a grey card with **one face, side I**, and **no corner runes**. Its
+text begins `TRAP:` and states a trigger and a reaction in one breath, because
+the opponent reads it exactly once, as it goes off.
+
+- **Setting a trap is a full spell action**, like playing an artifact: it goes
+  **face down** into any **empty grey corner**. Setting it resolves nothing and
+  checks no matches.
+- **While concealed it has no runes in play.** It never matches, is never a chain
+  neighbour, and the match rule treats its corners as absent (`runeAtCorner`
+  answers "no rune", which matches nothing — not even a wildcard).
+- It **cannot be rotated or shifted**, by anyone, by any means: there is nothing
+  to rotate to and nowhere it goes. Your own effects never choose it (*"a Spell
+  you control"* skips it). Its **owner may destroy it** with the destroy action,
+  and an enemy *"destroy an enemy Spell"* effect **may target it** — they can see
+  a trap is set, not which.
+- **Springing is automatic.** The first time its trigger condition is met **during
+  the opponent's turn**, the trap springs: it is **revealed**, its reaction
+  resolves **at once**, and the card goes to its owner's **discard**, freeing the
+  corner. A trap **never springs on its owner's own actions** — the owner's own
+  spell wounding the owner's own mage, the owner's golem walking up to the
+  owner's mage, do not set it off.
+- **A reaction never asks a question.** It runs inside the engine's replacement
+  path (damage about to land) or as a queued listener (a move that has
+  happened), where no question can be asked, so every trap is designed to need
+  no choice: the nearest unit, the acting player's range origin, the enemy mage.
+  The schema refuses a trap with an effect, a cost or a gate.
+- **Concealment is a matter for the view.** Both lockstep engines hold the full
+  state, including which trap is set, and hash the `concealed` flag; what the
+  opponent's screen shows is a card back with a TRAP seal. The AI, which searches
+  by cloning the state, can see it — a known and accepted asymmetry.
+
+The four traps:
+
+| trap | trigger | reaction |
+|---|---|---|
+| **Earth Wall** | an enemy Spell would damage your unit | dirt heaves into a **wall of earth** (mass 5, 3 hp, blocks sight and movement) one body-width in front of the unit toward the spell's source — or the nearest free spot — and **the wall takes the damage**; if nowhere is free the damage is simply prevented |
+| **Snare** | an enemy unit ends a move within 2m of your mage | it takes 1 damage and **loses its next action** (it sits out its owner's coming turn) |
+| **Mirror Ward** | an enemy Spell would damage your mage | the damage is **dealt to the enemy mage instead**; if that mage is dead, it is prevented |
+| **Spring Trap** | an enemy unit ends a move within 1.5m of one of your units | it is **flung away** from the nearest such unit with force 4 |
+
+"An enemy Spell would deal damage" means a spell's own damage: a bolt, a dropped
+rock, an [Unstable] blast, or damage another replacement already redirected. A
+unit's strike, an impact, a fall, fire and poison are not a Spell dealing damage.
+
+**Earth Wall is in the standard deck** in place of the second `Change`, so a
+face-down card is on the table in every real duel. `tools/verify-faces.js` judges
+each trap through its trigger — an enemy damage spell resolved into the owner's
+mage, an enemy unit walking up through the real move action — and insists it
+springs then, reacts as printed, and stays set when the owner does the same
+thing; `--selftest` plants a trap that springs on its owner and one that never
+springs, and both must be caught.
