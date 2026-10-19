@@ -96,7 +96,7 @@ export const shiftSelf = () => ({
 export const destroyASpell = ({ side = 'friendly', then = null } = {}) => ({
   tag: 'break',
   *effect(ctx) {
-    const opts = ctx.spellTargets({ side });
+    const opts = ctx.destroyTargets({ side });
     if (!opts.length) return;
     const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: 'Destroy a Spell' });
     if (uid === null) return;
@@ -206,10 +206,10 @@ export const push = ({ mm = 2000, range = 3000, side = 'enemy' } = {}) => ({
   },
 });
 
-export const pushAway = ({ mm = 2000, range = 3000 } = {}) => ({
+export const pushAway = ({ mm = 2000, range = 3000, side = 'enemy' } = {}) => ({
   tag: 'move', reach: range,
   *effect(ctx) {
-    const ids = ctx.enemyUnits(range);
+    const ids = side === 'enemy' ? ctx.enemyUnits(range) : ctx.anyUnits(range);
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Push which unit away?', kind: 'unit' });
     if (id === null) return;
@@ -408,12 +408,17 @@ export const nova = ({ amount = 2, mm = 1500, range = 2500, element = 'force' } 
 });
 
 /** Push every enemy within range directly away from the origin. */
-export const repel = ({ mm = 2500, range = 3000, element = 'force' } = {}) => ({
+export const repel = ({ mm = 2500, range = 3000, element = 'force', side = 'enemy' } = {}) => ({
   tag: 'move', reach: range, element,
   *effect(ctx) {
     const o = ctx.origin();
     if (!o) return;
-    for (const id of ctx.enemyUnits(range)) ctx.pushFrom(id, o.x, o.y, mm);
+    const ids = side === 'enemy' ? ctx.enemyUnits(range) : ctx.anyUnits(range);
+    for (const id of ids) {
+      const u = ctx.unit(id);
+      if (!u || (u.x === o.x && u.y === o.y)) continue;   // the caster stays put
+      ctx.pushFrom(id, o.x, o.y, mm);
+    }
     ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 0, mm });
   },
 });

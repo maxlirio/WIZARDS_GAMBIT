@@ -18,8 +18,8 @@ real place on land — ground that keeps going to the hills, a forest, a sky wit
 a sun in it — and a glowing **ward line** with standing stones marking the
 16m x 12m where the duel is actually fought. Your Spell Table sits bottom-left,
 the enemy's top-right, your hand (big enough to read) along the bottom, and the
-**turn-flow strip** at the top says what you are doing now: draw → spell action
-→ units → end turn. Every control sits next to what it acts on: click one of
+**turn-flow strip** at the top says what you are doing now: draw → units →
+spell action → end turn. Every control sits next to what it acts on: click one of
 your spells and a popover beside its cell offers rotate (with the face it would
 turn to, its reach, and how many enemies are in range), shift and destroy;
 click a unit and a popover over its head offers strike, summon and hold, while

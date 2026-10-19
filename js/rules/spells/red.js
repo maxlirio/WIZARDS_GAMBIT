@@ -100,8 +100,8 @@ card({
   found: 'poisonTwo',
   I:   { text: 'Grant a Spell [Poison].', ...M.grantKeyword({ kw: 'Poison' }) },
   II:  { text: 'Deal 1 damage to an enemy unit within 4m.', ...M.damage({ amount: 1, range: 4000 }) },
-  III: { text: 'Put the top 2 cards of your deck into your discard. Deal 2 damage to an enemy unit within 4m.',
-         cost: [{ id: 'millSelf', n: 2 }], ...M.damage({ amount: 2, range: 4000 }) },
+  III: { text: 'Put the top 2 cards of your deck into your discard. Burn an enemy Spell: destroy it.',
+         cost: [{ id: 'millSelf', n: 2 }], ...M.destroyASpell({ side: 'enemy' }) },
   IV:  { text: 'Deal 2 damage to an enemy unit within 5m and poison it twice.',
          ...M.envenom({ amount: 2, poison: 2, range: 5000 }) },
 });

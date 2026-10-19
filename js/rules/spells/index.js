@@ -65,7 +65,7 @@ export { CARDS, allCards, bySchool, byKind, inertReport };
  */
 export const STANDARD_DECK = Object.freeze([
   'EMBER_LASH', 'EMBER_LASH',
-  'SHOVE',
+  'SHIFT',
   'CHANGE', 'CHANGE',
   'FUSE',
   'TALLY', 'RECKONING',

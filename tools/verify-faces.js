@@ -116,10 +116,14 @@ export function claimsOf(def, face) {
   // cost and which to the effect. Claiming both failed the card for doing
   // exactly what it prints. Reported as unextractable rather than guessed.
   const saysFriendly = /friendly unit/.test(t);
-  const saysEnemy = /enemy unit|enemy within|an enemy/.test(t);
+  const saysEnemy = /enemy unit|enemy within|an enemy(?! Spell)/.test(t);
   if (saysFriendly && !saysEnemy) c.push({ kind: 'friendlyUnitsOnly' });
   if (saysEnemy && !saysFriendly) c.push({ kind: 'enemyUnitsOnly' });
-  if (/[Dd]estroy a (Spell|Artifact)/.test(t)) c.push({ kind: 'destroysSpell' });
+  // "an enemy Spell": only the other table is offered, and only its
+  // unprotected cards -- the stage plants an [Inevitable] enemy card that must
+  // never be in the option list.
+  if (/enemy Spell/.test(t)) c.push({ kind: 'enemySpellsOnly', destroys: /[Dd]estroy/.test(t) });
+  if (/[Dd]estroy an? (enemy )?(Spell|Artifact)/.test(t)) c.push({ kind: 'destroysSpell' });
   // Every face with an effect claims, at minimum, to DO something. A face that
   // asks a question, gets an answer, and leaves the board exactly as it was is
   // a half-written face, and it is invisible to every other check in the suite.
@@ -189,7 +193,7 @@ function stage(defs, cardId, numeral, opts = {}) {
   // on a mismatched colour twenty `rotateDir` claims had no legal target and
   // came back UNCHECKED. Its school is chosen to differ from the card under
   // test so the two do not want the same cell.
-  const friendId = opts.friendId || (def.school === 'green' ? 'SHOVE' : 'CHANGE');
+  const friendId = opts.friendId || (def.school === 'green' ? 'SHIFT' : 'CHANGE');
   const friend = makeCard(state, friendId, 0);
   const friendCell = (HOME[defs[friendId].kind === 'artifact' ? 'artifact' : defs[friendId].school] || [3])[0];
   friend.playedTo = friendCell;
@@ -200,10 +204,16 @@ function stage(defs, cardId, numeral, opts = {}) {
   foeCard.playedTo = 1;
   foeCard.plays = 1;
   place(state, 1, foeCard, 1);
+  // An enemy card that carries [Inevitable]: an effect that destroys enemy
+  // Spells must never offer it.
+  const wardCard = makeCard(state, 'CHANGE', 1);
+  wardCard.playedTo = 3;
+  wardCard.plays = 1;
+  place(state, 1, wardCard, 3);
 
   // Hand cards, so a discard cost is payable and a draw has somewhere to come
   // from; deck cards so `draws` can be observed.
-  for (let i = 0; i < 4; i++) state.players[0].hand.push(makeCard(state, 'SHOVE', 0));
+  for (let i = 0; i < 4; i++) state.players[0].hand.push(makeCard(state, 'SHIFT', 0));
   for (let i = 0; i < 6; i++) state.players[0].deck.push(makeCard(state, 'TALLY', 0));
 
   // Units. The mage is the range origin, so everything is measured from it.
@@ -251,7 +261,7 @@ function stage(defs, cardId, numeral, opts = {}) {
 
   refresh(state);
   state.tableDirty = [false, false];
-  return { state, card, friend, foeCard, outside, ally, mine, theirs, cell, faceIndex, def };
+  return { state, card, friend, foeCard, wardCard, outside, ally, mine, theirs, cell, faceIndex, def };
 }
 
 /**
@@ -311,7 +321,8 @@ function snapshotOf(st) {
     // paid perfectly.
     acted: Object.fromEntries(state.field.units.map((u) => [u.id, `${u.acted ? 'A' : ''}${u.poison || 0}`])),
     pos: Object.fromEntries(state.field.units.map((u) => [u.id, `${u.x},${u.y}`])),
-    rots: Object.fromEntries(spellsOn(state, 0).concat(spellsOn(state, 1)).map((s) => [s.uid, s.rot])),
+    // A hex leaves only a prohibition behind, so it is part of the record too.
+    rots: Object.fromEntries(spellsOn(state, 0).concat(spellsOn(state, 1)).map((s) => [s.uid, `${s.rot}${s.noTurnUntil !== null && s.noTurnUntil !== undefined ? 'H' : ''}`])),
     scored: state.scoreLog.length,
     props: state.field.props.map((pr) => `${pr.id}:${pr.x},${pr.y},${pr.z}:${pr.removedUntil ?? '-'}:${pr.hp}:${pr.burning ?? '-'}${pr.destroyed ? 'X' : ''}`).join('|'),
     // The view notes, which say what the rules THINK they did. Used for the
@@ -336,12 +347,12 @@ const PASS = 'PASS', FAIL = 'FAIL', UNCHECKED = 'UNCHECKED';
  * broken because one particular legal answer happened to be a no-op.
  */
 const POSITIVE = new Set([
-  'damage', 'travel', 'draws', 'vp', 'vpScaling', 'vpAny',
+  'damage', 'travel', 'draws', 'vp', 'vpScaling', 'vpAny', 'enemySpellsOnly',
   'rotateDir', 'grantsKeyword', 'destroysSpell', 'effectful',
 ]);
 
 function judge(st, run, claim) {
-  const { state, card, friend, foeCard, outside, ally, mine } = st;
+  const { state, card, friend, foeCard, wardCard, outside, ally, mine } = st;
   const { before, after, offered } = run;
   const allOptions = offered.flatMap((o) => o.options || []);
   const touchedUnits = Object.keys(after.hp).filter((id) => after.hp[id] !== before.hp[id]).map(Number);
@@ -503,6 +514,14 @@ function judge(st, run, claim) {
       for (const g of grants) if (!touched.has(g)) return [FAIL, `declares '${g}' but never writes it`];
       return [PASS, ''];
     }
+    case 'enemySpellsOnly': {
+      if (allOptions.some((o) => before.mySpells.includes(o))) return [FAIL, 'offered a friendly Spell for an enemy-Spell effect'];
+      // Only destruction is warded. A hex or a shift may pick the [Inevitable] card.
+      if (claim.destroys && allOptions.includes(wardCard.uid)) return [FAIL, 'offered an enemy [Inevitable] Spell'];
+      const mineChanged = JSON.stringify(before.mySpells) !== JSON.stringify(after.mySpells);
+      if (mineChanged) return [FAIL, 'changed its own table'];
+      return offered.length ? [PASS, ''] : [UNCHECKED, 'no enemy Spell was chosen'];
+    }
     case 'destroysSpell': {
       if (!offered.length) return [UNCHECKED, 'no Spell was offered to destroy'];
       const gone = before.mySpells.length + before.foeSpells.length
@@ -605,8 +624,19 @@ const FAULTS = [
     })),
   },
   {
+    name: 'offers an enemy [Inevitable] Spell for destruction',
+    apply: (defs) => mutate(defs, 'UNRAVEL', 'IV', (f) => ({
+      ...f,
+      *effect(ctx) {
+        const opts = ctx.spellTargets({ side: 'enemy' });   // not destroyTargets
+        const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: 'Destroy a Spell' });
+        if (uid !== null) ctx.destroySpell(uid);
+      },
+    })),
+  },
+  {
     name: 'awards VP from a blue face',
-    apply: (defs) => mutate(defs, 'SHOVE', 'I', (f) => ({
+    apply: (defs) => mutate(defs, 'SHIFT', 'I', (f) => ({
       ...f, text: 'Push a unit within 3m 2m. Score 2 VP.',
     })),
   },

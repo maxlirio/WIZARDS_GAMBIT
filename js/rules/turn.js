@@ -1,4 +1,7 @@
-// Turn structure. ONE spell action, then the Unit Phase.
+// Turn structure. The Unit Phase FIRST, then ONE spell action.
+//
+// Units move before spells so that the spell you choose is cast from where
+// your mage now stands: walk into range, then strike with the table.
 //
 // The asymmetry is the game's whole action economy: your spell table gets one
 // decision a turn and your army gets a full round of them. So the table is
@@ -19,7 +22,7 @@ import { tickFire } from '../field/push.js';
 
 export function beginTurn(state) {
   const p = state.active;
-  state.phase = 'spell';
+  state.phase = 'unit';
   state.spellActionUsed = false;
   state.tableDirty = [false, false];
 

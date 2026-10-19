@@ -109,7 +109,8 @@ left only.
 
 ## 4. A turn
 
-**One spell action**, then the **Unit Phase**.
+The **Unit Phase** first, then **one spell action**. Units move before spells so
+the spell is cast from where your mage now stands.
 
 The spell action is exactly one of:
 
@@ -128,7 +129,7 @@ Rotating your own spell does something every time: the face it turns up resolves
 (gate, cost, objective, effect — exactly as if a match had turned it), and only then
 is the table checked for matches, which may chain as usual.
 
-Then, in the Unit Phase, **each friendly unit acts once**:
+Before that, in the Unit Phase, **each friendly unit acts once**:
 
 - **mage** — move, attack an adjacent enemy, or summon a golem unit adjacent to itself
 - **golem unit** — move, or attack an adjacent enemy
@@ -246,7 +247,7 @@ The implemented set is **fifteen**, each with exactly one hook and no exceptions
 | `[Absorb]` | takes 1 less damage | `incoming` |
 | `[Swift]` | moves 1m further | `unitMove` |
 | `[Channel]` | this unit is a range origin | `origin` |
-| `[Inevitable]` | resolves even with its gate unmet | `gate` |
+| `[Inevitable]` | your opponent cannot destroy it | `destroy` |
 | `[Spell Mastery]` | may be rotated on any colour | `turnLock` |
 | `[Spell Bane]` | may target enemy Spells | `targets` |
 | `[Consume]` | destroying a friendly Spell for a cost also draws a card | `cost` |
@@ -304,9 +305,10 @@ again. That round trip is the VP throttle; there is no artificial per-turn cap.
   counters, one standard-deck face paid out about twice a game, forever.)
 - **The objective's condition is checked before its cost.** An unmet condition makes
   the face inert and nothing is paid; the cost is the price of scoring, not a trap.
-- **[Inevitable] does not waive an objective's condition.** It waives a face's gate,
-  the condition on resolving. Copied onto a gold card by a match, it used to turn
-  every objective into free points.
+- **No keyword waives a gate or an objective's condition.** [Inevitable] protects
+  the CARD from the opponent's destruction; it says nothing about the effect.
+  (An earlier draft had it waive gates; copied onto a gold card by a match, that
+  turned every objective into free points.)
 
 And each gold card keeps its **biggest objective on side IV**.
 
@@ -415,7 +417,7 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
   one place (`ctx.sweep`), so no card has to know what wood is:
   - **fire** (Ember Lash, Cinder Rain, Firebrand, Ash Wraith): lights wood in the blast.
   - **lightning** (Storm Brand): lights wood and bursts crystal.
-  - **force** (Shove, Thornwall's nova, Stone Tide's quake, Undertow's vortex, slams):
+  - **force** (Shift, Thornwall's nova, Stone Tide's quake, Undertow's vortex, slams):
     throws every piece in reach the same way it throws units, and cracks it.
 
 The arena kinds now include a **grove**, a stand of trees where fire is the game.

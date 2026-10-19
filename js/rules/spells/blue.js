@@ -10,15 +10,17 @@ import * as M from '../motifs.js';
 import { SPIRAL, SHARD, WHEEL, LATTICE } from '../runes.js';
 
 card({
-  id: 'SHOVE', name: 'Shove', school: 'blue',
-  // Force, building to a blast that clears the ground around you.
+  id: 'SHIFT', name: 'Shift', school: 'blue',
+  // The starting blue card: force that moves ANY body -- yours or theirs --
+  // building to a blast that clears the ground around you. Pushing your own
+  // mage out of a corner, or your golem onto a ledge, is half of what it is for.
   runes: [SPIRAL, WHEEL, WHEEL, WHEEL],
   found: null,
-  I:   { text: 'Push an enemy unit within 2m 1.5m.', ...M.push({ mm: 1500, range: 2000 }) },
+  I:   { text: 'Push a unit within 2m 1.5m.', ...M.push({ mm: 1500, range: 2000, side: 'any' }) },
   II:  { text: 'Push a terrain piece within 4m 2m.', ...M.shoveTerrain({ mm: 2000, range: 4000 }) },
-  III: { text: 'Discard a card. Push an enemy unit within 3m 3m away.',
-         cost: [{ id: 'discard', n: 1 }], ...M.pushAway({ mm: 3000, range: 3000 }) },
-  IV:  { text: 'Push every enemy unit within 3m 2.5m away from your mage.', ...M.repel({ mm: 2500, range: 3000 }) },
+  III: { text: 'Discard a card. Push a unit within 3m 3m away.',
+         cost: [{ id: 'discard', n: 1 }], ...M.pushAway({ mm: 3000, range: 3000, side: 'any' }) },
+  IV:  { text: 'Push every unit within 3m 2.5m away from your mage.', ...M.repel({ mm: 2500, range: 3000, side: 'any' }) },
 });
 
 card({

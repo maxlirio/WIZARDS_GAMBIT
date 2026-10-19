@@ -232,6 +232,10 @@ export function place(state, p, spell, cell, { under = false } = {}) {
   return true;
 }
 
+/** Does a keyword shield this card from the opponent's destruction? */
+export const protectedFrom = (state, card) =>
+  applyFor(keywordsOf(state, card), 'destroy', { protected: false }).protected;
+
 /** The table changed, so the one live chain loop should rescan. */
 export const markDirty = (state, p) => {
   state.tableDirty[p] = true;
@@ -341,9 +345,15 @@ export function shift(state, uid, cell) {
 }
 
 /** Destroy a card on the table. It goes to its owner's discard. */
-export function destroy(state, uid, { by = null } = {}) {
+export function destroy(state, uid, { by = null, byP = null } = {}) {
   const at = locate(state, uid);
   if (!at || at.zone !== 'table') return null;
+  // [Inevitable]: the OPPONENT cannot destroy it. `byP` is who is doing the
+  // destroying; the owner's own costs and effects go through regardless.
+  if (byP !== null && byP !== at.card.owner && protectedFrom(state, at.card)) {
+    fx(state, 'protected', { uid, p: at.player, by });
+    return null;
+  }
   // Captured BEFORE the card leaves the table: copied keywords are cleared on
   // the way out, and a derived grant stops applying the moment it is gone.
   const parting = keywordsOf(state, at.card).filter((k) => KEYWORDS_ON_DESTROY.has(k));

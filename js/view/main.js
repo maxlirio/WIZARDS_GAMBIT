@@ -923,8 +923,8 @@ function renderFlow() {
   }
   const steps = [
     { k: 'draw', label: 'Draw', state: 'done' },
-    { k: 'spell', label: 'Spell action', state: S.phase === 'spell' ? 'now' : 'done' },
-    { k: 'unit', label: 'Units', state: S.phase === 'unit' ? 'now' : '' },
+    { k: 'unit', label: 'Units', state: S.phase === 'unit' ? 'now' : 'done' },
+    { k: 'spell', label: 'Spell action', state: S.phase === 'spell' ? 'now' : '' },
     { k: 'end', label: 'End turn', state: '' },
   ];
   el.innerHTML = `<span class="turnno">Turn <b>${S.turn}</b></span>` + steps.map((s, i) => `${i ? '<span class="arrow">▸</span>' : ''}<span class="step ${s.state}"><i></i><span>${s.label}</span></span>`).join('');
@@ -952,7 +952,7 @@ function renderTray() {
       html += `<div class="units">${plays.length === 1 ? '<button data-a="play1" class="primary">Play it there</button>' : ''}<button data-a="cancel" class="ghost">Cancel</button></div>`;
     } else if (sel?.kind !== 'spell') {
       html += `<div class="hintline"><b>Spell action</b>: play a card from your hand, or click one of your spells to rotate, shift or destroy it.</div>`;
-      if (la.some((a) => a.type === 'pass')) html += `<div class="units"><button data-a="skip" class="ghost" title="You drew at the start of your turn; you may take no spell action">Skip spell action ▸</button></div>`;
+      if (la.some((a) => a.type === 'pass')) html += `<div class="units"><button data-a="skip" class="ghost" title="Take no spell action and end your turn">Skip spell action, end turn ▸</button></div>`;
     }
   } else if (S.phase === 'unit') {
     const mine = S.field.units.filter((u) => u.owner === HUMAN && !u.dead);
@@ -969,7 +969,7 @@ function renderTray() {
       for (const a of summons) html += `<button data-summon="${a.golem}" class="primary" title="Spends the mage's action">✦ Summon ${esc(cardName(a.golem))}</button>`;
       html += `<button data-a="pass" class="ghost">Hold position</button>`;
     }
-    html += `<button data-a="endturn" class="end">End turn ▸</button></div>`;
+    html += `<button data-a="endturn" class="end">Done moving ▸</button></div>`;
   }
   el.innerHTML = html;
   el.querySelectorAll('button').forEach((b) => {

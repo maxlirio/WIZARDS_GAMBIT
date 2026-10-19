@@ -18,6 +18,7 @@ import { ask } from './driver.js';
 import {
   spellsOn, defOf, findSpell, destroy, turn, setRot, shift, draw, mill, fx,
   topOf, occupied, canTurn, prohibited, noteCards, playFromHand, homeCells,
+  protectedFrom,
 } from './ops.js';
 import { activeIndex, NUMERALS } from './orient.js';
 import { CELL_COLOR, above, below, leftOf, rightOf, orthoNeighbours } from './table.js';
@@ -95,10 +96,15 @@ export function makeCtx(state, spell, def, face, opts = {}) {
     destroySpell: (uid) => {
       const target = findSpell(state, uid);
       const victim = target?.owner;
-      const out = destroy(state, uid, { by: `face:${def.id}:${face.numeral}` });
+      const out = destroy(state, uid, { by: `face:${def.id}:${face.numeral}`, byP: p });
       if (out && victim !== p) bump(state.players[p].ledger, 'enemySpellsDestroyed');
       return out;
     },
+    /** Spells this face could destroy: an enemy's [Inevitable] card is never offered. */
+    destroyTargets: ({ side = 'friendly' } = {}) => ctx.spellTargets({ side }).filter((uid) => {
+      const t = findSpell(state, uid);
+      return t && (t.owner === p || !protectedFrom(state, t));
+    }),
     cellOf: (uid) => findSpell(state, uid)?.cell ?? null,
     neighbourCells: () => orthoNeighbours(spell.cell),
     neighbourSpell: (where) => {

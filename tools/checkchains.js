@@ -299,7 +299,7 @@ const CASES = [
   ['every resolution is inert on an unmet gate',
    [[3, 'XX_GATED', 0], [4, 'XX_ALLSAME', 0], [1, 'XX_ALLSAME', 1], [5, 'XX_ALLSAME', 2]]],
   ['the real corpus, interior junction crowded',
-   [[4, 'FUSE', 0], [1, 'EMBER_LASH', 0], [3, 'CHANGE', 0], [5, 'SHOVE', 0], [7, 'TALLY', 0],
+   [[4, 'FUSE', 0], [1, 'EMBER_LASH', 0], [3, 'CHANGE', 0], [5, 'SHIFT', 0], [7, 'TALLY', 0],
     [0, 'FOCUS_STONE', 0], [2, 'RESONIS_ORB', 0], [6, 'DEFRINOL_ORB', 0], [8, 'ECHO_BELL', 0]]],
 ];
 

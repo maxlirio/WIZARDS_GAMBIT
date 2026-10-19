@@ -37,7 +37,7 @@ export const HOOKS = Object.freeze([
   'hit',        // (ctx, {target}) -> void. After a hit lands.
   'incoming',   // ({amount}) -> the same shape. Damage being taken.
   'unitMove',   // ({mm}) -> the same shape
-  'gate',       // ({ignore}) -> the same shape
+  'destroy',    // ({protected}) -> the same shape. Can the OPPONENT destroy the carrier?
   'turnLock',   // ({free}) -> the same shape
   'targets',    // ({side}) -> the same shape
   'cost',       // (ctx, {kind}) -> void. After a cost is paid.
@@ -84,12 +84,11 @@ export const KEYWORDS = Object.freeze({
   Channel: { text: 'Spells may measure range from this unit.', origin: (o) => ({ ...o, isOrigin: true }) },
 
   /**
-   * An unmet gate normally makes a face resolve inert. [Inevitable] is the
-   * keyword that says no -- which is why your printed Change carries it, since
-   * a card whose whole job is to be forced through a chain should not be
-   * stoppable by its own precondition.
+   * The opponent cannot destroy this card. Your own effects still can -- a
+   * cost that destroys a friendly Spell may eat it -- and a gate on one of
+   * its faces still applies; [Inevitable] protects the card, not the effect.
    */
-  Inevitable: { text: 'Resolves even with its gate unmet.', gate: (g) => ({ ...g, ignore: true }) },
+  Inevitable: { text: 'Your opponent cannot destroy it.', destroy: (d) => ({ ...d, protected: true }) },
 
   'Spell Mastery': { text: 'May be rotated on any colour.', turnLock: (t) => ({ ...t, free: true }) },
 

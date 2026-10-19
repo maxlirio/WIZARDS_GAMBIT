@@ -211,17 +211,9 @@ export function validateGate(cardId, numeral, gate) {
   }
 }
 
-/** Is this face's gate satisfied right now? [Inevitable] says yes regardless. */
-export function gateMet(state, spell, gate, { objective = false } = {}) {
+/** Is this face's gate satisfied right now? No keyword waives a gate. */
+export function gateMet(state, spell, gate) {
   if (!gate) return true;
-  // [Inevitable] waives a face's GATE -- the condition on resolving it. It does
-  // NOT waive a gold OBJECTIVE's condition, which is the condition on scoring:
-  // copied onto a gold card by a match, it turned every objective into free
-  // points (one face paid out 85 times in 30 games for "kill 3 golems").
-  if (!objective) {
-    const over = applyKeywords(state, spell, 'gate', { ignore: false });
-    if (over.ignore) return true;
-  }
   const g = GATES[gate.id];
   if (!g) return false;
   try { return !!g.test(state, spell, gate); }

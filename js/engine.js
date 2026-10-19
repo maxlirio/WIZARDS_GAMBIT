@@ -421,8 +421,10 @@ export function pump(state) {
     // discard in the middle of a replay.
     if (checkFinds(state)) continue;
 
-    if (state.phase === 'spell' && state.spellActionUsed) { state.phase = 'unit'; continue; }
-    if (state.phase === 'unit' && !pendingUnits(state, state.active).length) {
+    // Units act first; when every unit has acted the spell action opens, and
+    // the turn ends once that one action is spent.
+    if (state.phase === 'unit' && !pendingUnits(state, state.active).length) { state.phase = 'spell'; continue; }
+    if (state.phase === 'spell' && state.spellActionUsed) {
       if (state.turn >= state.config.turnCap) {
         // A declared draw, not a timeout. The harness treats a game that simply
         // stopped as a failure, so the engine has to say which kind of ending

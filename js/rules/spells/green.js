@@ -29,8 +29,8 @@ card({
   found: 'turnFive',
   I:   { text: 'Rotate a Spell you control right.', ...M.turnASpell({ dir: 'right' }) },
   II:  { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
-  III: { text: 'Discard a card. Rotate a Spell you control left.',
-         cost: [{ id: 'discard', n: 1 }], ...M.turnASpell({ dir: 'left' }) },
+  III: { text: 'Discard a card. Destroy an enemy Spell.',
+         cost: [{ id: 'discard', n: 1 }], ...M.destroyASpell({ side: 'enemy' }) },
   IV:  { text: 'Rotate a Spell to any side. Trigger no effects from it.', ...M.setSideFreely() },
 });
 
@@ -92,7 +92,7 @@ card({
   II:  { text: 'Hex an enemy Spell: it may not rotate until after its owner’s next turn.', ...M.hexSpell() },
   III: { text: 'Discard a card. Rotate a Spell left.',
          cost: [{ id: 'discard', n: 1 }], ...M.turnASpell({ dir: 'left' }) },
-  IV:  { text: 'Destroy a Spell.', ...M.destroyASpell({ side: 'enemy' }) },
+  IV:  { text: 'Destroy an enemy Spell.', ...M.destroyASpell({ side: 'enemy' }) },
 });
 
 card({
@@ -114,8 +114,8 @@ card({
   found: 'spired',
   I:   { text: 'This Spell may be rotated on any colour.', ...M.passiveFreeTurn() },
   II:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
-  III: { text: 'If you control 4 Spells, rotate a Spell you control left.',
-         gate: { id: 'spellsAtLeast', n: 4 }, ...M.turnASpell({ dir: 'left' }) },
+  III: { text: 'If you control 4 Spells, destroy an enemy Spell.',
+         gate: { id: 'spellsAtLeast', n: 4 }, ...M.destroyASpell({ side: 'enemy' }) },
   IV:  { text: 'Your opponent may not choose your Spells.', ...M.passiveWard() },
 });
 
