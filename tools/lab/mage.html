@@ -27,10 +27,14 @@
 <script type="module">
 // The code-built mage on its own: two of them, one per team, on a lit floor,
 // with every state a button away. ?anim=walk&view=close&t=600 triggers a
-// state after load; view is close|front|side|back|face|staff|low|far|jump.
+// state after load; view is close|front|side|back|face|staff|low|far|jump;
+// ?solo=1 puts one mage at the origin. `death` and `respawn` run the arena's
+// full rites (fall, dust on the wind; magic gathers, the body forms).
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { makeMageActor, mageClipList } from '../../js/view/mage.js';
+import { createFx } from '../../js/view/fx.js';
+import { createMageRites } from '../../js/view/mage-rites.js';
 
 const params = new URLSearchParams(location.search);
 const canvas = document.getElementById('c');
@@ -93,11 +97,15 @@ function view(name) {
   camera.position.set(...v[0]); controls.target.set(...v[1]); controls.update();
 }
 
+const fx = createFx(scene, { quality: 'high' });
+const rites = createMageRites(fx);
 const mages = [];
 const TEAM = [0x4fd2ff, 0xff5d5d], DARK = [0x1d4e78, 0x6a1a1a];
-for (let p = 0; p < 2; p++) {
+const solo = params.get('solo') === '1';
+for (let p = 0; p < (solo ? 1 : 2); p++) {
   const m = makeMageActor({ team: TEAM[p], teamDark: DARK[p] });
-  m.root.position.set(p ? 0.85 : -0.85, 0, 0);
+  m.team = TEAM[p];
+  m.root.position.set(solo ? 0 : p ? 0.85 : -0.85, 0, 0);
   m.home = m.root.position.x;
   m.fidgets = params.get('fidgets') === '1';   // random idle fidgets off by default: shots must be repeatable
   scene.add(m.root);
@@ -131,6 +139,18 @@ const STATES = {
   cheer() { still((m) => m.cheer()); },
   die() { face(); for (const m of mages) m.die(); },
   revive() { face(); for (const m of mages) m.revive(); },
+  // The arena's rites: fall, lie still, blow away as dust (then hidden);
+  // magic gathers on the spot, the body forms and gets up.
+  death() { face(); for (const m of mages) { m.moving = false; m.levitate(false); m.die(); m.deathT = 0; } },
+  respawn() {
+    face();
+    for (const m of mages) {
+      if (!m.dead) m.die();
+      m.deathT = null; m.setHidden(true);
+      m.root.position.set(m.home, 0, 0);
+      rites.gather(m.home, 0, 0, m.team, { onAppear: () => rites.materialise(m, m.team) });
+    }
+  },
   turn() { for (const m of mages) { m.moving = false; m.facingTarget = Math.PI; } },
   fidgets() { for (const m of mages) m.fidgets = !m.fidgets; },
 };
@@ -157,7 +177,12 @@ const info = document.getElementById('info');
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  fx.update(dt, now);
   for (const m of mages) {
+    if (m.deathT !== null && m.deathT !== undefined) {
+      m.deathT += dt;
+      if (rites.deathStep(m, m.deathT, dt)) { m.deathT = null; m.setHidden(true); }
+    }
     if (m.moving) {
       m.root.position.x += Math.sin(m.facing) * m.speed * dt;
       m.root.position.z += Math.cos(m.facing) * m.speed * dt;
@@ -196,7 +221,7 @@ view(params.get('view') || 'close');
 requestAnimationFrame(frame);
 if (params.get('anim')) setTimeout(() => trigger(params.get('anim')), +(params.get('t') || 300));
 
-window.LAB = { scene, camera, controls, renderer, mages, trigger, view, measure, clips: mageClipList(), ready: true };
+window.LAB = { scene, camera, controls, renderer, mages, fx, rites, trigger, view, measure, clips: mageClipList(), ready: true };
 </script>
 </body>
 </html>

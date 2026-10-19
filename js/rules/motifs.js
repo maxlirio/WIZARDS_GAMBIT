@@ -347,7 +347,7 @@ export const grantKeyword = ({ kw, side = 'friendly' } = {}) => ({
 export const spliceResolve = () => ({
   tag: 'draw',
   *effect(ctx) {
-    const opts = ctx.friendlySpells();
+    const opts = ctx.friendlySpells().filter((u) => ctx.resolvable(u));
     if (!opts.length) return;
     const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: "Resolve a friendly Spell's face" });
     if (uid === null) return;
@@ -360,7 +360,7 @@ export const spliceResolve = () => ({
 export const rewind = ({ index = 0 } = {}) => ({
   tag: 'draw',
   *effect(ctx) {
-    const opts = ctx.friendlySpells();
+    const opts = ctx.friendlySpells().filter((u) => ctx.resolvable(u, index));
     if (!opts.length) return;
     const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, {
       prompt: `Resolve the ${NUMERALS[index]} of a friendly Spell`,
@@ -732,7 +732,7 @@ export const spliceMany = ({ n = 2 } = {}) => ({
   *effect(ctx) {
     const done = [];
     for (let k = 0; k < n; k++) {
-      const opts = ctx.friendlySpells().filter((u) => !done.includes(u));
+      const opts = ctx.friendlySpells().filter((u) => !done.includes(u) && ctx.resolvable(u));
       if (!opts.length) return;
       const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: `Resolve a friendly Spell's face (${k + 1} of ${n})` });
       if (uid === null) return;

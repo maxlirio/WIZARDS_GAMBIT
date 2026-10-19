@@ -12,7 +12,7 @@
 // home. From-the-origin costs one multiply and is exact.
 
 import { idiv, imax, imin, isqrt, dist2, DIR64, DIR_SCALE } from './fixed.js';
-import { inBounds, STEP, STEP_UP, STEP_DOWN, CLIMB_COST, FALL_SAFE, propSpec } from './arena.js';
+import { inBounds, STEP, STEP_UP, STEP_DOWN, CLIMB_COST, FALL_SAFE, propSpec, BODY_R, heightAt } from './arena.js';
 import { surfaceAt, settle, supported, blockingProp, blockingUnit, findProp, BODY_H } from './query.js';
 import { propTop, propR } from './arena.js';
 
@@ -61,7 +61,7 @@ export const fallDamageFor = (drop) => (drop <= FALL_SAFE ? 0 : 1 + idiv(drop - 
  * ledger wants the distance, and the view wants the path.
  */
 export function walk(state, body, dir, budget, {
-  allowFall = false, climb = true, ignoreUnits = false, probe = false, vec = null, stopAfter = 0,
+  allowFall = false, climb = true, ignoreUnits = false, probe = false, vec = null, stopAfter = 0, riders = null,
 } = {}) {
   // `vec` walks an exact heading (integer, scale DIR_SCALE) instead of one of
   // the 64 table directions: a unit told to walk to a POINT must head at that
@@ -69,6 +69,17 @@ export function walk(state, body, dir, budget, {
   const [ux, uy] = vec || DIR64[dir & 63];
   const x0 = body.x, y0 = body.y, z0 = body.z;
   const self = isUnitBody(body) ? null : body.id;
+  // The walking body's own radius: a rock is as wide as a rock. With a unit's
+  // radius a shoved boulder stopped only when its CENTRE came within a body
+  // width of a unit, and left the unit standing inside its footprint.
+  const br = isUnitBody(body) ? BODY_R : propR(body);
+  // Already overlapping something (a rock shoved onto you, a summon squeezed
+  // in): that thing never blocks a step that takes you further from it, or
+  // the body is wedged for good (user: "the moving broke for one of my guys").
+  const awayFrom = (o, nx, ny) => dist2(o.x, o.y, nx, ny) > dist2(o.x, o.y, body.x, body.y);
+  // A unit standing inside a prop's footprint is wedged: for steps that lead
+  // out of it, that prop is not a surface to climb either -- the ground is.
+  const wedgedIn = isUnitBody(body) ? blockingProp(state, x0, y0, z0, { ignore: self, r: br }) : null;
   // `stopAfter`: a walk TO A POINT stops once it has covered that distance,
   // while still spending the whole budget on the way (climb steps cost more
   // than they cover, so capping the budget at the distance stopped a 2.6 m
@@ -85,7 +96,8 @@ export function walk(state, body, dir, budget, {
     // The surface we would be standing on. Capped at a climbable rise, so a
     // body walking under a floating rock is not offered its top.
     const feet = body.z;
-    const s = surfaceAt(state, nx, ny, { ignore: self, maxZ: feet + PROP_CLIMB });
+    const leaving = wedgedIn && awayFrom(wedgedIn, nx, ny) ? wedgedIn.id : self;
+    const s = surfaceAt(state, nx, ny, { ignore: leaving, maxZ: feet + PROP_CLIMB });
     const rise = s.z - feet;
 
     if (rise > STEP_UP) {
@@ -112,7 +124,8 @@ export function walk(state, body, dir, budget, {
       }
     }
 
-    const pr = blockingProp(state, nx, ny, imax(feet, s.z), { ignore: self });
+    let pr = blockingProp(state, nx, ny, imax(feet, s.z), { ignore: leaving, r: br });
+    if (pr && blockingProp(state, body.x, body.y, feet, { ignore: self, r: br }) === pr && awayFrom(pr, nx, ny)) pr = null;
     if (pr) {
       // A climbable piece in the way is a thing to get ON TOP OF: the body
       // scrambles up its side and lands on its top, as one atomic climb.
@@ -124,7 +137,10 @@ export function walk(state, body, dir, budget, {
       continue;
     }
     if (!ignoreUnits) {
-      const u = blockingUnit(state, nx, ny, s.z, { ignore: isUnitBody(body) ? body.id : null });
+      // A prop never collides with the units riding on it: they move with it.
+      const me = isUnitBody(body) ? body.id : null;
+      let u = blockingUnit(state, nx, ny, s.z, { ignore: me, ignoreIds: riders, r: br + BODY_R });
+      if (u && blockingUnit(state, body.x, body.y, feet, { ignore: me, ignoreIds: riders, r: br + BODY_R }) === u && awayFrom(u, nx, ny)) u = null;
       if (u) { blockedBy = { kind: 'unit', id: u.id }; break; }
     }
 
@@ -161,10 +177,10 @@ export function walk(state, body, dir, budget, {
       if (under.z > body.z) { blockedBy = { kind: 'rise', mm: under.z - body.z }; break; }
       // What a flying body hits is NAMED, so the impact can shove it on: a
       // floating rock slammed into a floating rock moves them both.
-      const bp = blockingProp(state, nx, ny, body.z, { ignore: self });
+      const bp = blockingProp(state, nx, ny, body.z, { ignore: self, r: br });
       if (bp) { blockedBy = { kind: 'prop', id: bp.id }; break; }
       if (!ignoreUnits) {
-        const bu = blockingUnit(state, nx, ny, body.z, { ignore: isUnitBody(body) ? body.id : null });
+        const bu = blockingUnit(state, nx, ny, body.z, { ignore: isUnitBody(body) ? body.id : null, ignoreIds: riders, r: br + BODY_R });
         if (bu) { blockedBy = { kind: 'unit', id: bu.id }; break; }
       }
       body.x = nx; body.y = ny;
@@ -216,6 +232,11 @@ function mountOnto(state, body, pr, x0, y0, ux, uy, k, feet, cost, budget, maxSt
     const ny = y0 + idiv(uy * j * STEP, DIR_SCALE);
     if (!inBounds(state.arena, nx, ny)) return null;
     if (dist2(pr.x, pr.y, nx, ny) > rr) continue;
+    // The top has to BE the surface there. A floating rock hanging against a
+    // hillside has ground above its top on the uphill side, and landing on
+    // "the top" there put a unit 272 mm inside the hill.
+    const s = surfaceAt(state, nx, ny, { ignore: self });
+    if (s.support.kind !== 'prop' || s.support.id !== pr.id) continue;
     if (blockingProp(state, nx, ny, top, { ignore: self })) return null;
     if (blockingUnit(state, nx, ny, top, { ignore: isUnitBody(body) ? body.id : null })) return null;
     const c = cost + (j - k + 1) * CLIMB_COST;

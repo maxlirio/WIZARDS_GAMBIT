@@ -30,9 +30,9 @@
 import { idiv, imin, imax, isqrt, clamp, dist2, bearing, opposite, DIR64, DIR_SCALE } from './fixed.js';
 import {
   STEP, FALL_SAFE, BODY_R, propSpec, heightAt, propR, propH, propMass, propOnBoard, propBurnable, propBurning,
-  BURN_TURNS, FIRE_REACH, FIRE_SPREAD,
+  BURN_TURNS, FIRE_REACH, FIRE_SPREAD, inBounds,
 } from './arena.js';
-import { findProp, findUnit, propsOnBoard, livingUnits } from './query.js';
+import { findProp, findUnit, propsOnBoard, livingUnits, blockingProp, blockingUnit, surfaceAt } from './query.js';
 import { walk, queueFall, resolveFalls, recheckSupport, isUnitBody, CLIMB_RATE } from './move.js';
 import { hurt } from '../rules/combat.js';
 import { fx } from '../rules/ops.js';
@@ -74,7 +74,11 @@ export function push(state, body, dir, force, {
 } = {}) {
   const log = chain || [];
   if (!body || body.dead) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
-  const mass = bodyMass(state, body);
+  // Whatever stands on a prop rides with it, and weighs on it: a rock with a
+  // golem on top is a heavier thing to shove. Collected BEFORE the move,
+  // since the move is what changes who is standing where.
+  const riders = isUnitBody(body) ? [] : ridersOf(state, body);
+  const mass = bodyMass(state, body) + riders.reduce((m, u) => m + bodyMass(state, u), 0);
   const spec = isUnitBody(body) ? null : propSpec(body.kind);
   // A tall piece pushed hard enough TOPPLES rather than slides.
   if (depth === 0 && mm === null && spec?.tippable && force >= spec.tipForce) {
@@ -85,15 +89,14 @@ export function push(state, body, dir, force, {
   const v = speed !== null ? speed : speedOf(force, mass);
   if (budget < STEP) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
 
-  const riders = isUnitBody(body) ? [] : ridersOf(state, body);
-  const x0 = body.x, y0 = body.y;
+  const x0 = body.x, y0 = body.y, z0 = body.z;
   let remaining = budget, total = 0, blockedBy = null;
 
   // Bounded by PUSH_DEPTH + 1 segments: each segment either moves the body or
   // clears exactly one obstacle out of the way, and clearing is what costs a
   // segment. No `while`, so there is no arrangement of bodies that hangs here.
   for (let seg = 0; seg <= PUSH_DEPTH && remaining >= STEP; seg++) {
-    const r = walk(state, body, dir, remaining, { allowFall: true, climb: levitate });
+    const r = walk(state, body, dir, remaining, { allowFall: true, climb: levitate, riders: riders.map((u) => u.id) });
     total += r.mm;
     remaining = r.shortfall;
     blockedBy = r.blockedBy;
@@ -107,11 +110,27 @@ export function push(state, body, dir, force, {
 
   if (total > 0) {
     log.push({ id: body.id, kind: body.body, mm: total, dir });
-    // Anything that was riding this prop has lost its footing. That is the
-    // dramatic case the whole module exists for -- shoving the rock out from
-    // under someone -- and it is also why a prop's riders are collected BEFORE
-    // it moves, since afterwards nothing is standing on it any more.
-    for (const u of riders) queueFall(state, u);
+    // THE RIDERS COME ALONG. A unit standing on a shoved rock moves with the
+    // rock (user: "it should move with it if the thing on the bottom moves"),
+    // keeping its place on top. Only if its new spot is off the board or
+    // already taken -- it would be scraped off against a wall or another
+    // body -- does it lose its footing and fall where it was.
+    const dx = body.x - x0, dy = body.y - y0;
+    for (const u of riders) {
+      const nx = u.x + dx, ny = u.y + dy;
+      // The rider's new spot must still have THIS prop's top as its footing:
+      // a rider near the rock's edge can end up over a cliff top higher than
+      // the rock (it would be standing inside the ground), or over nothing.
+      const s = inBounds(state.arena, nx, ny) ? surfaceAt(state, nx, ny) : null;
+      const onIt = s && s.support.kind === 'prop' && s.support.id === body.id;
+      const clear = onIt
+        && !blockingProp(state, nx, ny, s.z, { ignore: body.id })
+        && !blockingUnit(state, nx, ny, s.z, { ignore: u.id, ignoreIds: riders.map((q) => q.id) });
+      if (!clear) { queueFall(state, u); fx(state, 'scraped', { id: u.id, off: body.id }); continue; }
+      const from = { x: u.x, y: u.y, z: u.z };
+      u.x = nx; u.y = ny; u.z = s.z; u.support = s.support;
+      fx(state, 'carry', { id: u.id, on: body.id, mm: total, dir, from, to: { x: u.x, y: u.y, z: u.z }, speed: v });
+    }
     if (isUnitBody(body) && byP !== null) {
       bump(state.players[byP].ledger, 'unitsPushed');
       bump(state.players[byP].ledger, 'pushMm', total);

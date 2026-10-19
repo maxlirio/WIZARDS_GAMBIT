@@ -109,10 +109,11 @@ export function blockingProp(state, x, y, feet, { ignore = null, r = BODY_R } = 
 }
 
 /** The unit standing in the way at (x, y), if any. */
-export function blockingUnit(state, x, y, feet, { ignore = null } = {}) {
+export function blockingUnit(state, x, y, feet, { ignore = null, ignoreIds = null, r = BODY_R * 2 } = {}) {
   for (const u of state.field.units) {
     if (u.dead || u.id === ignore) continue;
-    if (dist2(u.x, u.y, x, y) > (BODY_R * 2) * (BODY_R * 2)) continue;
+    if (ignoreIds && ignoreIds.includes(u.id)) continue;   // a prop's own riders
+    if (dist2(u.x, u.y, x, y) > r * r) continue;
     if (iabs(u.z - feet) > BODY_H) continue;
     return u;
   }

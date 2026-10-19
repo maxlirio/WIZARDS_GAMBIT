@@ -3,7 +3,10 @@
 // DevTools protocol. Needs the dev server:
 //
 //   python3 tools/serve.py 8321 &
-//   node tools/lab/shoot-mage.mjs [--port 8321] [--shots DIR] [--only walk,run]
+//   node tools/lab/shoot-mage.mjs [--port 8321] [--shots DIR] [--only walk,run] [--solo] [--w 960 --h 720]
+//
+// --solo photographs one mage at the origin (the death/respawn rites read
+// better without the second mage in the dust).
 //
 // Prints the directory the PNGs went to. Exit 1 on any page exception.
 
@@ -17,6 +20,7 @@ const port = +arg('port', 8321);
 const shots = arg('shots', '/private/tmp/claude-501/-Users-maxlirio/5f1f44e3-ffc5-42ab-b5dd-b5b2bc7ccebd/scratchpad/mage2-shots');
 const only = arg('only', '') ? arg('only', '').split(',') : null;
 const W = +arg('w', 960), H = +arg('h', 720);
+const solo = process.argv.includes('--solo');
 mkdirSync(shots, { recursive: true });
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DBG = 9400 + Math.floor(Math.random() * 400);
@@ -115,11 +119,21 @@ const PLAN = [
   ['hit-twice', 'hit2', 'close', 150],
   ['hit-twice-done', 'idle', 'close', 900],
   ['turn', 'turn', 'close', 250],
+  // The arena's death and respawn rites, start to finish (times add up along the sequence).
+  ['death-fallen', 'death', 'low', 1900],
+  ['death-dust-a', 'death', 'low', 550],
+  ['death-dust-b', 'death', 'low', 300],
+  ['death-gone', 'death', 'low', 1000],
+  ['respawn-gather-a', 'respawn', 'low', 450],
+  ['respawn-gather-b', 'respawn', 'low', 450],
+  ['respawn-forming', 'respawn', 'low', 300],
+  ['respawn-up', 'respawn', 'low', 700],
+  ['respawn-risen', 'respawn', 'close', 1500],
 ];
 
 try {
   await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
-  await send('Page.navigate', { url: `http://localhost:${port}/tools/lab/mage.html` });
+  await send('Page.navigate', { url: `http://localhost:${port}/tools/lab/mage.html${solo ? '?solo=1' : ''}` });
   for (let k = 0; k < 150; k++) { if (await ev('!!(window.LAB && LAB.ready)')) break; await sleep(200); }
   if (!await ev('!!(window.LAB && LAB.ready)')) throw new Error('lab did not boot');
   await ev(`document.getElementById('bar').style.display='none'`);
@@ -132,7 +146,7 @@ try {
     await ev(`LAB.view(${JSON.stringify(v)})`);
     // Re-trigger one-shots for each shot so every frame is caught fresh; keep
     // loops (idle/walk/run/cheer) running between shots of the same state.
-    const loops = ['idle', 'walk', 'run', 'hit2', 'levitate', 'jump', 'tumble', 'crush', 'die'];
+    const loops = ['idle', 'walk', 'run', 'hit2', 'levitate', 'jump', 'tumble', 'crush', 'die', 'death', 'respawn'];
     if (state !== lastState || !loops.includes(state)) {
       if (state === 'revive' && lastState === 'revive') { /* same stand-up, later */ }
       else if (state === 'idle' && (lastState === 'die' || lastState === 'revive')) { /* keep lying / finish standing */ }

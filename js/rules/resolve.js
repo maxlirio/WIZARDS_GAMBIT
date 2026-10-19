@@ -82,6 +82,18 @@ export function makeCtx(state, spell, def, face, opts = {}) {
      * the keyword has already widened them, which is why the keyword works on
      * every destroying and rotating face there is or ever will be.
      */
+    /**
+     * Does that face DO anything when resolved? A passive is live while it
+     * shows and has no effect to resolve, so "resolve a friendly Spell's
+     * face" never offers one (user: "it asks you if you want to resolve
+     * passive abilities. It shouldn't").
+     */
+    resolvable: (uid, index = null) => {
+      const sp = findSpell(state, uid);
+      if (!sp) return false;
+      const face = defOf(state, sp).faces[index === null ? activeIndex(sp) : index];
+      return !!face?.effect;
+    },
     spellTargets: ({ side = 'friendly', exceptSelf = true } = {}) => {
       const eff = applyKw(state, spell, 'targets', { side }).side;
       const mine = ctx.friendlySpells({ exceptSelf });

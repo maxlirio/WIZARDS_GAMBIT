@@ -280,15 +280,66 @@ function buildGeometry(team, teamDark) {
   return out;
 }
 
-const matCache = new Map();
-function materials(team, teamDark) {
-  const key = `${team}:${teamDark}`;
-  if (matCache.has(key)) return matCache.get(key);
+/* ----------------------------------------------------------- dissolve */
+
+// A dead mage goes to dust: fragments are cut away along a front that sweeps
+// the body (feet to head, with a noise so it crumbles rather than wipes), an
+// ashen rim just ahead of the front. The cut is in the SKINNED position, so
+// it follows the pose, and the same cut goes into each mesh's depth material
+// so the shadow crumbles with the body instead of lingering as a black mage.
+// `uDis` 0 = whole, 1 = gone; run it 1 -> 0 with `uDisGlow` up to materialise.
+const DIS_VERT_DECL = 'varying vec3 vDisP;';
+const DIS_VERT_SET = 'vDisP = transformed;';
+const DIS_FRAG_DECL = /* glsl */`
+uniform float uDis; uniform vec3 uDisDir; uniform float uDisLo; uniform float uDisHi; uniform vec3 uDisTint; uniform float uDisGlow;
+varying vec3 vDisP;
+float disEdge = 0.0;
+float disHash(vec3 p) { p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3)); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float disNoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(disHash(i), disHash(i + vec3(1.0, 0.0, 0.0)), f.x), mix(disHash(i + vec3(0.0, 1.0, 0.0)), disHash(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+             mix(mix(disHash(i + vec3(0.0, 0.0, 1.0)), disHash(i + vec3(1.0, 0.0, 1.0)), f.x), mix(disHash(i + vec3(0.0, 1.0, 1.0)), disHash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);
+}
+void disCut() {
+  if (uDis <= 0.0) return;
+  float dk = clamp((dot(vDisP, uDisDir) - uDisLo) / (uDisHi - uDisLo), 0.0, 1.0);
+  float nz = disNoise(vDisP * 9.0) * 0.7 + disNoise(vDisP * 31.0) * 0.3;
+  float key = dk * 0.62 + nz * 0.38;
+  float th = uDis * 1.1 - 0.05;
+  if (key < th) discard;
+  disEdge = 1.0 - smoothstep(th, th + 0.09, key);
+}
+`;
+// The JS side of the same key, for picking where the dust comes off.
+const DIS_KEY_MIX = 0.62, DIS_NOISE_MEAN = 0.38 * 0.5;
+const disThreshold = (k) => k * 1.1 - 0.05;
+
+function patchDissolve(shader, U, lit) {
+  Object.assign(shader.uniforms, U);
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', `#include <common>\n${DIS_VERT_DECL}`)
+    .replace('#include <skinning_vertex>', `#include <skinning_vertex>\n${DIS_VERT_SET}`);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>\n${DIS_FRAG_DECL}`)
+    .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\ndisCut();');
+  if (lit) {
+    shader.fragmentShader = shader.fragmentShader
+      // Ash on the rim, and the whole body greys as it goes (not when materialising: then the rim glows instead).
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, uDisTint, min(1.0, disEdge * 0.85 + uDis * 0.45 * (1.0 - min(uDisGlow, 1.0))));')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += uDisTint * disEdge * uDisGlow;');
+  }
+}
+const DIS_KEY_LIT = () => 'mage-dissolve-lit';
+const DIS_KEY_DEPTH = () => 'mage-dissolve-depth';
+
+/** One mage's materials: its own, so its dissolve is its own. */
+function materials(U) {
   const body = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0.02 });
   const cape = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, side: THREE.DoubleSide });
-  const m = { body, cape };
-  matCache.set(key, m);
-  return m;
+  for (const m of [body, cape]) { m.onBeforeCompile = (sh) => patchDissolve(sh, U, true); m.customProgramCacheKey = DIS_KEY_LIT; }
+  const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  depth.onBeforeCompile = (sh) => patchDissolve(sh, U, false); depth.customProgramCacheKey = DIS_KEY_DEPTH;
+  return { body, cape, depth };
 }
 
 /* ----------------------------------------------------------- poses */
@@ -626,11 +677,16 @@ export function makeMageActor({ team = 0x4fd2ff, teamDark = 0x1d4e78 } = {}) {
 
   /* skinned meshes */
   const geo = buildGeometry(team, teamDark);
-  const mat = materials(team, teamDark);
+  const DIS = {
+    uDis: { value: 0 }, uDisDir: { value: new THREE.Vector3(0, 0.35, -1).normalize() }, uDisLo: { value: -1 }, uDisHi: { value: 1 },
+    uDisTint: { value: new THREE.Color(0.55, 0.52, 0.49) }, uDisGlow: { value: 0 },
+  };
+  const mat = materials(DIS);
   const body = new THREE.SkinnedMesh(geo.body, mat.body);
   const capeMesh = new THREE.SkinnedMesh(geo.cape, mat.cape);
   for (const m of [body, capeMesh]) {
     m.castShadow = true; m.receiveShadow = false; m.frustumCulled = false;
+    m.customDepthMaterial = mat.depth;
     model.add(m);
     m.bind(skeleton);
   }
@@ -826,8 +882,23 @@ export function makeMageActor({ team = 0x4fd2ff, teamDark = 0x1d4e78 } = {}) {
     else palm.visible = false;
   }
 
+  let hidden = false;
+  const FRONT_BONES = ['hips', 'spine', 'chest', 'neck', 'head', 'hat', 'hatTip', 'uaL', 'faL', 'handL', 'uaR', 'faR', 'handR', 'staff', 'thL', 'shL', 'ftL', 'thR', 'shR', 'ftR', 'cape1', 'cape2', 'cape3', 'cape4', 'robe'];
+  const _w = new THREE.Vector3();
+  const _m = new THREE.Vector3();
+  /** A bone's position in the root's frame (the dissolve's frame). */
+  const boneLocal = (name, out) => root.worldToLocal(bone[name].getWorldPosition(out));
+  /** The span of the body along the dissolve direction, from the bones as they lie now. */
+  function dissolveRange() {
+    let lo = Infinity, hi = -Infinity;
+    for (const n of FRONT_BONES) { const k = boneLocal(n, _m).dot(DIS.uDisDir.value); if (k < lo) lo = k; if (k > hi) hi = k; }
+    DIS.uDisLo.value = lo - 0.12; DIS.uDisHi.value = hi + 0.22;
+  }
+
   const actor = {
     kind: 'mage', root, model, mixer, orb, skeleton, height: 1.97, dead: false,
+    ownsDeath: true,   // the arena leaves the fade to us: the body goes to dust (see dissolve)
+    deathClipDur: durOf('death'),
     target: null, moving: false, speed: 2.6, facing: 0, facingTarget: 0, airY: 0,
     fidgets: true,   // the idle mage turns a glow over in his hands now and then
     play, oneShot,
@@ -849,9 +920,12 @@ export function makeMageActor({ team = 0x4fd2ff, teamDark = 0x1d4e78 } = {}) {
       root.rotation.y = this.facing;
       overlays(dt, now);
       const pulse = Math.sin(now / 260);
-      orb.scale.setScalar(1 + pulse * 0.1);
+      const live = hidden ? 0 : 1 - DIS.uDis.value;
+      orb.visible = live > 0.03;
+      orb.scale.setScalar((1 + pulse * 0.1) * live);
       halo.scale.setScalar(1 + Math.sin(now / 170 + 1) * 0.16);
-      orbLight.intensity = 2.2 + pulse * 0.5;
+      orbLight.intensity = (2.2 + pulse * 0.5) * live;
+      if (hidden) palm.visible = false;
     },
     lookAt(x, z) { this.facingTarget = Math.atan2(x - root.position.x, z - root.position.z); },
     /** A spell: 'shoot' is a quick bolt, 'raise' a big area spell, 'long' a ritual. */
@@ -904,6 +978,7 @@ export function makeMageActor({ team = 0x4fd2ff, teamDark = 0x1d4e78 } = {}) {
     cheer() { if (!this.dead) run([{ key: 'cheer', loop: true, reps: 3, speed: 1.1, fade: 0.2 }]); },
     die() {
       this.dead = true; this.moving = false; levitating = false;
+      this.setDissolve(0);
       run([{ key: 'death', speed: 1.0, clamp: true, fade: 0.08 }]);
       busyUntil = Infinity;
     },
@@ -912,9 +987,48 @@ export function makeMageActor({ team = 0x4fd2ff, teamDark = 0x1d4e78 } = {}) {
       this.dead = false;
       run([{ key: 'standUp', speed: 1.3, fade: 0.25 }]);
     },
+    /**
+     * How far gone the body is, 0 (whole) to 1 (nothing left). The front
+     * sweeps feet to head. `glow` > 0 lights the rim in `tint` instead of
+     * ashing it (a body forming, not one blowing away).
+     */
+    setDissolve(k, { tint = null, glow = 0 } = {}) {
+      k = clamp(k, 0, 1);
+      if (k > 0 && DIS.uDis.value === 0) dissolveRange();
+      DIS.uDis.value = k;
+      DIS.uDisGlow.value = glow;
+      if (tint !== null) DIS.uDisTint.value.set(tint); else if (glow === 0) DIS.uDisTint.value.setRGB(0.55, 0.52, 0.49);
+    },
+    get dissolve() { return DIS.uDis.value; },
+    /**
+     * Up to `n` world points on the bones at the dissolve front: where the
+     * dust comes off. Empty when the front is past the body.
+     */
+    dissolveFront(n = 4, out = []) {
+      const th = disThreshold(DIS.uDis.value);
+      const span = DIS.uDisHi.value - DIS.uDisLo.value;
+      const near = [];
+      for (const name of FRONT_BONES) {
+        const key = (boneLocal(name, _m).dot(DIS.uDisDir.value) - DIS.uDisLo.value) / span * DIS_KEY_MIX + DIS_NOISE_MEAN;
+        if (key > th - 0.22 && key < th + 0.1) near.push(name);
+      }
+      for (let i = 0; i < n && near.length; i++) {
+        const name = near[Math.floor(Math.random() * near.length)];
+        bone[name].getWorldPosition(_w);
+        out.push(new THREE.Vector3(_w.x + (Math.random() - 0.5) * 0.16, _w.y + (Math.random() - 0.5) * 0.12, _w.z + (Math.random() - 0.5) * 0.16));
+      }
+      return out;
+    },
+    /** Off stage: nothing drawn, no light, the record still in place. */
+    setHidden(on) {
+      hidden = !!on;
+      body.visible = capeMesh.visible = !hidden;
+      if (hidden) { orb.visible = false; orbLight.intensity = 0; palm.visible = false; }
+    },
+    get hidden() { return hidden; },
     /** Where a bolt leaves from, in world space. */
     handPoint(out = new THREE.Vector3()) { orb.getWorldPosition(out); return out; },
-    dispose() { mixer.stopAllAction(); root.removeFromParent(); orb.geometry.dispose(); halo.geometry.dispose(); palm.geometry.dispose(); },
+    dispose() { mixer.stopAllAction(); root.removeFromParent(); orb.geometry.dispose(); halo.geometry.dispose(); palm.geometry.dispose(); mat.body.dispose(); mat.cape.dispose(); mat.depth.dispose(); },
   };
   play('idle', { fade: 0 });
   locoKey = 'idle';

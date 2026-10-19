@@ -26,6 +26,7 @@ import { buildWorld, menhir } from './world.js';
 import { createPropFactory } from './props.js';
 import { createFx } from './fx.js';
 import { makeMageActor } from './mage.js';
+import { createMageRites } from './mage-rites.js';
 import { makeGolemActor } from './golems.js';
 
 const MM = 1 / 1000;
@@ -93,6 +94,7 @@ export function createArena(host, state, handlers = {}) {
   controls.update();
 
   const fx = createFx(scene, { quality });
+  const rites = createMageRites(fx);   // a mage's death to dust and its forming again
 
   /* ---------------------------------------------------------- post */
   let composer = null;
@@ -150,6 +152,7 @@ export function createArena(host, state, handlers = {}) {
   /* ---------------------------------------------------------- units */
   const actors = new Map();     // unit id -> {actor, label, unit}
   const dying = [];
+  const fallen = new Set();     // mage ids that have died: their next appearance is a respawn, not a summon
 
   function makeUnitActor(u) {
     const actor = u.kind === 'mage'
@@ -191,6 +194,7 @@ export function createArena(host, state, handlers = {}) {
           actors.delete(u.id);
           dying.push({ rec: kept, t: 0 });
           kept.label.classList.add('gone');
+          if (u.kind === 'mage') fallen.add(u.id);
         }
         continue;
       }
@@ -198,8 +202,19 @@ export function createArena(host, state, handlers = {}) {
       if (!rec) {
         // A dead actor coming back is a respawn; a brand-new one a summon.
         const back = dying.find((d) => d.rec.unit.id === u.id);
-        if (back) { dying.splice(dying.indexOf(back), 1); rec = back.rec; rec.actor.revive(); rec.label.classList.remove('gone'); rec.actor.root.position.set(u.x * MM, u.z * MM, u.y * MM); fx.sigil(u.x * MM, u.z * MM, u.y * MM, TEAM[u.owner], { dur: 1.4, r: 1.1 }); }
-        else { rec = makeUnitActor(u); if (u.kind === 'golem') { rec.actor.rise?.(); fx.dust(u.x * MM, u.z * MM, u.y * MM, { n: 26, size: 0.6 }); } }
+        if (back) { dying.splice(dying.indexOf(back), 1); rec = back.rec; rec.actor.root.position.set(u.x * MM, u.z * MM, u.y * MM); rec.actor.root.rotation.x = 0; }
+        else rec = makeUnitActor(u);
+        if (u.kind === 'mage' && (back || fallen.has(u.id))) {
+          // A mage's respawn, whether its dust is still blowing or long gone:
+          // nothing of it shows yet. Magic gathers on the circle, then the
+          // body forms there and gets up. The record is live meanwhile
+          // (unitPos, labels and highlights find it); only the body waits.
+          fallen.delete(u.id);
+          const r = rec, x = u.x * MM, y = u.z * MM, z = u.y * MM, colour = TEAM[u.owner];
+          r.actor.setHidden(true); r.base.visible = false; r.label.classList.add('gone');
+          r.gather = rites.gather(x, y, z, colour, { onAppear() { r.gather = null; r.base.visible = true; r.label.classList.remove('gone'); rites.materialise(r.actor, colour); } });
+        } else if (back) { rec.actor.revive(); rec.label.classList.remove('gone'); fx.sigil(u.x * MM, u.z * MM, u.y * MM, TEAM[u.owner], { dur: 1.4, r: 1.1 }); }
+        else if (u.kind === 'golem') { rec.actor.rise?.(); fx.dust(u.x * MM, u.z * MM, u.y * MM, { n: 26, size: 0.6 }); }
         actors.set(u.id, rec);
       }
       rec.unit = u;
@@ -211,7 +226,7 @@ export function createArena(host, state, handlers = {}) {
       rec.label.classList.toggle('acted', !!u.acted && s.active === u.owner);
     }
     for (const [id, rec] of actors) {
-      if (!seen.has(id)) { if (rec.slide) endSlide(rec.slide); scene.remove(rec.actor.root); rec.label.remove(); rec.actor.dispose(); actors.delete(id); }
+      if (!seen.has(id)) { if (rec.slide) endSlide(rec.slide); rec.gather?.cancel(); scene.remove(rec.actor.root); rec.label.remove(); rec.actor.dispose(); actors.delete(id); }
     }
     for (const pr of s.field.props) {
       let m = propMeshes.get(pr.id);
@@ -469,6 +484,21 @@ export function createArena(host, state, handlers = {}) {
         m.position.x = A.x; m.position.z = A.z;
         m.userData.slide = startSlide(A, B, D, dur, force, { axis: perpAxis(dir), tilt: 0.06 + 0.02 * force });
       }
+    },
+    /**
+     * A rider carried along on a shoved prop: the same slide, same clock, no
+     * plume and no stumble -- it is standing on the thing that moves.
+     */
+    carry(id, mm, from, dir = 0, speed = 50, to = null) {
+      const rec = actors.get(id);
+      if (!rec) return;
+      const pos = rec.actor.root.position;
+      const dur = pushSlideMs(mm, speed) / 1000;
+      const A = new THREE.Vector3(from ? from.x * MM : pos.x, from ? from.z * MM : pos.y, from ? from.y * MM : pos.z);
+      const B = to ? new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM) : rec.target.clone();
+      pos.set(A.x, A.y, A.z);
+      rec.carry = { from: A, to: B, dur, t: 0 };
+      rec.actor.brace?.();
     },
     /**
      * The moving body hit something: `into` is what, `at` where (engine mm),
@@ -1044,6 +1074,16 @@ export function createArena(host, state, handlers = {}) {
       const dx = tgt.x - pos.x, dz = tgt.z - pos.z;
       const dist = Math.hypot(dx, dz);
       const speed = rec.pushed ? 7 : actor.speed;
+      if (rec.carry) {
+        // Riding: the prop's slide owns the position, height included.
+        const c = rec.carry;
+        c.t += dt;
+        const k = fx.ease.out(Math.min(1, c.t / c.dur));
+        pos.x = c.from.x + (c.to.x - c.from.x) * k; pos.y = c.from.y + (c.to.y - c.from.y) * k; pos.z = c.from.z + (c.to.z - c.from.z) * k;
+        actor.moving = false;
+        if (c.t >= c.dur) rec.carry = null;
+        continue;
+      }
       if (rec.slide) {
         // Thrown: the slide owns the ground position, the facing and the lean.
         const sl = rec.slide;
@@ -1099,6 +1139,13 @@ export function createArena(host, state, handlers = {}) {
         }
       }
       d.rec.label.style.display = 'none';
+      if (d.rec.actor.kind === 'mage') {
+        // Falls, lies still, goes to dust on the wind; the ring under it fades with the body.
+        const gone = rites.deathStep(d.rec.actor, d.t, dt);
+        d.rec.base.material.opacity = 0.75 * (1 - d.rec.actor.dissolve);
+        if (gone) { scene.remove(d.rec.actor.root); d.rec.label.remove(); d.rec.actor.dispose(); dying.splice(i, 1); }
+        continue;
+      }
       if (d.t > 2.6 && !d.rec.actor.ownsDeath) {
         d.rec.actor.root.traverse((o) => { if (o.material && !o.userData.pick) { o.material = o.material.clone?.() || o.material; o.material.transparent = true; o.material.opacity = Math.max(0, 1 - (d.t - 2.6) / 0.8); } });
       }

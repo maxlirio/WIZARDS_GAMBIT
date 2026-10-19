@@ -339,7 +339,7 @@ const propName = (id) => { const pr = S.field.props.find((x) => x.id === id); re
  * AI's pause can match it.
  */
 function flushFx() {
-  let t = 0;
+  let t = 0, tPush = 0;
   const flash = new Map();
   const later = (ms, fn) => { const my = gameId; timers.push(setTimeout(() => { if (my === gameId && arena) fn(); }, FAST ? 0 : ms)); };
   let castCtx = null;        // the face resolving right now: {p, element, big, face}
@@ -392,8 +392,16 @@ function flushFx() {
       }
       case 'strike': { const { from, to } = f; later(t - 200, () => cues().strike(from ?? f.id, to)); t += 300; break; }
       case 'kill': { const id = f.id; later(t + 150, () => cues().kill(id)); t += 500; break; }
+      case 'carry': {
+        // Fired after the prop's push note, so it rides the slide the prop is
+        // about to make: same start time as that slide, same duration.
+        const { id, mm, from, dir, speed, to } = f;
+        later(tPush, () => cues().carry(id, mm, from, dir ?? 0, speed ?? 50, to ?? null));
+        break;
+      }
       case 'push': {
         const { id, body, mm, from, dir, force, speed, to } = f;
+        tPush = t;
         later(t, () => cues().push(id, body, mm, from, dir ?? 0, force ?? 1, speed ?? 50, to ?? null));
         // The slam, the numbers and the fall all wait for the slide to end.
         t += pushSlideMs(mm, speed ?? 50) + 60;
@@ -470,6 +478,8 @@ function narrate(f) {
     case 'keywordCopy': return `&nbsp;&nbsp;&nbsp;&nbsp;copies <span class="kw">[${esc(f.kw)}]</span> onto ${N(f.to)}`;
     case 'keywordGrant': return `&nbsp;&nbsp;&nbsp;&nbsp;grants <span class="kw">[${esc(f.kw)}]</span> to ${N(f.uid)}`;
     case 'damage': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">${f.amount} damage</span> to ${esc(unitName(f.id))}${f.cause && f.cause !== 'spell' ? ` (${esc(f.cause)})` : ''}`;
+    case 'carry': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} rides the ${esc(propName(f.on))} ${m(f.mm)}`;
+    case 'scraped': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is scraped off the ${esc(propName(f.off))}`;
     case 'push': {
       const force = f.force ? ` with force ${f.force}` : '';
       return f.body === 'unit' ? `&nbsp;&nbsp;&nbsp;&nbsp;pushes ${esc(unitName(f.id))} ${m(f.mm)}${force}` : `&nbsp;&nbsp;&nbsp;&nbsp;shoves a ${esc(propName(f.id))} ${m(f.mm)}${force}`;
@@ -812,7 +822,7 @@ function inspectUnit(u) {
 }
 
 function inspectProp(pr) {
-  const spec = { boulder: 'A boulder. Can be climbed and stood on; pushed, it rolls two thirds as far as a body would.', pillar: 'A standing stone. Heavy; a quake can crack it.', shard: 'A crystal shard. Flies when pushed; lightning bursts it.', wall: 'A ruined wall. Can be stood on. Slides a little when shoved.', floater: 'A floating rock, held up by magic. Shove it out from under whoever stands on it.', tree: 'A tree. It burns — and a burning tree bites everyone beside it at the start of every turn, then spreads.' }[pr.kind] || '';
+  const spec = { boulder: 'A boulder. Can be climbed and stood on; whoever stands on it rides along when it is shoved.', pillar: 'A standing stone. Heavy; a quake can crack it.', shard: 'A crystal shard. Flies when pushed; lightning bursts it.', wall: 'A ruined wall. Can be stood on. Slides a little when shoved.', floater: 'A floating rock, held up by magic. Stand on it and ride it when it is shoved.', tree: 'A tree. It burns — and a burning tree bites everyone beside it at the start of every turn, then spreads.' }[pr.kind] || '';
   $('#inspector').innerHTML = `
     <div class="ihead">${esc(propName(pr.id))} <small>${pr.hp} hp${pr.burning !== null && pr.burning >= S.turn ? ' · <span class="red">burning</span>' : ''}</small></div>
     <div class="dim">${spec}</div>`;

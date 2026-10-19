@@ -418,7 +418,7 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
 | piece | mass | hp | notes |
 |---|---|---|---|
 | crystal shard | 1 | 2 | flies when pushed; lightning bursts it outright |
-| floating rock | 1 | 3 | held up by magic; push it out from under someone |
+| floating rock | 1 | 3 | held up by magic; whoever stands on it rides along when it is shoved |
 | boulder | 2 | 4 | can be stood on and climbed |
 | tree | 3 | 3 | **burns** |
 | standing stone | 4 | 5 | a quake can crack it |

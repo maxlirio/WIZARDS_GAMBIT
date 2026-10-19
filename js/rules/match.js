@@ -176,19 +176,25 @@ export function* chainFrom(state, p, uid) {
     const hits = findMatches(state, p, state.chain.spent, [uid]);
     if (!hits.length) break;
 
-    // Two or more neighbours match this card: the order is the player's.
-    // A single match resolves without asking -- and note a zero-option request
-    // would park the game forever, which the driver answers null.
-    const siteId = hits.length === 1 ? hits[0].site : yield ask.pick(
-      hits.map((h) => h.site),
+    // Two or more NEIGHBOURS match this card: the order is the player's. One
+    // option per neighbour, not per site -- a neighbour touching at both of
+    // its corners is still one card to turn first (user: "it should only say
+    // 1 shift"); its sites go in table order. A single neighbour resolves
+    // without asking -- and note a zero-option request would park the game
+    // forever, which the driver answers null.
+    const otherOf = (h) => h.uids.find((u) => u !== uid);
+    const neighbours = [...new Set(hits.map(otherOf))];
+    const firstOf = (o) => hits.find((h) => otherOf(h) === o);
+    const chosen = neighbours.length === 1 ? neighbours[0] : yield ask.pick(
+      neighbours,
       {
         prompt: `${defOf(state, sp).name} matches two neighbours — which first?`,
-        labels: hits.map((h) => defOf(state, findSpell(state, h.uids.find((u) => u !== uid))).name),
-        show: hits.map((h) => ({ uids: [...h.uids], vertex: h.vertex, site: h.site })),
+        labels: neighbours.map((o) => defOf(state, findSpell(state, o)).name),
+        show: neighbours.map((o) => ({ uids: [...firstOf(o).uids], vertex: firstOf(o).vertex, site: firstOf(o).site })),
         match: { uid, sites: hits.map((h) => ({ uids: [...h.uids], corners: cornersOf(state, p, h) })) },
       },
     );
-    const hit = hits.find((h) => h.site === siteId) || hits[0];
+    const hit = (chosen !== null && firstOf(chosen)) || hits[0];
 
     // PROGRESS, UNCONDITIONALLY, BEFORE anything is mutated. Everything below
     // this line may fail, be declined, or do nothing, and the chain still
@@ -211,20 +217,24 @@ export function* chainFrom(state, p, uid) {
     // rings these on the copy offer so the player can see why it is asked.
     const met = { uid, why: 'copy', sites: [{ uids: [...hit.uids], corners: cornersOf(state, p, hit) }] };
 
+    noteCards(state, hit.uids);
+    fx(state, 'match', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: other, p });
+
+    // The keyword copy comes FIRST -- before the neighbour turns, and so
+    // before the effect. Before the effect because putting [Ignore Height]
+    // on a push must change the push about to be made; before the turn
+    // because the offer is made while the two cards still SHOW the corners
+    // that matched (user: "it copies keywords AFTER the spell turns. It
+    // should be before").
+    yield* offerCopy(state, hit.uids, { match: met });
+    refresh(state);
+
     // Mandatory and unconditional. A COLOUR LOCK DOES NOT STOP THIS -- the lock
     // restrains the player, not the board. Only a printed prohibition does.
     turn(state, other, { dir: 'left', forced: true, silent: true });
     bump(state.players[p].ledger, 'forcedRotations');
     refresh(state);
-    noteCards(state, hit.uids);
-    fx(state, 'match', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: other, p });
     emit(state, 'afterMatch', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: other, p });
-
-    // The keyword copy comes BEFORE the effect, because the point of the
-    // mechanic is that putting [Ignore Height] on a push changes the push you
-    // are about to make. Offered after, it could only ever matter next turn.
-    yield* offerCopy(state, hit.uids, { match: met });
-    refresh(state);
 
     state.chain.resolutions++;
     yield* resolveSide(state, s2, activeIndex(s2), { chained: true });
