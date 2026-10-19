@@ -172,6 +172,25 @@ export function centreSVG(def, rot, opts = {}) {
     const [x, y] = corners[pos];
     over += `<circle cx="${x}" cy="${y}" r="100" fill="#05060a" stroke="#fff" stroke-width="8"/>${runeGlyph(r, x, y, 132, '#fff')}`;
   });
+  // Quest pips: a gold objective's progress as three dots that fill, with the
+  // count beside them, so a player can see how close a payout is at a glance.
+  (opts.quests || []).forEach((q, i) => {
+    const y = 712 + i * 44;
+    const filled = Math.max(0, Math.min(3, Math.round((q.pct / 100) * 3)));
+    let row = `<text x="372" y="${y + 9}" text-anchor="end" class="qn" fill="#ffd166">${q.numeral}</text>`;
+    for (let k = 0; k < 3; k++) {
+      const on = k < filled;
+      row += `<circle cx="${412 + k * 40}" cy="${y}" r="13" fill="${on ? '#ffd166' : 'none'}" stroke="#ffd166" stroke-width="5" opacity="${on ? 1 : 0.55}"/>`;
+    }
+    row += `<text x="540" y="${y + 9}" text-anchor="start" class="qn" fill="#ffd166">${q.have !== null ? `${q.have}/${q.need}` : (q.pct >= 100 ? 'ready' : '')}</text>`;
+    over += `<g class="quest${q.pct >= 100 ? ' ready' : ''}">${row}</g>`;
+  });
+  // A corner that is part of the match being asked about: a hot ring round
+  // the disc, so the player can SEE which two runes met.
+  (opts.hot || []).forEach((pos) => {
+    const [x, y] = corners[pos];
+    over += `<circle cx="${x}" cy="${y}" r="118" fill="none" stroke="#ffd166" stroke-width="14" class="hot-corner"/>`;
+  });
   return `<svg viewBox="0 0 1000 1000" class="card-svg" xmlns="http://www.w3.org/2000/svg">${over}
     <g class="card-centre">${centreMarkup(def, rot, opts.keywords || def.keywords || [], ink)}</g></svg>`;
 }

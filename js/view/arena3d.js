@@ -735,13 +735,6 @@ export function createArena(host, state, handlers = {}) {
       v.set(x * MM, z * MM, y * MM).project(camera);
       return [((v.x + 1) / 2) * host.clientWidth, ((1 - v.y) / 2) * host.clientHeight];
     },
-    /** Where a unit's head is on screen, for a popover. */
-    unitScreen(id) {
-      const rec = actors.get(id);
-      if (!rec) return null;
-      v.copy(rec.actor.root.position); v.y += rec.actor.height + 0.4; v.project(camera);
-      return [((v.x + 1) / 2) * host.clientWidth, ((1 - v.y) / 2) * host.clientHeight];
-    },
     markerScreens() {
       return markers.map((m) => {
         v.copy(m.pos).project(camera);

@@ -82,7 +82,8 @@ leans on:
 activeFaceIndex === rot
 ```
 
-**A spell is played at `rot = 0`, so it always lands showing side I.**
+**A spell is played at `rot = 0`, so it always lands showing side I — and playing
+it resolves side I**, the same way a rotation resolves the face it brings up.
 
 ### How a card is built: side IV is the payoff
 
@@ -117,7 +118,7 @@ how going first is paid for. Drawing is not an action.
 
 | action | what happens |
 |---|---|
-| **play** a spell, artifact or golem card | then the match check |
+| **play** a spell, artifact or golem card | **its top face (side I) resolves**, then the match check |
 | **rotate** a friendly spell left | **its new top face resolves**, then the match check |
 | **shift** a friendly spell to an adjacent cell | then the match check |
 | **destroy** a friendly spell | — |
@@ -453,18 +454,20 @@ than a late addition.
 These were not decided in advance. Each came out of the engine or a harness, and
 each is recorded here because it changes how cards should be designed.
 
-### Side I is the LAST face a chain reaches, not the first
+### Side I resolves when the card is played, and is the LAST face a chain reaches
 
-A spell is played at `rot = 0`, so **side I is what it shows when it lands**, and
-a match rotates **left**, which brings up **side II**. So from the moment a card
-hits the table, II is one rotation away, III is two, IV is three, and **I needs a
-full revolution to come back round**.
+A spell is played at `rot = 0`, so **side I is what it shows when it lands, and
+playing the card resolves side I** — the play is the first rotation's worth of
+effect, for free. A match rotates **left**, which brings up **side II**. So from
+the moment a card hits the table, II is one rotation away, III is two, IV is
+three, and **I needs a full revolution to come back round**.
 
-So side I is the card's resting state, and it is the right place for a
-**passive** or a small effect -- and side IV, three left turns away, is where the
-payoff goes (section 3). Printed `Rewind` II — *"resolve the I of a friendly Spell, regardless
-of orientation"* — exists precisely because side I is otherwise the hard one to
-reach, which is a good sign the printed set already knew this.
+So side I is the card's arrival effect and then its resting state: a small
+effect on the way in, and the right place for a **passive** while it sits there
+-- and side IV, three left turns away, is where the payoff goes (section 3).
+Printed `Rewind` II — *"resolve the I of a friendly Spell, regardless of
+orientation"* — exists precisely because side I is otherwise the hard one to
+reach again, which is a good sign the printed set already knew this.
 
 ### Drawing from an empty deck reshuffles the discard
 

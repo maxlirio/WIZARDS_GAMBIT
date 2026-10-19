@@ -199,10 +199,10 @@ Two things the harnesses taught about writing these, both from real failures:
   why.
 
 Faces are authored **clockwise from the top edge** and runes **clockwise from
-the top-left corner**, matching the printed card. A spell lands showing side I,
-and a match rotates **left** — so side II is the first face a chain can reach
-and side I the last. Side I is the card's resting state, and the right place for
-a passive.
+the top-left corner**, matching the printed card. A spell lands showing side I
+**and playing it resolves side I**; a match rotates **left** — so side II is the
+first face a chain can reach and side I the last. Side I is the card's arrival
+effect and then its resting state, and the right place for a passive.
 
 ## The four decisions everything hangs off
 

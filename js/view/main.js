@@ -24,6 +24,7 @@ import { defOf, topOf, stackAt, findSpell } from '../rules/ops.js';
 import { CELL_COLOR } from '../rules/table.js';
 import { activeIndex, NUMERALS } from '../rules/orient.js';
 import { runeAtCorner } from '../rules/match.js';
+import { gateProgress, counted } from '../rules/gates.js';
 import { keywordsOf, KEYWORDS } from '../rules/keywords.js';
 import { TIER_CAP } from '../rules/golems.js';
 import { FINDS, FIND_IDS, spellbookPage } from '../rules/learn.js';
@@ -287,6 +288,21 @@ const humanToMove = () => HUMAN !== null && S.winner === null && !S.pending && S
 const humanToAnswer = () => HUMAN !== null && S.winner === null && S.pending
   && (S.pending.request.player ?? S.active) === HUMAN;
 const myActions = () => (humanToMove() ? legalActions(S) : []);
+
+/** Progress toward each objective face on a gold card, for the pips. */
+function questPips(sp, def) {
+  if (def.kind === 'golem' || !def.faces) return [];
+  const out = [];
+  for (const f of def.faces) {
+    if (!f.objective) continue;
+    const g = f.objective.gate;
+    const pct = gateProgress(S, sp, g);
+    const have = g && g.n !== undefined && (g.id === 'ledgerAtLeast') ? Math.min(g.n, counted(S, sp, g)) : null;
+    out.push({ numeral: f.numeral, pct, have, need: g?.n ?? null });
+    if (out.length === 2) break;
+  }
+  return out;
+}
 
 /* ================================================================ names */
 
@@ -575,7 +591,9 @@ function renderTable(p) {
     const kws = keywordsOf(S, sp);
     const runes = [0, 1, 2, 3].map((pos) => runeAtCorner(S, sp, pos));
     const printed = [0, 1, 2, 3].map((pos) => def.runes[(pos + sp.rot) & 3]);
-    slot.querySelector('.ccentre').innerHTML = centreSVG(def, activeIndex(sp), { keywords: kws, runes, printed });
+    const hot = (S.pending?.request?.match?.corners || []).filter((c) => c.uid === sp.uid).map((c) => c.pos);
+    const quests = questPips(sp, def);
+    slot.querySelector('.ccentre').innerHTML = centreSVG(def, activeIndex(sp), { keywords: kws, runes, printed, hot, quests });
     const depth = stackAt(S, p, c).length - 1;
     const bits = [];
     if (depth > 0) bits.push(`<span title="cards buried beneath">▤${depth}</span>`);
@@ -843,6 +861,7 @@ function renderPrompt() {
   if (r.type === 'confirm') {
     html += `<div class="pbtns"><button data-v="yes" class="primary">Yes</button><button data-v="no">No</button></div>`;
   } else {
+    if (r.match) html += `<div class="phint match">${esc(matchSentence(r.match))}</div>`;
     const hint = r.kind === 'unit' ? 'Click a glowing unit on the field, or pick below.'
       : r.kind === 'target' ? 'Click a glowing spell, or pick below.'
       : r.kind === 'hand' ? `Click ${r.count > 1 ? `${r.count} cards` : 'a card'} in your hand, or pick below.`
@@ -872,6 +891,18 @@ function renderPrompt() {
       b.onmouseleave = () => document.querySelectorAll('.cell.hint').forEach((c) => c.classList.remove('hint'));
     }
   });
+}
+
+/** "Ember Lash and Shove meet at a corner, both showing the Wheel rune." */
+const RUNE_NAME = { SPIRAL: 'Spiral', SHARD: 'Shard', WHEEL: 'Wheel', LATTICE: 'Lattice', WILD: 'wild' };
+const CORNER_NAME = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
+function matchSentence(m) {
+  const parts = m.corners.map((c) => `${cardName(c.uid)} (${CORNER_NAME[c.pos]} corner)`);
+  const runes = [...new Set(m.corners.map((c) => c.rune).filter((r) => r !== 'WILD'))];
+  const names = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+  const which = runes.length === 1 ? `the ${RUNE_NAME[runes[0]]} rune` : 'the same rune';
+  const wild = m.corners.some((c) => c.rune === 'WILD') ? ' (a wild corner joins any rune)' : '';
+  return `${names} meet at one junction showing ${which}${wild}. The matched corners are ringed in gold.`;
 }
 
 function markCell(uid, cls) {
@@ -914,7 +945,10 @@ function renderTray() {
   if (S.phase === 'spell') {
     if (sel?.kind === 'hand') {
       const plays = la.filter((a) => a.type === 'play' && a.uid === sel.uid);
-      html += `<div class="hintline">Click a glowing ${plays[0]?.slot !== undefined ? 'golem slot' : 'cell'} to play <b>${esc(cardName(sel.uid))}</b>${plays.length === 1 ? '' : ''}.</div>`;
+      const hc = S.players[HUMAN].hand.find((c) => c.uid === sel.uid);
+      const hd = hc && defOf(S, hc);
+      const first = hd && hd.kind !== 'golem' ? hd.faces[0] : null;
+      html += `<div class="hintline">Click a glowing ${plays[0]?.slot !== undefined ? 'golem slot' : 'cell'} to play <b>${esc(cardName(sel.uid))}</b>${first ? ` — it resolves <b>${first.numeral}</b> as it lands: ${esc(first.text)}` : ''}.</div>`;
       html += `<div class="units">${plays.length === 1 ? '<button data-a="play1" class="primary">Play it there</button>' : ''}<button data-a="cancel" class="ghost">Cancel</button></div>`;
     } else if (sel?.kind !== 'spell') {
       html += `<div class="hintline"><b>Spell action</b>: play a card from your hand, or click one of your spells to rotate, shift or destroy it.</div>`;
@@ -924,9 +958,17 @@ function renderTray() {
     const mine = S.field.units.filter((u) => u.owner === HUMAN && !u.dead);
     const ready = mine.filter((u) => la.some((a) => a.type === 'unit' && a.id === u.id));
     if (sel?.kind !== 'unit' || !ready.some((u) => u.id === sel.id)) sel = ready[0] ? { kind: 'unit', id: ready[0].id } : null;
-    html += `<div class="hintline"><b>Units</b>: click inside the blue circle to move the selected unit, or a red-ringed enemy to strike it. ${ready.length} to go.</div>`;
+    const canMove = sel && la.some((x) => x.type === 'unit' && x.id === sel.id && x.act === 'move');
+    html += `<div class="hintline"><b>Units</b>: ${canMove ? 'click inside the blue circle to walk' : 'the selected unit cannot move from here'}, or click a red-ringed enemy to strike it. ${ready.length} to go.</div>`;
     html += '<div class="units">';
     for (const u of ready) html += `<button data-unit="${u.id}" class="${sel?.id === u.id ? 'on' : ''}">${esc(unitName(u.id))}</button>`;
+    if (sel) {
+      const strikes = la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'strike');
+      const summons = la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'summon');
+      for (const a of strikes) html += `<button data-strike="${a.target}" class="danger">⚔ Strike ${esc(unitName(a.target))}</button>`;
+      for (const a of summons) html += `<button data-summon="${a.golem}" class="primary" title="Spends the mage's action">✦ Summon ${esc(cardName(a.golem))}</button>`;
+      html += `<button data-a="pass" class="ghost">Hold position</button>`;
+    }
     html += `<button data-a="endturn" class="end">End turn ▸</button></div>`;
   }
   el.innerHTML = html;
@@ -938,6 +980,9 @@ function renderTray() {
       if (A === 'play1') return act(la2.find((a) => a.type === 'play' && a.uid === sel.uid));
       if (A === 'cancel') { sel = null; return render(); }
       if (A === 'endturn') return endTurn();
+      if (A === 'pass') return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'pass'));
+      if (b.dataset.summon) return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'summon' && String(a.golem) === b.dataset.summon));
+      if (b.dataset.strike) return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'strike' && String(a.target) === b.dataset.strike));
       if (b.dataset.unit) { sel = { kind: 'unit', id: Number(b.dataset.unit) }; return render(); }
     };
   });
@@ -945,12 +990,11 @@ function renderTray() {
 
 /* ================================================================ the popover */
 
-// A control sits next to the thing it acts on. A selected spell gets its
-// actions beside its cell; a selected unit gets them over its head.
-let popTrack = null;   // () => [x, y] for a popover that follows a unit
+// A control sits next to the thing it acts on: a selected spell gets its
+// actions beside its cell. Units get NO popover -- a box floating over the
+// battlefield hid the very thing it was about -- their actions sit in the tray.
 function renderPopover() {
   const el = $('#popover');
-  popTrack = null;
   if (!humanToMove()) { el.hidden = true; return; }
   const la = myActions();
   if (sel?.kind === 'spell') {
@@ -978,21 +1022,6 @@ function renderPopover() {
     const b = cell.getBoundingClientRect();
     el.style.left = `${b.right + 14}px`;
     el.style.top = `${Math.max(66, Math.min(window.innerHeight - el.offsetHeight - 12, b.top - 14))}px`;
-  } else if (sel?.kind === 'unit' && S.phase === 'unit') {
-    const u = S.field.units.find((x) => x.id === sel.id);
-    if (!u) { el.hidden = true; return; }
-    const summons = la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'summon');
-    const strikes = la.filter((x) => x.type === 'unit' && x.id === sel.id && x.act === 'strike');
-    const canMove = la.some((x) => x.type === 'unit' && x.id === sel.id && x.act === 'move');
-    let html = `<div class="ptitle ${pCls(u.owner)}">${esc(unitName(u.id))}</div><div class="psub">${canMove ? 'Click inside the blue circle to walk.' : 'Cannot move from here.'}</div><div class="acts">`;
-    for (const a of strikes) html += `<button data-strike="${a.target}" class="danger">⚔ Strike ${esc(unitName(a.target))}</button>`;
-    for (const a of summons) html += `<button data-summon="${a.golem}" class="primary">✦ Summon ${esc(cardName(a.golem))}<span class="sub">Spends the mage's action</span></button>`;
-    html += `<button data-a="pass" class="ghost">Hold position</button></div>`;
-    el.innerHTML = html;
-    el.className = 'below';
-    el.hidden = false;
-    popTrack = () => arena.unitScreen(u.id);
-    trackPopover();
   } else { el.hidden = true; return; }
   el.querySelectorAll('button').forEach((b) => {
     b.onclick = () => {
@@ -1001,23 +1030,8 @@ function renderPopover() {
       if (A === 'rotate') return act(la2.find((a) => a.type === 'rotate' && a.uid === sel.uid));
       if (A === 'destroy') return act(la2.find((a) => a.type === 'destroy' && a.uid === sel.uid));
       if (A === 'cancel') { sel = null; return render(); }
-      if (A === 'pass') return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'pass'));
-      if (b.dataset.summon) return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'summon' && String(a.golem) === b.dataset.summon));
-      if (b.dataset.strike) return act(la2.find((a) => a.type === 'unit' && a.id === sel.id && a.act === 'strike' && String(a.target) === b.dataset.strike));
     };
   });
-}
-
-function trackPopover() {
-  if (!popTrack) return;
-  const el = $('#popover');
-  const p = popTrack();
-  if (p) {
-    const w = el.offsetWidth;
-    el.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, p[0] - w / 2))}px`;
-    el.style.top = `${Math.max(66, p[1] - el.offsetHeight - 26)}px`;
-  }
-  requestAnimationFrame(() => { if (popTrack) trackPopover(); });
 }
 
 /** Hold every unit that has not acted. Each pass is a real engine action. */
@@ -1278,7 +1292,7 @@ function openRules() {
     <p><b>Goal:</b> first to <b>15 VP</b>. Gold spells score by completing hard objectives (scoring sends the gold spell to your discard). Killing a mage is worth 2 VP; a golem, 1.</p>
     <p><b>Your turn</b> runs along the strip at the top: draw a card, take one <b>spell action</b>, then move your <b>units</b>, then end the turn.</p>
     <p><b>Spell actions</b> (pick one): play a card from your hand onto its colour · click one of your spells and <b>rotate</b> it — <b>its new top face resolves</b> · shift it to an adjacent cell · destroy it · or skip. Artifacts go on the grey corners; golem cards go in the slots beneath.</p>
-    <p><b>The top face is active.</b> Cards land showing side I, and each left turn brings up the next face. <b>Side IV is every card's payoff</b>; sides I–III build toward it, and most make you pay something to get there. Selecting a spell draws the range of the face it would turn to. You can only rotate a spell yourself while it sits on its own colour.</p>
+    <p><b>The top face is active.</b> Cards land showing side I and resolve it as they are played; each left turn brings up the next face and resolves that. <b>Side IV is every card's payoff</b>; sides I–III build toward it, and most make you pay something to get there. Selecting a spell draws the range of the face it would turn to. You can only rotate a spell yourself while it sits on its own colour.</p>
     <p><b>Matches:</b> wherever two of your cards meet at a corner showing the <b>same rune</b>, they match. You must choose one of them; it rotates left and its new top face <b>resolves</b>. That can set off another match, and another — a chain. Each junction resonates once per chain, and a spell turns at most four times per action. A chain is mandatory, so it can hurt you.</p>
     <p class="runes">${R('SPIRAL')} Spiral — turning &amp; shifting &nbsp; ${R('SHARD')} Shard — destruction &amp; damage &nbsp; ${R('WHEEL')} Wheel — pushing &amp; terrain &nbsp; ${R('LATTICE')} Lattice — cards, keywords, scoring</p>
     <p><b>[Keywords]</b> are copied onto the other card on a match — put [Ignore Height] on a push, [Poison] on a fireball.</p>

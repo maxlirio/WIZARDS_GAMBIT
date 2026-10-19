@@ -221,12 +221,21 @@ export function* runChain(state, p, cause) {
       continue;
     }
 
+    // The question names the junction: which cards meet there, at which of
+    // their corners, showing which rune. Without it a player who just played
+    // a card is asked about two OTHER cards and cannot see why -- a diagonal
+    // pair meets at a single point, and the point is easy to miss.
+    const corners = VERTEX_CARDS[hit.vertex]
+      .map(({ cell, pos }) => ({ sp: topOf(state, p, cell), pos }))
+      .filter((x) => x.sp && hit.uids.includes(x.sp.uid))
+      .map((x) => ({ uid: x.sp.uid, pos: x.pos, rune: runeAtCorner(state, x.sp, x.pos) }));
     const which = eligible.length === 1 ? eligible[0] : yield ask.one(eligible, {
       prompt: 'Which Spell turns?',
       labels: eligible.map((u) => {
         const s = findSpell(state, u);
         return `${defOf(state, s).name} (cell ${s.cell})`;
       }),
+      match: { vertex: hit.vertex, corners },
     });
     const sp = findSpell(state, which);
     if (!sp) continue;

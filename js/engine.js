@@ -271,6 +271,12 @@ export function apply(state, action) {
       playFromHand(state, p, action.uid, action.cell);
       if (def.kind === 'artifact') bump(state.players[p].ledger, 'artifactsPlayed');
       emit(state, 'afterPlay', { uid: action.uid, p, cell: action.cell });
+      // Playing a card RESOLVES the face it lands on -- side I -- exactly as a
+      // rotation resolves the face it brings up. The match check is not queued
+      // here for the same reason as below: placing the card marked the table
+      // dirty, and the pump queues the one chain once the resolve is done.
+      state.queue.push({ kind: 'resolve', uid: action.uid, p, seq: ++state.actionSeq });
+      did = 'played';
     }
   } else if (action.type === 'rotate') {
     // Rotating a spell RESOLVES the face it brings to the top, and then the
@@ -340,7 +346,7 @@ function* runOnDestroy(state, item) {
   return true;
 }
 
-/** A voluntary rotation's payoff: the face now on top resolves. */
+/** A play's or a voluntary rotation's payoff: the face now on top resolves. */
 function* runResolve(state, item) {
   const sp = findSpell(state, item.uid);
   if (!sp || sp.cell === null) return false;

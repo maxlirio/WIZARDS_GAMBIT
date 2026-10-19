@@ -329,3 +329,10 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 #ol-msg.bad { color: #ff7b7b; }
 .gslot .empty small { display: block; font-size: 9px; opacity: .6; letter-spacing: 0; text-transform: none; }
 .golems.small .gslot .empty small { display: none; }
+
+/* the corners of a match being asked about */
+.hot-corner { animation: hotcorner 0.9s ease-in-out infinite; transform-origin: center; }
+@keyframes hotcorner { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+#prompt .phint.match { color: #ffe7a6; }
+.card-svg .qn { font: 700 34px Cinzel, serif; }
+.card-svg .quest.ready circle { animation: hotcorner 1s ease-in-out infinite; }

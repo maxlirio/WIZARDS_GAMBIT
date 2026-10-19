@@ -130,8 +130,11 @@ export function answerPending(state, answer, resolveDescriptor, refresh) {
 
 export const ask = {
   /** Pick one of `options` (uids, cells, direction indices). */
-  one: (options, { prompt = '', kind = 'target', required = true, allowNone = false, labels = null } = {}) =>
-    ({ type: 'one', kind, options, prompt, labels, required: required && !allowNone, allowNone }),
+  // `match` is a description of the junction a chain is asking about (which
+  // cards, which corners, which rune), for the UI. Plain data, so it parks and
+  // replays like the rest of the request.
+  one: (options, { prompt = '', kind = 'target', required = true, allowNone = false, labels = null, match = null } = {}) =>
+    ({ type: 'one', kind, options, prompt, labels, required: required && !allowNone, allowNone, ...(match ? { match } : {}) }),
 
   /**
    * Pick `count` of `options` -- but never more of them than exist.
