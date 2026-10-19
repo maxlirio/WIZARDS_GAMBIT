@@ -225,6 +225,9 @@ export function extract(state, uid) {
 /** Put a spell onto a cell. `under` buries it beneath what is already there. */
 export function place(state, p, spell, cell, { under = false } = {}) {
   const stack = state.players[p].table[cell];
+  // Cards never stack: a cell holds ONE card. Every caller checks first; this
+  // is the backstop that keeps a bug from quietly burying a spell.
+  if (stack.length) throw new Error(`cell ${cell} of player ${p} is occupied`);
   spell.cell = cell;
   spell.owner = p;
   if (under) stack.push(spell); else stack.unshift(spell);
@@ -346,6 +349,7 @@ export function shift(state, uid, cell) {
   const sp = findSpell(state, uid);
   if (!sp || sp.cell === null) return false;
   if (!orthoNeighbours(sp.cell).includes(cell)) return false;
+  if (occupied(state, sp.owner, cell)) return false;
   const from = sp.cell, p = sp.owner;
   const card = extract(state, uid);
   if (!card) return false;

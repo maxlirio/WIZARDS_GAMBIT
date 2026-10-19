@@ -67,7 +67,8 @@ export const shiftASpell = ({ side = 'friendly' } = {}) => ({
     if (uid === null) return;
     const from = ctx.cellOf(uid);
     if (from === null) return;
-    const cells = orthoNeighbours(from);
+    const cells = orthoNeighbours(from).filter((c) => !ctx.occupied(uid, c));
+    if (!cells.length) return;
     const cell = yield ctx.ask.pick(cells, {
       prompt: 'Shift it where?', labels: cells.map((c) => `cell ${c} (${CELL_COLOR[c]})`),
       show: cells.map((c) => ({ cell: c, uid })),
@@ -190,13 +191,23 @@ export const damageAndLock = ({ amount = 3, range = 3000, element = null } = {})
 
 /* ============================================================ the field */
 
-/** Push a unit with `force` in a direction the player drags. */
+/**
+ * `side`: 'enemy' | 'any' (units of either side) | 'anything' (units of either
+ * side AND pushable terrain -- Shift). The question's `kind` tells the view
+ * what to light up: 'unit', or 'body' for the mixed list.
+ */
+const pushables = (ctx, side, range) =>
+  side === 'enemy' ? ctx.enemyUnits(range) : side === 'anything' ? ctx.anyBodies(range) : ctx.anyUnits(range);
+const pickKind = (side) => (side === 'anything' ? 'body' : 'unit');
+const thing = (side) => (side === 'anything' ? 'thing' : 'unit');
+
+/** Push a body with `force` in a direction the player drags. */
 export const push = ({ force = 3, range = 3000, side = 'enemy' } = {}) => ({
   tag: 'move', reach: range,
   *effect(ctx) {
-    const ids = side === 'enemy' ? ctx.enemyUnits(range) : ctx.anyUnits(range);
+    const ids = pushables(ctx, side, range);
     if (!ids.length) return;
-    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Push which unit?', kind: 'unit' });
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Push which ${thing(side)}?`, kind: pickKind(side) });
     if (id === null) return;
     const d = yield ctx.askDir(id, 'Drag to push it', force);
     if (d === null) return;
@@ -207,9 +218,9 @@ export const push = ({ force = 3, range = 3000, side = 'enemy' } = {}) => ({
 export const pushAway = ({ force = 3, range = 3000, side = 'enemy' } = {}) => ({
   tag: 'move', reach: range,
   *effect(ctx) {
-    const ids = side === 'enemy' ? ctx.enemyUnits(range) : ctx.anyUnits(range);
+    const ids = pushables(ctx, side, range);
     if (!ids.length) return;
-    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Push which unit away?', kind: 'unit' });
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: `Push which ${thing(side)} away?`, kind: pickKind(side) });
     if (id === null) return;
     ctx.shoveAway(id, force);
   },
@@ -408,10 +419,10 @@ export const repel = ({ force = 3, range = 3000, element = 'force', side = 'enem
   *effect(ctx) {
     const o = ctx.origin();
     if (!o) return;
-    const ids = side === 'enemy' ? ctx.enemyUnits(range) : ctx.anyUnits(range);
+    const ids = pushables(ctx, side, range);
     for (const id of ids) {
-      const u = ctx.unit(id);
-      if (!u || (u.x === o.x && u.y === o.y)) continue;   // the caster stays put
+      const b = typeof id === 'number' ? ctx.unit(id) : ctx.prop(id);
+      if (!b || (b.x === o.x && b.y === o.y)) continue;   // the caster stays put
       ctx.pushFrom(id, o.x, o.y, force);
     }
     ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 0, force });

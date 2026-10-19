@@ -36,6 +36,7 @@ export function invariants(state, where = '') {
     const pl = state.players[p];
     if (pl.table.length !== CELLS) say(`player ${p} table has ${pl.table.length} cells`);
     for (let c = 0; c < CELLS; c++) {
+      if (pl.table[c].length > 1) say(`player ${p} cell ${c} holds ${pl.table[c].length} cards -- cards never stack`);
       for (let d = 0; d < pl.table[c].length; d++) {
         const sp = pl.table[c][d];
         if (sp.cell !== c) say(`uid ${sp.uid} sits in cell ${c} but says ${sp.cell}`);

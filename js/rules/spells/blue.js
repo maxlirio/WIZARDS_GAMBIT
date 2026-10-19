@@ -16,11 +16,13 @@ card({
   // mage out of a corner, or your golem onto a ledge, is half of what it is for.
   runes: [SPIRAL, WHEEL, WHEEL, WHEEL],
   found: null,
-  I:   { text: 'Push a unit within 2m with force 2.', ...M.push({ force: 2, range: 2000, side: 'any' }) },
-  II:  { text: 'Push a terrain piece within 4m with force 3.', ...M.shoveTerrain({ force: 3, range: 4000 }) },
-  III: { text: 'Discard a card. Push a unit within 3m away with force 4.',
-         cost: [{ id: 'discard', n: 1 }], ...M.pushAway({ force: 4, range: 3000, side: 'any' }) },
-  IV:  { text: 'Push every unit within 3m away from your mage with force 3.', ...M.repel({ force: 3, range: 3000, side: 'any' }) },
+  // "Anything" is literal: any unit of EITHER side, or any terrain piece that
+  // can move (user: "shift should be anything on each side ... or objects also").
+  I:   { text: 'Push anything within 2m with force 2.', ...M.push({ force: 2, range: 2000, side: 'anything' }) },
+  II:  { text: 'Push anything within 4m with force 3.', ...M.push({ force: 3, range: 4000, side: 'anything' }) },
+  III: { text: 'Discard a card. Push anything within 3m away with force 4.',
+         cost: [{ id: 'discard', n: 1 }], ...M.pushAway({ force: 4, range: 3000, side: 'anything' }) },
+  IV:  { text: 'Push everything within 3m away from your mage with force 3.', ...M.repel({ force: 3, range: 3000, side: 'anything' }) },
 });
 
 card({

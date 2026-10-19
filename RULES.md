@@ -37,8 +37,9 @@ GREEN    PURPLE     BLUE        3 4 5    blue    the battlefield
 
 - A spell may only be **played** onto a cell matching its school. One home cell per
   school; **artifacts** may be played onto any of the four grey corners.
-- Each cell is a **stack**; only the top card is in play. (Printed: *"Play a Spell on
-  top of this Spell."*)
+- **A cell holds one card.** Cards never stack: a home cell that is taken must be
+  cleared (shifted aside or destroyed) before that school can play again, and a shift
+  only goes into an empty neighbouring cell.
 - Three **golem slots** sit beneath cells 6, 7 and 8, so "the slot above this
   creature" is a real relation.
 

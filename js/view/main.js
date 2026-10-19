@@ -851,7 +851,7 @@ function onSlotClick(p, s) {
 function onPickUnit(id) {
   if (humanToAnswer()) {
     const r = S.pending.request;
-    if (r.kind === 'unit' && r.options.includes(id)) promptPick(id);
+    if ((r.kind === 'unit' || r.kind === 'body') && r.options.includes(id)) promptPick(id);
     return;
   }
   if (!humanToMove() || S.phase !== 'unit') return;
@@ -864,7 +864,7 @@ function onPickUnit(id) {
 function onPickProp(id) {
   if (humanToAnswer()) {
     const r = S.pending.request;
-    if (r.kind === 'prop' && r.options.includes(id)) promptPick(id);
+    if ((r.kind === 'prop' || r.kind === 'body') && r.options.includes(id)) promptPick(id);
   }
 }
 
@@ -909,6 +909,7 @@ function optionLabel(r, o, i) {
   if (r.show?.[i]?.uids) return r.show[i].uids.map(cardName).join(' + ');
   if (r.kind === 'unit') return unitName(o);
   if (r.kind === 'prop') return propName(o);
+  if (r.kind === 'body') return typeof o === 'number' ? unitName(o) : propName(o);
   if (r.kind === 'hand' || r.kind === 'target') {
     const sp = findSpell(S, o);
     if (sp && sp.cell !== null && sp.cell !== undefined) return `${cardName(o)} — ${sp.owner === HUMAN ? 'yours' : 'enemy'}, ${CELL_COLOR[sp.cell]} cell`;
@@ -950,6 +951,7 @@ function renderPrompt() {
       : r.kind === 'target' ? 'Click a glowing spell, or pick below.'
       : r.kind === 'hand' ? `Click ${r.count > 1 ? `${r.count} cards` : 'a card'} in your hand, or pick below.`
       : r.kind === 'prop' ? 'Click a marked terrain piece, or pick below.'
+      : r.kind === 'body' ? 'Click a glowing unit or a marked terrain piece, or pick below.'
       : r.show?.[0] && r.show[0].x !== undefined ? 'Click a marker on the field, or pick below.' : '';
     if (hint) html += `<div class="phint">${hint}</div>`;
     html += '<div class="pbtns">';
@@ -1184,7 +1186,9 @@ function renderHighlights() {
   if (humanToAnswer()) {
     const r = S.pending.request;
     if (r.kind === 'target') r.options.forEach((u) => markCell(u, 'askable'));
-    if (r.kind === 'unit') arena.highlightUnits(Object.fromEntries(r.options.map((id) => [id, 0xffe066])));
+    if (r.kind === 'unit' || r.kind === 'body') {
+      arena.highlightUnits(Object.fromEntries(r.options.filter((id) => typeof id === 'number').map((id) => [id, 0xffe066])));
+    }
     if (r.show) {
       const pts = [];
       r.show.forEach((s, i) => {
@@ -1200,8 +1204,8 @@ function renderHighlights() {
       });
       if (pts.length) arena.setMarkers(pts, 0xffe066);
     }
-    if (r.kind === 'prop') {
-      const pts = r.options.map((id) => S.field.props.find((p) => p.id === id)).filter(Boolean)
+    if (r.kind === 'prop' || r.kind === 'body') {
+      const pts = r.options.filter((id) => typeof id === 'string').map((id) => S.field.props.find((p) => p.id === id)).filter(Boolean)
         .map((pr) => ({ x: pr.x, y: pr.y, z: pr.z, label: propName(pr.id), data: { answer: pr.id } }));
       arena.setMarkers(pts, 0xffe066);
     }

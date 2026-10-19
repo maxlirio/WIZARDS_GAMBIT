@@ -24,7 +24,7 @@
 import { runEffect, answerPending, ask } from './rules/driver.js';
 import * as ops from './rules/ops.js';
 import {
-  spellsOn, topOf, stackAt, findSpell, defOf, canTurn, prohibited, homeCells,
+  spellsOn, topOf, stackAt, occupied, findSpell, defOf, canTurn, prohibited, homeCells,
   playFromHand, deployGolem, turn, shift, destroy, draw, makeCard, fx,
 } from './rules/ops.js';
 import { CELLS, CELL_COLOR, orthoNeighbours, HOME } from './rules/table.js';
@@ -198,7 +198,10 @@ export function spellActions(state, p) {
       const s = slotForTier(def.tier);
       if (s >= 0 && !pl.golems[s]) out.push({ type: 'play', uid: c.uid, slot: s });
     } else {
-      for (const cell of homeCells(def)) out.push({ type: 'play', uid: c.uid, cell });
+      // ONE CARD PER CELL. Cards never stack (user: "cards shouldn't be able
+      // to go on top of each other"), so a home cell that is taken must be
+      // cleared -- shifted aside or destroyed -- before the school plays again.
+      for (const cell of homeCells(def)) if (!occupied(state, p, cell)) out.push({ type: 'play', uid: c.uid, cell });
     }
   }
 
@@ -212,7 +215,7 @@ export function spellActions(state, p) {
     if (canTurn(state, sp) && (!face?.gate || gateMet(state, sp, face.gate))) {
       out.push({ type: 'rotate', uid: sp.uid });
     }
-    for (const cell of orthoNeighbours(sp.cell)) out.push({ type: 'shift', uid: sp.uid, cell });
+    for (const cell of orthoNeighbours(sp.cell)) if (!occupied(state, p, cell)) out.push({ type: 'shift', uid: sp.uid, cell });
     out.push({ type: 'destroy', uid: sp.uid });
   }
 

@@ -40,7 +40,7 @@ import { push, pushAwayFrom, pullToward, levitate, removeTerrain, smashProp, ign
 import { propR, propOnBoard, propSpec } from '../field/arena.js';
 import { walk, placeBody, fallDamageFor, recheckSupport, resolveFalls } from '../field/move.js';
 import { turnAndResolve } from './match.js';
-import { pushDirs, pushPreferred, ringPoints, elevatedNear, unitTargets, terrainTargets, dirLabel } from '../field/candidates.js';
+import { pushDirs, pushPreferred, ringPoints, elevatedNear, unitTargets, terrainTargets, bodyTargets, dirLabel } from '../field/candidates.js';
 
 /**
  * How deep one face may reach into another.
@@ -96,6 +96,8 @@ export function makeCtx(state, spell, def, face, opts = {}) {
     /** Printed Precision: to any side, triggering nothing. */
     setSide: (uid, index, o = {}) => setRot(state, uid, index, { ...o, quiet: true }),
     shiftSpell: (uid, cell) => shift(state, uid, cell),
+    /** Is that cell of the spell's OWNER taken? Cards never stack. */
+    occupied: (uid, cell) => { const sp = findSpell(state, uid); return !sp || occupied(state, sp.owner, cell); },
     destroySpell: (uid) => {
       const target = findSpell(state, uid);
       const victim = target?.owner;
@@ -156,6 +158,11 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       return unitTargets(state, p, r.mm, { side: 'any', heightK: r.heightK, ...o });
     },
     propsInRange: (mmDist, o = {}) => terrainTargets(state, p, range(mmDist).mm, o),
+    /** Units of either side AND pushable terrain: "anything". */
+    anyBodies: (mmDist, o = {}) => {
+      const r = range(mmDist);
+      return bodyTargets(state, p, r.mm, { heightK: r.heightK, ...o });
+    },
     unit: (id) => findUnit(state, id),
     prop: (id) => findProp(state, id),
 

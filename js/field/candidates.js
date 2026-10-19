@@ -166,6 +166,17 @@ export const terrainTargets = (state, p, mmDist, { pushableOnly = false } = {}) 
     .map((pr) => pr.id)
     .sort();
 
+/**
+ * ANYTHING on the battlefield: every living unit of either side, then every
+ * pushable terrain piece. Unit ids are numbers, prop ids strings, so a body
+ * list is unambiguous and `ctx.shove` tells them apart by type. Shift pushes
+ * "anything on each side" (user) -- its own mage, the enemy golem, a boulder.
+ */
+export const bodyTargets = (state, p, mmDist, { heightK = 1 } = {}) => [
+  ...unitTargets(state, p, mmDist, { side: 'any', heightK }),
+  ...terrainTargets(state, p, mmDist, { pushableOnly: true }),
+];
+
 /** Points adjacent to a unit where a new body could be set down. */
 export const summonPoints = (state, mage, mmDist = 1200) =>
   ringPoints(state, mage, mmDist, { samples: 8 });

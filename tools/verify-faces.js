@@ -658,7 +658,7 @@ const FAULTS = [
   {
     name: 'awards VP from a blue face',
     apply: (defs) => mutate(defs, 'SHIFT', 'I', (f) => ({
-      ...f, text: 'Push a unit within 3m 2m. Score 2 VP.',
+      ...f, text: 'Push anything within 3m 2m. Score 2 VP.',
     })),
   },
   {
