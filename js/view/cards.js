@@ -182,16 +182,25 @@ export function centreSVG(def, rot, opts = {}) {
   });
   // Quest pips: a gold objective's progress as three dots that fill, with the
   // count beside them, so a player can see how close a payout is at a glance.
-  (opts.quests || []).forEach((q, i) => {
-    const y = 712 + i * 44;
+  // ONE row in a band of its own (QUEST_Y), under everything the centre
+  // prints -- centreMarkup keeps its text above the band -- and drawn after
+  // the text so nothing can print over it (Tally's four-line faces did).
+  let quests = '';
+  const qs = opts.quests || [];
+  // One or two objectives get numeral, pips and the count; three (Last
+  // Gambit) drop the count so all three fit in the band.
+  const count = qs.length < 3;
+  const gap = qs.length < 3 ? 300 : 190;
+  qs.forEach((q, i) => {
+    const cx = 500 + (i - (qs.length - 1) / 2) * gap - (count ? 0 : -20);
     const filled = Math.max(0, Math.min(3, Math.round((q.pct / 100) * 3)));
-    let row = `<text x="372" y="${y + 9}" text-anchor="end" class="qn" fill="#ffd166">${q.numeral}</text>`;
+    let row = `<text x="${cx - 84}" y="${QUEST_Y + 10}" text-anchor="end" class="qn" fill="#ffd166">${q.numeral}</text>`;
     for (let k = 0; k < 3; k++) {
       const on = k < filled;
-      row += `<circle cx="${412 + k * 40}" cy="${y}" r="13" fill="${on ? '#ffd166' : 'none'}" stroke="#ffd166" stroke-width="5" opacity="${on ? 1 : 0.55}"/>`;
+      row += `<circle cx="${cx - 54 + k * 40}" cy="${QUEST_Y}" r="13" fill="${on ? '#ffd166' : 'none'}" stroke="#ffd166" stroke-width="5" opacity="${on ? 1 : 0.55}"/>`;
     }
-    row += `<text x="540" y="${y + 9}" text-anchor="start" class="qn" fill="#ffd166">${q.have !== null ? `${q.have}/${q.need}` : (q.pct >= 100 ? 'ready' : '')}</text>`;
-    over += `<g class="quest${q.pct >= 100 ? ' ready' : ''}">${row}</g>`;
+    if (count) row += `<text x="${cx + 44}" y="${QUEST_Y + 10}" text-anchor="start" class="qn" fill="#ffd166">${q.have !== null ? `${q.have}/${q.need}` : (q.pct >= 100 ? 'ready' : '')}</text>`;
+    quests += `<g class="quest${q.pct >= 100 ? ' ready' : ''}">${row}</g>`;
   });
   // A corner that is part of the match being asked about: a hot ring round
   // the disc, so the player can SEE which two runes met.
@@ -200,7 +209,7 @@ export function centreSVG(def, rot, opts = {}) {
     over += `<circle cx="${x}" cy="${y}" r="118" fill="none" stroke="#ffd166" stroke-width="14" class="hot-corner"/>`;
   });
   return `<svg viewBox="0 0 1000 1000" class="card-svg" xmlns="http://www.w3.org/2000/svg">${over}
-    <g class="card-centre">${centreMarkup(def, rot, opts.keywords || def.keywords || [], ink)}</g></svg>`;
+    <g class="card-centre">${centreMarkup(def, rot, opts.keywords || def.keywords || [], ink, { quests: qs.length > 0 })}</g>${quests}</svg>`;
 }
 
 /* ------------------------------------------------------------ traps */
@@ -245,7 +254,12 @@ export function cardBackSVG(parts = null) {
     </g></svg>`;
 }
 
-function centreMarkup(def, rot, kws, ink) {
+/** The quest-pip band's centre line; the centre text must end above it. */
+export const QUEST_Y = 736;
+/** The keyword line, when there is one; it sits in the last band of the panel. */
+const KW_Y = 790;
+
+function centreMarkup(def, rot, kws, ink, { quests = false } = {}) {
   const active = def.kind === 'golem' ? null : def.faces[rot & 3];
   let centre = `<text x="500" y="${active ? 288 : 330}" text-anchor="middle" class="nm" fill="${ink}" ${def.name.length > 13 ? 'textLength="520" lengthAdjust="spacingAndGlyphs"' : ''}>${esc(def.name)}</text>`;
   if (def.kind === 'trap') {
@@ -268,7 +282,9 @@ function centreMarkup(def, rot, kws, ink) {
     // (user: "an arrow that shows their NEXT SIDE'S text so it isn't a pain to
     // figure out strategy").
     const lines = wrap(active.text, 22, 4);
-    const y0 = 418, step = 54;
+    // A four-line face leads a little tighter so the next face and the quest
+    // band still fit beneath it.
+    const y0 = 418, step = lines.length >= 4 ? 48 : 54;
     lines.forEach((l, i) => {
       centre += `<text x="500" y="${y0 + i * step}" text-anchor="middle" class="ctr now">${esc(l)}</text>`;
     });
@@ -279,7 +295,11 @@ function centreMarkup(def, rot, kws, ink) {
       // current face stays the thing you read first.
       const yd = y0 + lines.length * step - 22;          // the rule
       const yh = yd + 34;                                 // the row's centre line
-      const nl = wrap(next.text, 30, kws.length ? 2 : 3);
+      // As many next-face lines as fit above whatever sits below: the quest
+      // band, else the keyword line, else the panel's foot. Never none.
+      const floor = quests ? QUEST_Y - 34 : kws.length ? KW_Y - 40 : 800;
+      const room = Math.floor((floor - (yh + 54)) / 42) + 1;
+      const nl = wrap(next.text, 30, Math.max(1, Math.min(3, room)));
       const cx = 412, r = 13;
       centre += `<line x1="330" y1="${yd}" x2="670" y2="${yd}" stroke="${ink}" stroke-width="3" opacity=".35"/>
         <g fill="none" stroke="${ink}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".8">
@@ -292,7 +312,7 @@ function centreMarkup(def, rot, kws, ink) {
     }
   }
   if (kws.length) {
-    centre += `<text x="500" y="${def.kind === 'golem' ? 760 : 776}" text-anchor="middle" class="ckw">${esc(kws.map((k) => `[${k}]`).join(' '))}</text>`;
+    centre += `<text x="500" y="${def.kind === 'golem' ? 760 : KW_Y}" text-anchor="middle" class="ckw">${esc(kws.map((k) => `[${k}]`).join(' '))}</text>`;
   }
 
   return centre;

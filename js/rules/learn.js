@@ -103,7 +103,7 @@ export const FINDS = Object.freeze({
   // Found by being in the situation the trap punishes: the Spellbook teaches
   // you the snare after you have been cornered yourself.
   snared:       { text: 'Have an enemy unit within 2m of your mage.', test: (s, p) => { const m = mageOf(s, p); return !!m && !m.dead && livingUnits(s).some((u) => u.owner !== p && within(u, m, 2000)); } },
-  mirrored:     { text: 'Have two Spells of yours destroyed by the opponent.', test: (s, p) => L(s, p).spellsDestroyed - L(s, p).spellsSacrificed >= 2 },
+  backlash:     { text: 'Have your mage die once.', test: (s, p) => L(s, p).mageDeaths >= 1 },
   ambushed:     { text: 'Have an enemy unit within 1.5m of one of your golem units.', test: (s, p) => unitsOf(s, p).some((g) => g.kind === 'golem' && livingUnits(s).some((u) => u.owner !== p && within(u, g, 1500))) },
 
   /* ------------------------------------------- red, the physical tranche */

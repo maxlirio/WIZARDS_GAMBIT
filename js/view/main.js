@@ -300,7 +300,6 @@ function questPips(sp, def) {
     const pct = gateProgress(S, sp, g);
     const have = g && g.n !== undefined && (g.id === 'ledgerAtLeast') ? Math.min(g.n, counted(S, sp, g)) : null;
     out.push({ numeral: f.numeral, pct, have, need: g?.n ?? null });
-    if (out.length === 2) break;
   }
   return out;
 }
@@ -427,7 +426,7 @@ function flushFx() {
       // A TRAP SPRINGS: the cell flashes, the real card is shown for a
       // moment, then it leaves for the discard. Everything after waits.
       case 'trapSpring': { const note = f; later(t, () => revealTrap(note)); t += 1700; break; }
-      case 'snared': case 'sprung': t += 150; break;
+      case 'snared': case 'sprung': case 'backlash': t += 150; break;
       case 'heal': { const { id, amount } = f; later(t, () => cues().heal(id, amount)); t += 250; break; }
       case 'poisoned': { const id = f.id; later(t, () => cues().poison(id)); t += 150; break; }
       case 'levitate': { const id = f.id; later(t, () => cues().levitate(id, f.mm)); t += 400; break; }
@@ -487,6 +486,7 @@ function narrate(f) {
     }
     case 'trapSpring': return `<span class="gold">⚠ ${f.p === HUMAN ? 'Your' : HUMAN === null ? `${pName(f.p)}'s` : `${FOE()}'s`} trap springs: <b>${esc(f.name || f.def)}</b></span>`;
     case 'snared': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is snared`;
+    case 'backlash': return `&nbsp;&nbsp;&nbsp;&nbsp;the backlash bites ${esc(unitName(f.id))} for ${f.amount}`;
     case 'held': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} loses its next action`;
     case 'sprung': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is flung away from ${esc(unitName(f.from))}`;
     case 'golemCard': return `${P(f.p)} set${f.p === HUMAN ? '' : 's'} ${N(f.uid)} into golem slot ${'ABC'[f.slot] || f.slot}`;
@@ -646,6 +646,7 @@ function buildTable(p) {
     cell.dataset.p = p;
     cell.innerHTML = `<div class="cellmark">${cellSigil(CELL_COLOR[c])}</div><div class="slot"></div><div class="badges"></div>`;
     cell.addEventListener('click', () => onCellClick(p, c));
+    cell.addEventListener('contextmenu', (e) => { e.preventDefault(); const sp = topOf(S, p, c); if (sp) peekSpell(sp); else closePeek(); });
     cell.addEventListener('mouseenter', () => {
       const sp = topOf(S, p, c);
       if (!sp) return;
@@ -667,6 +668,7 @@ function buildTable(p) {
     g.className = 'gslot';
     g.dataset.slot = s;
     g.addEventListener('click', () => onSlotClick(p, s));
+    g.addEventListener('contextmenu', (e) => { e.preventDefault(); const gc = S.players[p].golems[s]; if (gc) peekMarkup(`<div class="card"><div class="cbody">${cardSVG(defOf(S, gc))}</div></div>`); });
     g.addEventListener('mouseenter', () => { const gc = S.players[p].golems[s]; if (gc) inspectDef(defOf(S, gc), 0, null, gc); });
     g.addEventListener('mouseleave', hideInspector);
     gs.appendChild(g);
@@ -860,6 +862,34 @@ function fitInspector() {
 function showInspector() { clearTimeout(hideTimer); fitInspector(); $('#inspector').classList.add('show'); }
 function hideInspector() { clearTimeout(hideTimer); hideTimer = setTimeout(() => $('#inspector').classList.remove('show'), 180); }
 
+/* ------------------------------------------------------------ the peek */
+
+/**
+ * A right-clicked table card, drawn big in the middle of the screen exactly
+ * as it sits on the table -- same frame, same turn, same runes, keywords
+ * and quest pips -- so the small print can be read without leaning in (user:
+ * "when you right click cards on your spell table they should also get
+ * bigger"). An enemy's concealed trap shows its back. Any click, another
+ * right-click or Esc puts it away.
+ */
+function peekSpell(sp) {
+  const def = defOf(S, sp);
+  if (sp.concealed && HUMAN !== null && sp.owner !== HUMAN) { peekMarkup(`<div class="card"><div class="cbody">${cardBackSVG()}</div></div>`); return; }
+  if (def.kind === 'trap') { peekMarkup(`<div class="card"><div class="cbody">${cardSVG(def)}</div></div>`); return; }
+  const kws = keywordsOf(S, sp);
+  const runes = [0, 1, 2, 3].map((pos) => runeAtCorner(S, sp, pos));
+  const printed = [0, 1, 2, 3].map((pos) => def.runes[(pos + sp.rot) & 3]);
+  const quests = questPips(sp, def);
+  peekMarkup(`<div class="card"><div class="cbody" style="transform:rotate(${-90 * sp.rot}deg)">${cardSVG(def, { rot: 0, centre: false, lit: false })}</div>
+    <div class="ccentre">${centreSVG(def, activeIndex(sp), { keywords: kws, runes, printed, quests })}</div></div>`);
+}
+function peekMarkup(html) {
+  const el = $('#peek');
+  el.innerHTML = html;
+  el.hidden = false;
+}
+function closePeek() { const el = $('#peek'); if (el && !el.hidden) { el.hidden = true; el.innerHTML = ''; return true; } return false; }
+
 function inspectSpell(sp) {
   const def = defOf(S, sp);
   if (sp.concealed && HUMAN !== null && sp.owner !== HUMAN) {
@@ -920,7 +950,7 @@ function onArenaHover(hit) {
   const pr = hit?.kind === 'prop' ? S.field.props.find((x) => x.id === hit.id) : null;
   if (u) inspectUnit(u); else if (pr) inspectProp(pr); else if (hoverUnit !== null) hideInspector();
   hoverUnit = u ? u.id : pr ? pr.id : null;
-  if (hit?.kind === 'ground') previewMove(hit.x, hit.y); else if (!u) arena.showGhost(null);
+  if (hit?.kind === 'ground' || (pr && hit.x !== undefined)) previewMove(hit.x, hit.y); else if (!u) arena.showGhost(null);
 }
 
 /* ================================================================ input */
@@ -983,11 +1013,14 @@ function onPickUnit(id) {
   if (la.some((a) => a.type === 'unit' && a.id === id)) { sel = { kind: 'unit', id }; render(); }
 }
 
-function onPickProp(id) {
+function onPickProp(id, hit) {
   if (humanToAnswer()) {
     const r = S.pending.request;
     if ((r.kind === 'prop' || r.kind === 'body') && r.options.includes(id)) promptPick(id);
+    return;
   }
+  // A climbable rock is somewhere to stand: a click on it is a move there.
+  if (hit && movingUnit()) onPickGround(hit.x, hit.y);
 }
 
 function movingUnit() {
@@ -1553,7 +1586,7 @@ function openRules() {
     <p><b>Traps</b> are grey cards set <b>face down</b> into an empty grey corner. They have one side, no runes, never match and never turn. The first time its trigger is met on your <i>opponent's</i> turn — a spell about to hit your unit, an enemy walking up to your mage — the trap springs on its own: it is revealed, its reaction happens at once (an Earth Wall heaves up and takes the fireball instead of you), and it goes to your discard. Your opponent can see a trap is set, not which; their "destroy an enemy Spell" effects can clear it.</p>
     <p><b>Everything on the field can be affected.</b> Every rock, stone, crystal, wall and tree has weight and hit points: force spells throw them and crack them, fire lights the trees — and a burning tree bites everyone beside it each turn, then spreads. Climb walls, fall off ledges, shove rocks out from under people.</p>
     <p><b>The Spellbook</b> remembers the ways you've found new spells, across every duel.</p>
-    <p class="dim">Camera: drag to orbit, wheel to zoom, right-drag to pan, <b>H</b> to go home. <b>Tab</b> hides the panels. <b>Esc</b> cancels.</p>
+    <p class="dim">Camera: drag to orbit, wheel to zoom, right-drag to pan, <b>H</b> to go home. <b>Right-click</b> a table card to see it big. <b>Tab</b> hides the panels. <b>Esc</b> cancels.</p>
     </div>
     <div class="mbtns"><button id="close" class="primary">Got it</button></div>`);
   $('#close').onclick = closeModal;
@@ -1602,12 +1635,14 @@ function boot() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-    if (e.key === 'Escape') { if (!$('#modal').hidden) closeModal(); else { sel = null; render(); } }
+    if (e.key === 'Escape') { if (closePeek()) return; if (!$('#modal').hidden) closeModal(); else { sel = null; render(); } }
     if (e.key === 'Tab') { e.preventDefault(); toggleHud(); }
     if (e.key === 'h' || e.key === 'H') arena?.home();
     if (e.key === 'Enter' && humanToMove()) { if (S.phase === 'unit') endTurn(); else { const a = myActions().find((x) => x.type === 'pass'); if (a && !sel) act(a); } }
   });
   window.addEventListener('resize', () => { updateViewport(); render(); });
+  $('#peek').addEventListener('click', closePeek);
+  $('#peek').addEventListener('contextmenu', (e) => { e.preventDefault(); closePeek(); });
   const seed = params.has('seed') ? Number(params.get('seed')) : undefined;
   newMatch({ seed, watch: params.has('watch'), pool: params.has('pool'), policy: params.get('ai') || 'oneply' });
   if (params.has('room')) openOnline();

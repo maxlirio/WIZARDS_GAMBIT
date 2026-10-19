@@ -886,14 +886,14 @@ export function createArena(host, state, handlers = {}) {
     if (!hit) { handlers.onPickNothing?.(); return; }
     if (hit.kind === 'marker') handlers.onPickMarker?.(markers[hit.index]?.data);
     else if (hit.kind === 'unit') handlers.onPickUnit?.(hit.id);
-    else if (hit.kind === 'prop') handlers.onPickProp?.(hit.id);
+    else if (hit.kind === 'prop') handlers.onPickProp?.(hit.id, hit);
     else if (hit.kind === 'ground') handlers.onPickGround?.(hit.x, hit.y);
   });
   renderer.domElement.addEventListener('pointermove', (e) => {
     if (drag) { if (drag.stroke) strokeMove(e.clientX, e.clientY); return; }
     const hit = pickAt(e.clientX, e.clientY);
     renderer.domElement.style.cursor = hit && (hit.kind === 'marker' || (hit.kind === 'unit' && handlers.isPickable?.(hit))
-      || (hit.kind === 'ground' && moveCircle && insideMove(hit.x, hit.y))) ? 'pointer' : '';
+      || ((hit.kind === 'ground' || hit.kind === 'prop') && moveCircle && insideMove(hit.x, hit.y))) ? 'pointer' : '';
     handlers.onHover?.(hit);
   });
 
@@ -911,10 +911,10 @@ export function createArena(host, state, handlers = {}) {
     const solid = hits.find((h) => h.object.userData.pick && h.object.userData.pick.kind !== 'ground');
     const h = mk || solid || hits[0];
     if (!h) return null;
-    if (h.object.userData.pick.kind === 'ground') {
-      return { kind: 'ground', x: Math.round(h.point.x / MM), y: Math.round(h.point.z / MM) };
-    }
-    return h.object.userData.pick;
+    // Every hit carries the ground point under it: a click ON a rock is a
+    // move onto the rock when a unit is moving (user: "it's not letting me
+    // move on top of the rock").
+    return { ...h.object.userData.pick, x: Math.round(h.point.x / MM), y: Math.round(h.point.z / MM) };
   }
 
   /* ---------------------------------------------------------- the drag */
@@ -1130,7 +1130,7 @@ export function createArena(host, state, handlers = {}) {
     moveCircle = c;
     showGhost(null);
     if (!c) return;
-    if (c.shape && c.shape.length) moveGroup.add(terrainShape(c.x, c.y, c.shape, 0x7fe0ff, { fill: 0.1 }));
+    if (c.shape && c.shape.length) moveGroup.add(terrainShape(c.x, c.y, c.shape, 0x7fe0ff, { fill: 0.1, opacity: 0.8 }));
     else moveGroup.add(terrainRing(c.x, c.y, c.r, 0x7fe0ff, { fill: 0.1 }));
   }
   const moveShape = () => (moveCircle?.shape || []).map((p) => ({ x: p.x, y: p.y, z: p.z }));
@@ -1144,30 +1144,67 @@ export function createArena(host, state, handlers = {}) {
   function terrainShape(cx, cy, shape, colour, { opacity = 0.95, fill = 0.10 } = {}) {
     const g = new THREE.Group();
     const n = shape.length;
-    const at = (i, f) => {
-      const p = shape[i % n];
-      const x = cx + (p.x - cx) * f, y = cy + (p.y - cy) * f;
-      return [x, y];
-    };
+    // The walk's reach on every heading, as a radius. The drawn outline is
+    // SMOOTHED -- a spoke that stops at a rock between two that run on made
+    // the raw polygon a thicket of spikes (user: "this looks buns") -- but
+    // never drawn PAST the true reach: every smoothed radius is capped by the
+    // raw one on that heading, so the shape only ever shrinks into legal
+    // ground. Clicks are still judged on the raw shape (insideMove).
+    const raw = shape.map((p) => Math.hypot(p.x - cx, p.y - cy));
+    let rad = raw.slice();
+    for (let pass = 0; pass < 4; pass++) {
+      const nx = rad.slice();
+      for (let i = 0; i < n; i++) {
+        const a = rad[(i + n - 1) % n], b = rad[i], c = rad[(i + 1) % n];
+        nx[i] = Math.min(raw[i], (a + 2 * b + c) / 4);
+      }
+      rad = nx;
+    }
+    // Resample round the shape, SUB points per spoke, through a Catmull-Rom
+    // curve in radius, capped by the chord of the two raw radii so a curve
+    // overshoot cannot leave the reach either.
+    const SUB = 4, m = n * SUB;
+    const ang = (i) => Math.atan2(shape[i % n].y - cy, shape[i % n].x - cx);
+    const ring = [];
+    for (let i = 0; i < n; i++) {
+      const r0 = rad[(i + n - 1) % n], r1 = rad[i], r2 = rad[(i + 1) % n], r3 = rad[(i + 2) % n];
+      const a1 = ang(i); let a2 = ang(i + 1); if (a2 < a1) a2 += Math.PI * 2;
+      for (let s = 0; s < SUB; s++) {
+        const t = s / SUB, t2 = t * t, t3 = t2 * t;
+        let r = 0.5 * ((2 * r1) + (-r0 + r2) * t + (2 * r0 - 5 * r1 + 4 * r2 - r3) * t2 + (-r0 + 3 * r1 - 3 * r2 + r3) * t3);
+        r = Math.max(0, Math.min(r, raw[i] + (raw[(i + 1) % n] - raw[i]) * t));
+        const a = a1 + (a2 - a1) * t;
+        ring.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+      }
+    }
+    const at = (i, f) => { const [x, y] = ring[i % m]; return [cx + (x - cx) * f, cy + (y - cy) * f]; };
     const pts = [];
-    for (let i = 0; i <= n; i++) { const [x, y] = at(i, 1); pts.push(new THREE.Vector3(x * MM, groundY(x, y) + 0.06, y * MM)); }
+    for (let i = 0; i <= m; i++) { const [x, y] = at(i, 1); pts.push(new THREE.Vector3(x * MM, groundY(x, y) + 0.06, y * MM)); }
     const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
       new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity, depthTest: false, depthWrite: false }));
     line.renderOrder = 50;
     g.add(line);
     if (fill > 0) {
-      const rings = 8, v = [], idx = [], row = n + 1;
+      // The fill drapes on the ground in fine rings and is depth-tested, so
+      // a slope hides the part behind it instead of showing as a hanging
+      // sheet; the outline still shows through everything. Its alpha fades
+      // toward the rim, so the edge reads as a soft limit rather than a
+      // cut-out.
+      const rings = 24, v = [], col = [], idx = [], row = m + 1;
+      const C = new THREE.Color(colour);
       for (let k = 0; k <= rings; k++) {
-        for (let i = 0; i <= n; i++) { const [x, y] = at(i, k / rings); v.push(x * MM, groundY(x, y) + 0.04, y * MM); }
+        const f = k / rings, a = 1 - f * f * 0.75;
+        for (let i = 0; i <= m; i++) { const [x, y] = at(i, f); v.push(x * MM, groundY(x, y) + 0.05, y * MM); col.push(C.r * a, C.g * a, C.b * a); }
       }
-      for (let k = 0; k < rings; k++) for (let i = 0; i < n; i++) {
+      for (let k = 0; k < rings; k++) for (let i = 0; i < m; i++) {
         const a = k * row + i, b = a + 1, c = a + row, d = c + 1;
         idx.push(a, c, d, a, d, b);
       }
       const dg = new THREE.BufferGeometry();
       dg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+      dg.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
       dg.setIndex(idx);
-      const disc = new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: fill, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
+      const disc = new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: fill * 1.6, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide }));
       disc.renderOrder = 49;
       g.add(disc);
     }

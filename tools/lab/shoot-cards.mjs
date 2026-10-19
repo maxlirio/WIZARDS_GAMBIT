@@ -54,7 +54,7 @@ async function shot(name) {
 let ok = true;
 try {
   await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
-  await send('Page.navigate', { url: `http://localhost:${port}/tools/lab/cards.html?ids=${arg('ids', 'EMBER_LASH:0,CHANGE:0,FUSE:3,TALLY:0')}&size=${arg('size', 560)}` });
+  await send('Page.navigate', { url: `http://localhost:${port}/tools/lab/cards.html?ids=${arg("ids", "EMBER_LASH:0,CHANGE:0,FUSE:3,TALLY:0")}&size=${arg("size", 560)}${arg("quests", "") ? "&quests=1" : ""}` });
   for (let k = 0; k < 100; k++) { if (await ev('!!(window.LAB && LAB.ready)')) break; await sleep(200); }
   await sleep(600);
   await shot('cards');

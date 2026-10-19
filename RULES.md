@@ -629,12 +629,14 @@ The four traps:
 |---|---|---|
 | **Earth Wall** | an enemy Spell would damage your unit | dirt heaves into a **wall of earth** (mass 5, 3 hp, blocks sight and movement) one body-width in front of the unit toward the spell's source — or the nearest free spot — and **the wall takes the damage**; if nowhere is free the damage is simply prevented |
 | **Snare** | an enemy unit ends a move within 2m of your mage | it takes 1 damage and **loses its next action** (it sits out its owner's coming turn) |
-| **Mirror Ward** | an enemy Spell would damage your mage | the damage is **dealt to the enemy mage instead**; if that mage is dead, it is prevented |
+| **Backlash** | an enemy Spell or unit damages your unit | the hit still lands, and **the enemy mage takes 1 damage**; if that mage is dead, nothing more happens |
 | **Spring Trap** | an enemy unit ends a move within 1.5m of one of your units | it is **flung away** from the nearest such unit with force 4 |
 
 "An enemy Spell would deal damage" means a spell's own damage: a bolt, a dropped
 rock, an [Unstable] blast, or damage another replacement already redirected. A
 unit's strike, an impact, a fall, fire and poison are not a Spell dealing damage.
+Backlash alone also counts a unit's strike, because it answers an attack rather
+than a spell.
 
 **Earth Wall is in the standard deck** in place of the second `Change`, so a
 face-down card is on the table in every real duel. `tools/verify-faces.js` judges

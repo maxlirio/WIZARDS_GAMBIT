@@ -70,7 +70,7 @@ try {
     const ops = await import('/js/rules/ops.js');
     const S = WG.state;
     const set = (p, cell, id) => { if (S.players[p].table[cell].length) return false; const c = ops.makeCard(S, id, p); c.playedTo = cell; c.plays = 1; c.concealed = true; ops.place(S, p, c, cell); return true; };
-    set(1, 0, 'SNARE'); set(1, 8, 'MIRROR_WARD'); set(0, 2, 'EARTH_WALL');
+    set(1, 0, 'SNARE'); set(1, 8, 'BACKLASH'); set(0, 2, 'EARTH_WALL');
     S.tableDirty = [false, false]; S.fresh = [[], []];
     WG.render();
     return true;

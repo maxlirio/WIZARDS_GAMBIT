@@ -28,10 +28,10 @@ card({
 });
 
 card({
-  id: 'MIRROR_WARD', name: 'Mirror Ward', school: 'grey', kind: 'trap',
-  found: 'mirrored',
-  I: { text: 'TRAP: when an enemy Spell would damage your mage, the damage is dealt to the enemy mage instead.',
-       ...T.trapMirrorWard() },
+  id: 'BACKLASH', name: 'Backlash', school: 'grey', kind: 'trap',
+  found: 'backlash',
+  I: { text: 'TRAP: when an enemy Spell or unit damages your unit, the enemy mage takes 1 damage.',
+       ...T.trapBacklash({ amount: 1 }) },
 });
 
 card({

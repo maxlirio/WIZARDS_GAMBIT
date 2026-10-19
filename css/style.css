@@ -383,3 +383,10 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 }
 .cell.flash-trap { animation: flashTrap 1.6s ease-out; }
 @keyframes flashTrap { 0% { box-shadow: 0 0 0 4px #fff, 0 0 70px #e8ecf3; filter: brightness(2.4); } 100% { } }
+
+/* The PEEK: a right-clicked table card, big, over everything. Click, right-click or Esc puts it back. */
+#peek { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: #0007; backdrop-filter: blur(2px); cursor: zoom-out; }
+#peek[hidden] { display: none; }
+#peek .card { position: relative; width: min(72vh, 86vw, 640px); aspect-ratio: 1; filter: drop-shadow(0 24px 60px #000); animation: peekIn .18s ease-out; }
+#peek .card .cbody, #peek .card .ccentre { position: absolute; inset: 0; }
+@keyframes peekIn { from { transform: scale(.6); opacity: 0; } to { transform: none; opacity: 1; } }

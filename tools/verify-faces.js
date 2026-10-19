@@ -849,7 +849,7 @@ FAULTS.push(
   },
   {
     name: 'a trap that never springs',
-    apply: (defs) => mutate(defs, 'MIRROR_WARD', 'I', (f) => ({
+    apply: (defs) => mutate(defs, 'BACKLASH', 'I', (f) => ({
       ...f,
       replace: { afterDamage: (ctx, payload) => payload },
     })),
@@ -1037,9 +1037,9 @@ const TRAP_REACTION = {
     if (dVic > 1800 || dSrc > Math.hypot(st.theirs.x - st.mine.x, st.theirs.y - st.mine.y)) return [FAIL, 'the wall is not between the spell and its target'];
     return [PASS, ''];
   },
-  MIRROR_WARD: (st, before) => {
-    if (st.mine.hp !== before.mineHp) return [FAIL, `the mage still took ${before.mineHp - st.mine.hp}`];
-    if (before.theirsHp - st.theirs.hp !== st.bolt) return [FAIL, `prints "dealt to the enemy mage instead" but it took ${before.theirsHp - st.theirs.hp} of ${st.bolt}`];
+  BACKLASH: (st, before) => {
+    if (before.mineHp - st.mine.hp !== st.bolt) return [FAIL, `the hit should still land but the mage took ${before.mineHp - st.mine.hp} of ${st.bolt}`];
+    if (before.theirsHp - st.theirs.hp !== 1) return [FAIL, `prints "the enemy mage takes 1 damage" but it took ${before.theirsHp - st.theirs.hp}`];
     return [PASS, ''];
   },
   SNARE: (st, before) => {

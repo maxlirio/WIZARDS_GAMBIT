@@ -123,23 +123,33 @@ export const trapEarthWall = () => ({
   },
 });
 
-/* ------------------------------------------------------------ Mirror Ward */
+/* ------------------------------------------------------------ Backlash */
+
+/** Damage that counts as "you are attacked": a Spell's own damage or a unit's strike. */
+export const ATTACK_CAUSES = Object.freeze([...SPELL_CAUSES, 'strike']);
 
 /**
- * TRAP: when an enemy Spell would damage your mage, the damage is dealt to the
- * enemy mage instead. If the enemy mage is dead, the damage is prevented.
+ * TRAP: when an enemy Spell or unit would damage your unit, the enemy mage
+ * takes 1 damage. The hit still lands -- this trap punishes, it does not
+ * protect (Mirror Ward, which it replaced, bounced the whole blast back and
+ * was worth far more than Earth Wall). If the enemy mage is dead, nothing is
+ * punished and the trap still springs.
  */
-export const trapMirrorWard = () => ({
+export const trapBacklash = ({ amount = 1 } = {}) => ({
   tag: 'break',
   replace: {
     afterDamage: ({ state, spell, p }, payload) => {
-      if (!enemyActing(state, p, payload.byP) || !SPELL_CAUSES.includes(payload.cause)) return payload;
+      if (!enemyActing(state, p, payload.byP) || !ATTACK_CAUSES.includes(payload.cause)) return payload;
       const victim = findUnit(state, payload.targetId);
-      if (!victim || victim.dead || victim.owner !== p || victim.kind !== 'mage') return payload;
+      if (!victim || victim.dead || victim.owner !== p) return payload;
+      // Sprung first, so the mage's own wound cannot spring it again.
       springTrap(state, spell.uid);
       const foe = mageOf(state, 1 - p);
-      if (!foe || foe.dead) return null;
-      return { ...payload, targetId: foe.id, cause: 'redirected' };
+      if (foe && !foe.dead) {
+        fx(state, 'backlash', { id: foe.id, victim: victim.id, amount, p });
+        hurt(state, foe, amount, { cause: 'spell', byP: p });
+      }
+      return payload;           // the hit still lands
     },
   },
 });
