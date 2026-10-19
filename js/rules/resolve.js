@@ -39,6 +39,7 @@ import {
 import { push, pushAwayFrom, pullToward, levitate, removeTerrain, smashProp, ignite } from '../field/push.js';
 import { propR, propOnBoard, propSpec } from '../field/arena.js';
 import { walk, placeBody, fallDamageFor, recheckSupport, resolveFalls } from '../field/move.js';
+import { turnAndResolve } from './match.js';
 import { pushDirs, pushPreferred, ringPoints, elevatedNear, unitTargets, terrainTargets, dirLabel } from '../field/candidates.js';
 
 /**
@@ -90,8 +91,10 @@ export function makeCtx(state, spell, def, face, opts = {}) {
     },
 
     rotatable: (uids) => uids.filter((u) => canTurn(state, findSpell(state, u))),
-    turnSpell: (uid, dir = 'left', o = {}) => turn(state, uid, { dir, ...o }),
-    setSide: (uid, index, o = {}) => setRot(state, uid, index, o),
+    /** Rotate a Spell AND resolve its new face, then chain its matches (match.js). */
+    turnSpell: function* (uid, dir = 'left', o = {}) { return yield* turnAndResolve(state, uid, { dir, ...o, cause: `face:${def.id}:${face.numeral}` }); },
+    /** Printed Precision: to any side, triggering nothing. */
+    setSide: (uid, index, o = {}) => setRot(state, uid, index, { ...o, quiet: true }),
     shiftSpell: (uid, cell) => shift(state, uid, cell),
     destroySpell: (uid) => {
       const target = findSpell(state, uid);

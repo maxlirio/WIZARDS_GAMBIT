@@ -29,7 +29,7 @@
 
 import { idiv, imin, imax, isqrt, clamp, dist2, bearing, opposite, DIR64, DIR_SCALE } from './fixed.js';
 import {
-  STEP, FALL_SAFE, BODY_R, propSpec, heightAt, propR, propMass, propOnBoard, propBurnable, propBurning,
+  STEP, FALL_SAFE, BODY_R, propSpec, heightAt, propR, propH, propMass, propOnBoard, propBurnable, propBurning,
   BURN_TURNS, FIRE_REACH, FIRE_SPREAD,
 } from './arena.js';
 import { findProp, findUnit, propsOnBoard, livingUnits } from './query.js';
@@ -189,7 +189,7 @@ export function topple(state, prop, dir, { byP = null } = {}) {
   if (!prop || !propOnBoard(state, prop)) return false;
   const spec = propSpec(prop.kind);
   const [ux, uy] = DIR64[dir & 63];
-  const L = spec.h + propR(prop);
+  const L = propH(prop) + propR(prop);
   const reach = propR(prop) + BODY_R;
   const hits = [];
   for (const u of [...livingUnits(state)].sort((a, b) => a.id - b.id)) {
@@ -199,7 +199,7 @@ export function topple(state, prop, dir, { byP = null } = {}) {
     const t = clamp(idiv(dx * ux + dy * uy, DIR_SCALE), 0, L);
     const cx = prop.x + idiv(ux * t, DIR_SCALE), cy = prop.y + idiv(uy * t, DIR_SCALE);
     if (dist2(u.x, u.y, cx, cy) > reach * reach) continue;
-    if (u.z > prop.z + spec.h || u.z < prop.z - 1500) continue;
+    if (u.z > prop.z + propH(prop) || u.z < prop.z - 1500) continue;
     hits.push(u.id);
   }
   fx(state, 'topple', { id: prop.id, kind: prop.kind, dir, at: { x: prop.x, y: prop.y, z: prop.z }, hits });
@@ -331,7 +331,7 @@ export function tickFire(state) {
     const reach = propR(pr) + FIRE_REACH;
     for (const u of [...livingUnits(state)].sort((a, b) => a.id - b.id)) {
       if (dist2(u.x, u.y, pr.x, pr.y) > reach * reach) continue;
-      if (u.z > pr.z + propSpec(pr.kind).h || u.z < pr.z - 1500) continue;
+      if (u.z > pr.z + propH(pr) || u.z < pr.z - 1500) continue;
       hurt(state, u, 1, { cause: 'fire', byP: pr.litBy });
     }
     for (const o of [...state.field.props].sort((a, b) => (a.id < b.id ? -1 : 1))) {

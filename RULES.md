@@ -175,14 +175,20 @@ an earlier turn do not fire again every time something else on the table moves.
 
 When a match fires:
 
-1. **The other card turns** — the matched neighbour of the fresh card. (If both
-   cards of the pair are fresh, you choose which.)
+1. **The other card turns** — the matched neighbour of the card that changed.
 2. **It rotates left one step.** This is mandatory and happens even if the card is
    colour-locked.
 3. **Resolve the effect of its newly showing face** — the one now at the top.
+4. **Then that card's own matches run** — depth-first, to exhaustion — before you
+   come back to the original card and look at its remaining corners (with whatever
+   it shows now; an effect in between may have turned it).
 
-Only that card rotates, and the card that rotates is the card you resolve. If a
-fresh card matches several neighbours, you choose the order; each fires in turn.
+Only the matched neighbour rotates, and the card that rotates is the card you
+resolve. If a card matches several neighbours, you choose the order.
+
+**Every rotation resolves.** A face that says "rotate a Spell left" turns that spell,
+resolves its new face, and chains its matches, exactly as a match would — the one
+exception is a face printed "trigger no effects from it" (Precision IV).
 
 The rotation is unconditional; the **effect** is conditional on its cost. If you
 cannot or will not pay, the rotation stands and the effect fizzles. That is why a

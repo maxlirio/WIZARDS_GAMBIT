@@ -323,7 +323,7 @@ export function turn(state, uid, { dir = 'left', steps = 1, forced = false, sile
 }
 
 /** Set a spell's rotation outright. Printed Precision I: "rotate to any side." */
-export function setRot(state, uid, rot, { forced = false } = {}) {
+export function setRot(state, uid, rot, { forced = false, quiet = false } = {}) {
   const sp = findSpell(state, uid);
   if (!sp || sp.cell === null) return false;
   if (forced ? prohibited(state, sp) : !canTurn(state, sp)) {
@@ -334,6 +334,9 @@ export function setRot(state, uid, rot, { forced = false } = {}) {
   sp.rot = rot & 3;
   sp.turnsThisAction++;
   state.players[sp.owner].ledger.rotations++;
+  // `quiet` is printed Precision: "trigger no effects from it". No match
+  // check, no listener. The table is still marked derived-stale.
+  if (quiet) { state.derivedStale = true; return true; }
   markDirty(state, sp.owner, uid);
   emit(state, 'afterRotate', { uid, dir: 'set', forced, p: sp.owner });
   return true;

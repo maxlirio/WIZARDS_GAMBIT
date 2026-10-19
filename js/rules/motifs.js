@@ -30,13 +30,13 @@ export const turnASpell = ({ dir = 'left', side = 'friendly', includeSelf = fals
     const uid = opts.length === 1 ? opts[0]
       : yield ctx.ask.one(opts, { prompt: `Rotate a Spell ${dir}` });
     if (uid === null) return;
-    ctx.turnSpell(uid, dir);
+    yield* ctx.turnSpell(uid, dir);
   },
 });
 
 export const turnSelf = ({ dir = 'left' } = {}) => ({
   tag: 'turn',
-  *effect(ctx) { ctx.turnSpell(ctx.spell.uid, dir, { forced: true }); },
+  *effect(ctx) { yield* ctx.turnSpell(ctx.spell.uid, dir, { forced: true }); },
 });
 
 /**
@@ -592,7 +592,8 @@ export const raiseWall = ({ mm = 2000 } = {}) => ({
 export const turnAll = ({ dir = 'right' } = {}) => ({
   tag: 'turn',
   *effect(ctx) {
-    for (const uid of ctx.friendlySpells()) ctx.turnSpell(uid, dir, { forced: true });
+    // Each one resolves and chains before the next turns, in cell order.
+    for (const uid of ctx.friendlySpells()) yield* ctx.turnSpell(uid, dir, { forced: true });
   },
 });
 
@@ -607,7 +608,7 @@ export const turnSeveral = ({ n = 2, dir = 'left' } = {}) => ({
       const uid = yield ctx.ask.one(opts, { prompt: `Rotate a Spell ${dir} (${k + 1} of ${n})`, allowNone: k > 0 });
       if (uid === null) return;
       done.push(uid);
-      ctx.turnSpell(uid, dir);
+      yield* ctx.turnSpell(uid, dir);
     }
   },
 });
@@ -874,7 +875,7 @@ export const onRotatedRotate = () => ({
       const opts = ctx.rotatable(ctx.friendlySpells());
       if (!opts.length) return;
       const uid = opts.length === 1 ? opts[0] : yield ctx.ask.one(opts, { prompt: 'Rotate a Spell left' });
-      if (uid !== null) ctx.turnSpell(uid, 'left');
+      if (uid !== null) yield* ctx.turnSpell(uid, 'left');
     },
   },
 });

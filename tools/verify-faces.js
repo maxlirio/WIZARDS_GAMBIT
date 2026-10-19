@@ -330,6 +330,7 @@ function snapshotOf(st) {
     // A hex leaves only a prohibition behind, so it is part of the record too.
     rots: Object.fromEntries(spellsOn(state, 0).concat(spellsOn(state, 1)).map((s) => [s.uid, `${s.rot}${s.noTurnUntil !== null && s.noTurnUntil !== undefined ? 'H' : ''}`])),
     scored: state.scoreLog.length,
+    fxAt: (state.fx || []).length,
     props: state.field.props.map((pr) => `${pr.id}:${pr.x},${pr.y},${pr.z}:${pr.removedUntil ?? '-'}:${pr.hp}:${pr.burning ?? '-'}${pr.destroyed ? 'X' : ''}`).join('|'),
     // The view notes, which say what the rules THINK they did. Used for the
     // claims where the board cannot show it -- granting a Keyword to a card
@@ -434,7 +435,11 @@ function judge(st, run, claim) {
       // KILLS are not the face scoring. With five-life mages a four-damage face
       // can kill on this stage, and the 2 VP for a mage is the kill rule paying
       // out, not the card -- so only objective entries count against it.
-      const objective = state.scoreLog.slice(before.scored).filter((e) => e.kind === 'objective');
+      // And only THIS card's objective: a face that rotates a neighbouring
+      // gold card now resolves that card's face too, and if that pays out it
+      // is the gold card scoring, as printed on it.
+      const thisFace = `${st.def.id}:${st.def.faces[st.faceIndex].numeral}`;
+      const objective = state.scoreLog.slice(before.scored).filter((e) => e.kind === 'objective' && e.objId === thisFace);
       if (objective.length) return [FAIL, `awarded ${objective.reduce((n, e) => n + e.amount, 0)} VP from an objective without printing any`];
       return [PASS, ''];
     }
@@ -451,7 +456,17 @@ function judge(st, run, claim) {
     }
     case 'rotateDir': {
       if (!rotated.length) return [UNCHECKED, 'nothing rotated'];
+      // The face's OWN turn is the first `rotate` note it left for each card.
+      // A rotated card then resolves and chains, and a match may turn it (or
+      // its neighbour) again, silently; those later turns are the chain's,
+      // not the face's, and are judged by checkchains.
+      const notes = (state.fx || []).slice(before.fxAt).filter((f) => f.kind === 'rotate');
       for (const uid of rotated) {
+        const own = notes.find((f) => f.uid === uid);
+        if (own) {
+          if (own.dir !== claim.dir) return [FAIL, `prints a ${claim.dir} turn but turned uid ${uid} ${own.dir}`];
+          continue;
+        }
         const d = ((after.rots[uid] - before.rots[uid]) % 4 + 4) % 4;
         // A left turn is +1 on `rot`, a right turn is -1 (which is +3).
         const want = claim.dir === 'left' ? 1 : 3;
@@ -591,7 +606,7 @@ const FAULTS = [
       ...f,
       *effect(ctx) {
         const opts = ctx.enemySpells();
-        if (opts.length) ctx.turnSpell(opts[0], 'left', { forced: true });
+        if (opts.length) yield* ctx.turnSpell(opts[0], 'left', { forced: true });
       },
     })),
   },
@@ -601,7 +616,7 @@ const FAULTS = [
       ...f,
       *effect(ctx) {
         const opts = ctx.rotatable(ctx.friendlySpells());
-        if (opts.length) ctx.turnSpell(opts[0], 'right');
+        if (opts.length) yield* ctx.turnSpell(opts[0], 'right');
       },
     })),
   },

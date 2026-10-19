@@ -23,7 +23,8 @@ import { CARDS, randomDeck } from '../rules/spells/index.js';
 import { defOf, topOf, stackAt, findSpell } from '../rules/ops.js';
 import { CELL_COLOR } from '../rules/table.js';
 import { activeIndex, NUMERALS } from '../rules/orient.js';
-import { runeAtCorner } from '../rules/match.js';
+import { runeAtCorner, findMatches } from '../rules/match.js';
+import { SITE } from '../rules/table.js';
 import { gateProgress, counted } from '../rules/gates.js';
 import { keywordsOf, KEYWORDS } from '../rules/keywords.js';
 import { TIER_CAP } from '../rules/golems.js';
@@ -564,6 +565,10 @@ function bodyAngle(sp) {
 function buildTable(p) {
   const el = $(`#table${p}`);
   el.innerHTML = '';
+  // The bonds overlay: a bridge between any two touching corners that match.
+  const bonds = document.createElement('div');
+  bonds.className = 'bonds';
+  el.appendChild(bonds);
   for (let c = 0; c < 9; c++) {
     const cell = document.createElement('div');
     cell.className = `cell c-${CELL_COLOR[c]}`;
@@ -604,6 +609,41 @@ function cellSigil(colour) {
     <circle cx="50" cy="50" r="30"/><path d="M50 14 L86 50 L50 86 L14 50 Z"/><circle cx="50" cy="50" r="6"/></g></svg>`;
 }
 
+/**
+ * Magically bound corners -- of the ACTIVE card only. The card the chain is
+ * looking at right now (or, before the chain starts, the card just played,
+ * rotated or shifted) gets a pulsing purple-blue bridge from each of its
+ * matching corners to the neighbour's. Nothing is drawn for pairs that
+ * merely sit matching: those do not fire, and drawing them said they would.
+ */
+const CORNER_FRAC = [[0.105, 0.105], [0.895, 0.105], [0.895, 0.895], [0.105, 0.895]];
+function renderBonds(p) {
+  const table = $(`#table${p}`);
+  const layer = table?.querySelector('.bonds');
+  if (!layer) return;
+  const focus = S.chain && S.chain.p === p && S.chain.active !== null && S.chain.active !== undefined
+    ? [S.chain.active] : (S.fresh?.[p] || []);
+  const live = focus.length ? findMatches(S, p, S.chain?.spent || [], focus) : [];
+  if (!live.length) { if (layer.childElementCount) layer.innerHTML = ''; return; }
+  const tb = table.getBoundingClientRect();
+  const cells = table.querySelectorAll('.cell');
+  let html = '';
+  for (const h of live) {
+    const site = SITE[h.site];
+    const pts = [0, 1].map((k) => {
+      const b = cells[site.cells[k]].getBoundingClientRect();
+      const [fx, fy] = CORNER_FRAC[site.pos[k]];
+      return [b.left - tb.left + b.width * fx, b.top - tb.top + b.height * fy];
+    });
+    const dx = pts[1][0] - pts[0][0], dy = pts[1][1] - pts[0][1];
+    const len = Math.hypot(dx, dy), ang = Math.atan2(dy, dx) * 180 / Math.PI;
+    const cx = (pts[0][0] + pts[1][0]) / 2, cy = (pts[0][1] + pts[1][1]) / 2;
+    const cls = 'bond';
+    html += `<div class="${cls}" style="left:${pts[0][0]}px;top:${pts[0][1]}px;width:${len}px;transform:rotate(${ang}deg)"></div><div class="${cls} knot" style="left:${cx}px;top:${cy}px"></div>`;
+  }
+  if (layer.innerHTML !== html) layer.innerHTML = html;
+}
+
 function renderTable(p) {
   const pl = S.players[p];
   const cells = document.querySelectorAll(`#table${p} .cell`);
@@ -630,7 +670,7 @@ function renderTable(p) {
     const kws = keywordsOf(S, sp);
     const runes = [0, 1, 2, 3].map((pos) => runeAtCorner(S, sp, pos));
     const printed = [0, 1, 2, 3].map((pos) => def.runes[(pos + sp.rot) & 3]);
-    const hot = (S.pending?.request?.match?.corners || []).filter((c) => c.uid === sp.uid).map((c) => c.pos);
+    const hot = (S.pending?.request?.match?.sites || []).flatMap((site) => site.corners).filter((c) => c.uid === sp.uid).map((c) => c.pos);
     const quests = questPips(sp, def);
     slot.querySelector('.ccentre').innerHTML = centreSVG(def, activeIndex(sp), { keywords: kws, runes, printed, hot, quests });
     const depth = stackAt(S, p, c).length - 1;
@@ -975,12 +1015,16 @@ function renderDirPrompt(el, r, html) {
 const RUNE_NAME = { SPIRAL: 'Spiral', SHARD: 'Shard', WHEEL: 'Wheel', LATTICE: 'Lattice', WILD: 'wild' };
 const CORNER_NAME = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
 function matchSentence(m) {
-  const parts = m.corners.map((c) => `${cardName(c.uid)} (${CORNER_NAME[c.pos]} corner)`);
-  const runes = [...new Set(m.corners.map((c) => c.rune).filter((r) => r !== 'WILD'))];
+  const me = cardName(m.uid);
+  const parts = m.sites.map((site) => {
+    const mine = site.corners.find((c) => c.uid === m.uid);
+    const theirs = site.corners.find((c) => c.uid !== m.uid);
+    if (!mine || !theirs) return null;
+    const rune = mine.rune !== 'WILD' ? mine.rune : theirs.rune;
+    return `${cardName(theirs.uid)} (its ${CORNER_NAME[theirs.pos]} corner against this card's ${CORNER_NAME[mine.pos]}, ${rune === 'WILD' ? 'wild' : RUNE_NAME[rune]})`;
+  }).filter(Boolean);
   const names = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
-  const which = runes.length === 1 ? `the ${RUNE_NAME[runes[0]]} rune` : 'the same rune';
-  const wild = m.corners.some((c) => c.rune === 'WILD') ? ' (a wild corner joins any rune)' : '';
-  return `${names} meet at one junction showing ${which}${wild}. The matched corners are ringed in gold.`;
+  return `${me} matches ${names}. Each neighbour will turn and resolve in the order you choose; the matched corners are ringed in gold.`;
 }
 
 function markCell(uid, cls) {
@@ -1145,7 +1189,9 @@ function renderHighlights() {
       const pts = [];
       r.show.forEach((s, i) => {
         if (!s) return;
-        if (s.x !== undefined) pts.push({ x: s.x, y: s.y, z: s.z ?? 0, label: String(i + 1), data: { answer: r.options[i] } });
+        // No numbers on the field: the discs ARE the choices. The buttons
+        // below carry the words for anyone who wants them.
+        if (s.x !== undefined) pts.push({ x: s.x, y: s.y, z: s.z ?? 0, label: null, data: { answer: r.options[i] } });
         if (s.cell !== undefined) {
           const owner = findSpell(S, s.uid)?.owner ?? HUMAN;
           document.querySelector(`#table${owner} .cell[data-cell="${s.cell}"]`)?.classList.add('askable');
@@ -1261,6 +1307,8 @@ function render() {
   renderTop();
   renderTable(0);
   renderTable(1);
+  renderBonds(0);
+  renderBonds(1);
   renderHand();
   renderPrompt();
   renderTray();

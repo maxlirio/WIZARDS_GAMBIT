@@ -28,7 +28,7 @@
 // a geometry problem. What a heightfield cannot express is an OVERHANG, and this
 // game does not need one. Floating rocks cover the case that actually matters.
 
-import { M, idiv, dist2, iabs, imin, clamp, snap } from './fixed.js';
+import { M, idiv, dist2, iabs, imin, imax, isqrt, clamp, snap, DIR64, DIR_SCALE } from './fixed.js';
 import { seedRng, int, range } from '../rules/rng.js';
 
 export const ARENA_W = 16 * M;
@@ -38,8 +38,15 @@ export const QUANT = 250;             // heights snap to this, so steps read as 
 
 /** Movement granularity. The engine is steppy by construction. */
 export const STEP = 100;
-/** A height difference a unit simply walks up. */
-export const STEP_UP = 300;
+/**
+ * A height difference a unit simply walks up, per 100mm step. 150 is a
+ * 56-degree slope: a ramp. Steeper is a CLIMB (slow, and only up to
+ * CLIMB_RATE in move.js); steeper than that is a wall, and the way onto a
+ * plateau is its ramp.
+ */
+export const STEP_UP = 150;
+/** How far out from a plateau's rim its ramp runs. */
+export const RAMP_RUN = 2000;
 /**
  * A height difference a unit simply steps DOWN.
  *
@@ -102,7 +109,27 @@ export function makeArena(seed) {
         if (v > hs[at(i, j)]) hs[at(i, j)] = v;
       }
     }
+    // THE RAMP. One way up, as a real slope: a wedge on one side of the
+    // plateau that climbs from the ground at `rad + RAMP_RUN` to the top at
+    // the rim. 100mm of rise per 100mm of run on a 2m plateau -- a 45-degree
+    // walk, no climbing -- and everywhere else the rim is a cliff you cannot
+    // walk up at all. High ground is worth holding because it has one door.
+    const rd = (ramp.dir + 64) & 63;
+    const [ux, uy] = DIR64[rd];
+    const halfW = 900;
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const px = i * NODE - cx, py = j * NODE - cy;
+        const along = idiv(px * ux + py * uy, DIR_SCALE);          // distance out along the ramp
+        const across = iabs(idiv(px * uy - py * ux, DIR_SCALE));   // sideways from its centre line
+        if (across > halfW || along < 0 || along > rad + RAMP_RUN) continue;
+        const inner = idiv(isqrt(rr * 81), 10);
+        const v = along <= inner ? h : imax(0, idiv(h * (rad + RAMP_RUN - along), rad + RAMP_RUN - inner));
+        if (v > hs[at(i, j)]) hs[at(i, j)] = v;
+      }
+    }
   };
+  const ramp = { dir: 0 };
   const trench = (y0, y1, depth) => {
     for (let j = 0; j < ny; j++) {
       const y = j * NODE;
@@ -133,6 +160,7 @@ export function makeArena(seed) {
     for (let k = 0; k < plateaus; k++) {
       // Tall enough to matter. A 500mm plateau is a kerb; the interesting
       // feature is one a body can be shoved off and take damage for.
+      ramp.dir = range(r, 0, 63);
       raise(range(r, midLo - 1000, midHi + 1000), range(r, 1200, ARENA_H - 1200),
             range(r, 1400, 2400), range(r, 3, challenge === 'spires' ? 7 : 5) * 500);
     }
@@ -212,7 +240,11 @@ const PROP_KINDS = Object.freeze({
   pillar:  { r: 350, h: 2200, mass: 4, hp: 5, climbable: true, platform: false, pushable: true, tippable: true, tipForce: 4, tipEnergy: 6000, tipDmg: 2 },
   shard:   { r: 250, h: 1400, mass: 1, hp: 2, climbable: false, platform: false, pushable: true },
   wall:    { r: 700, h: 1100, mass: 6, hp: 6, climbable: true, platform: true, pushable: true },
-  floater: { r: 500, h: 400, mass: 1, hp: 3, climbable: false, platform: true, pushable: true, floating: true },
+  // A floating rock is TERRAIN: a slab you can climb onto and fight from,
+  // hovering low enough to haul yourself up. Sizes vary per piece (`scale`,
+  // a percentage, read through propR/propH), so a field of them reads as
+  // broken ground, not a row of identical discs.
+  floater: { r: 800, h: 550, mass: 2, hp: 4, climbable: true, platform: true, pushable: true, floating: true },
   tree:    { r: 300, h: 3200, mass: 3, hp: 3, climbable: false, platform: false, pushable: true, burnable: true, tippable: true, tipForce: 3, tipEnergy: 4500, tipDmg: 2 },
 });
 
@@ -272,7 +304,9 @@ export function makeProps(arena, seed) {
         // because it is held up by magic rather than by anything a push can
         // take away. What a push CAN do is shove it sideways out from under
         // whoever is standing on it, which is the interesting half.
-        z: spec.floating ? base + range(r, 2, 4) * 500 : base,
+        z: spec.floating ? base + range(r, 1, 2) * 300 : base,
+        // 70%..150% of the kind's size for floating rocks; everything else 100.
+        scale: spec.floating ? 70 + range(r, 0, 8) * 10 : 100,
         removedUntil: null,
         // Hit points, and the fire bookkeeping. `burning` is the last turn
         // number the piece still burns on; `litBy` is who gets the credit for
@@ -285,9 +319,9 @@ export function makeProps(arena, seed) {
   return out;
 }
 
-export const propR = (prop) => PROP_KINDS[prop.kind].r;
-export const propH = (prop) => PROP_KINDS[prop.kind].h;
-export const propTop = (prop) => prop.z + PROP_KINDS[prop.kind].h;
+export const propR = (prop) => idiv(PROP_KINDS[prop.kind].r * (prop.scale || 100), 100);
+export const propH = (prop) => idiv(PROP_KINDS[prop.kind].h * (prop.scale || 100), 100);
+export const propTop = (prop) => prop.z + propH(prop);
 export const propMass = (prop) => PROP_KINDS[prop.kind].mass;
 export const propBurnable = (prop) => !!PROP_KINDS[prop.kind].burnable;
 export const propOnBoard = (state, prop) =>

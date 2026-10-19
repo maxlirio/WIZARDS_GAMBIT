@@ -143,24 +143,24 @@ export const hasMatch = (state, p) =>
 const freshOf = (state, p) => (state.fresh?.[p]?.length ? state.fresh[p] : null);
 
 /**
- * Run the chain to exhaustion.
+ * THE CHAIN, depth-first, from one card.
+ *
+ * Only the card that just changed is checked for matches -- never the whole
+ * table. For each site where one of its touching corners matches a
+ * neighbour's, the NEIGHBOUR turns left, its new face resolves, and then THAT
+ * card's own matches run to exhaustion before we come back here and look at
+ * this card again (with whatever corners it shows now -- an effect may have
+ * turned it meanwhile). A spent site never fires twice in one chain.
  *
  * A generator, because it asks questions, so it is parked on `state.pending`
  * and REPLAYED FROM A SNAPSHOT on every answer like any other effect. All of
- * its bookkeeping is therefore plain serialisable data on `state.chain`; a
- * closure variable here would not roll back with the snapshot and the replay
- * would diverge from the original run.
+ * its bookkeeping is therefore plain serialisable data on `state.chain`.
  */
-export function* runChain(state, p, cause) {
-  // `fresh` starts as whatever the action changed and grows with every card
-  // the chain turns. Only sites touching a fresh card can fire.
-  state.chain = { p, cause, spent: [], resolutions: 0, links: 0, fresh: [...(state.fresh?.[p] || [])].sort((a, b) => a - b) };
-  // Rule B's counter is NOT cleared here. It is per spell ACTION, and one
-  // action can produce several chains -- a trigger queued by the first chain
-  // rotates something, which starts a second. Clearing it per chain would hand
-  // the ping-pong a fresh budget on every lap, which is exactly the loop the
-  // rule exists to close.
-
+export function* chainFrom(state, p, uid) {
+  // `active` is the card whose corners are being looked at right now, for the
+  // HUD's bonds. Plain data on the chain, so it parks and replays with it.
+  const prevActive = state.chain.active ?? null;
+  state.chain.active = uid;
   for (let guard = 0; ; ) {
     if (++guard > CHAIN_ASSERT) {
       // Unreachable if Rule A holds. Recorded rather than thrown so the harness
@@ -170,20 +170,22 @@ export function* runChain(state, p, cause) {
       break;
     }
     if (state.winner !== null) break;
+    const sp = findSpell(state, uid);
+    if (!sp || sp.cell === null || sp.owner !== p) break;
 
-    const hits = findMatches(state, p, state.chain.spent, state.chain.fresh.length ? state.chain.fresh : null);
+    const hits = findMatches(state, p, state.chain.spent, [uid]);
     if (!hits.length) break;
 
-    // Order matters to the player, so the player picks when there is a choice.
+    // Two or more neighbours match this card: the order is the player's.
     // A single match resolves without asking -- and note a zero-option request
-    // would park the game forever, which the driver answers null; that is the
-    // other half of this and it lives in driver.js.
+    // would park the game forever, which the driver answers null.
     const siteId = hits.length === 1 ? hits[0].site : yield ask.pick(
       hits.map((h) => h.site),
       {
-        prompt: 'Which match resonates first?',
-        labels: hits.map((h) => h.uids.map((u) => defOf(state, findSpell(state, u)).name).join(' + ')),
+        prompt: `${defOf(state, sp).name} matches two neighbours — which first?`,
+        labels: hits.map((h) => defOf(state, findSpell(state, h.uids.find((u) => u !== uid))).name),
         show: hits.map((h) => ({ uids: [...h.uids], vertex: h.vertex, site: h.site })),
+        match: { uid, sites: hits.map((h) => ({ uids: [...h.uids], corners: cornersOf(state, p, h) })) },
       },
     );
     const hit = hits.find((h) => h.site === siteId) || hits[0];
@@ -195,56 +197,24 @@ export function* runChain(state, p, cause) {
     state.chain.links++;
     bump(state.players[p].ledger, 'chainLinks');
 
-    if (hit.locked) {
-      fx(state, 'matchLocked', { vertex: hit.vertex, site: hit.site, uids: hit.uids });
-      continue;
-    }
-
-    // The matched NEIGHBOUR turns: the card that just changed is the trigger,
-    // the other card of the pair is what it sets off. Only when both cards
-    // changed (or nothing is marked fresh) is there a choice to make.
-    //
-    // Rule B. A card that has already come full circle this action is not
-    // offered, and if that leaves nobody the site is spent regardless --
-    // spending rather than skipping is what keeps the loop monotone.
-    const eligible = (hit.turners.length ? hit.turners : hit.uids)
-      .map((u) => findSpell(state, u))
-      .filter((s) => s && !prohibited(state, s) && s.turnsThisAction < REVOLUTION)
-      .map((s) => s.uid);
-    if (!eligible.length) {
-      fx(state, 'matchExhausted', { vertex: hit.vertex, site: hit.site, uids: hit.uids });
-      continue;
-    }
-
-    // The question names the junction: which cards meet there, at which of
-    // their corners, showing which rune. Without it a player who just played
-    // a card is asked about two OTHER cards and cannot see why -- a diagonal
-    // pair meets at a single point, and the point is easy to miss.
-    const corners = VERTEX_CARDS[hit.vertex]
-      .map(({ cell, pos }) => ({ sp: topOf(state, p, cell), pos }))
-      .filter((x) => x.sp && hit.uids.includes(x.sp.uid))
-      .map((x) => ({ uid: x.sp.uid, pos: x.pos, rune: runeAtCorner(state, x.sp, x.pos) }));
-    const which = eligible.length === 1 ? eligible[0] : yield ask.one(eligible, {
-      prompt: 'Which Spell turns?',
-      labels: eligible.map((u) => {
-        const s = findSpell(state, u);
-        return `${defOf(state, s).name} (cell ${s.cell})`;
-      }),
-      match: { vertex: hit.vertex, corners },
-    });
-    const sp = findSpell(state, which);
-    if (!sp) continue;
+    // THE NEIGHBOUR TURNS. The card that changed is the trigger; the other
+    // card of the pair is what it sets off. Rule B: a card that has already
+    // come full circle this action, or sits under a prohibition, does not
+    // turn, and the site is spent regardless -- spending rather than skipping
+    // is what keeps the loop monotone.
+    const other = hit.uids.find((u) => u !== uid);
+    const s2 = findSpell(state, other);
+    if (!s2 || prohibited(state, s2)) { fx(state, 'matchLocked', { vertex: hit.vertex, site: hit.site, uids: hit.uids }); continue; }
+    if (s2.turnsThisAction >= REVOLUTION) { fx(state, 'matchExhausted', { vertex: hit.vertex, site: hit.site, uids: hit.uids }); continue; }
 
     // Mandatory and unconditional. A COLOUR LOCK DOES NOT STOP THIS -- the lock
-    // restrains the player, not the board. Only a printed prohibition does, and
-    // that was filtered out above.
-    turn(state, which, { dir: 'left', forced: true, silent: true });
-    if (!state.chain.fresh.includes(which)) { state.chain.fresh.push(which); state.chain.fresh.sort((a, b) => a - b); }
+    // restrains the player, not the board. Only a printed prohibition does.
+    turn(state, other, { dir: 'left', forced: true, silent: true });
     bump(state.players[p].ledger, 'forcedRotations');
     refresh(state);
     noteCards(state, hit.uids);
-    fx(state, 'match', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: which, p });
-    emit(state, 'afterMatch', { vertex: hit.vertex, uids: hit.uids, chosen: which, p });
+    fx(state, 'match', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: other, p });
+    emit(state, 'afterMatch', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: other, p });
 
     // The keyword copy comes BEFORE the effect, because the point of the
     // mechanic is that putting [Ignore Height] on a push changes the push you
@@ -253,10 +223,49 @@ export function* runChain(state, p, cause) {
     refresh(state);
 
     state.chain.resolutions++;
-    yield* resolveSide(state, sp, activeIndex(sp), { chained: true });
+    yield* resolveSide(state, s2, activeIndex(s2), { chained: true });
     refresh(state);
-  }
+    if (state.winner !== null) break;
 
+    // DEPTH FIRST: everything the neighbour sets off runs before we return
+    // to this card and look at its remaining corners.
+    yield* chainFrom(state, p, other);
+    state.chain.active = uid;
+  }
+  state.chain.active = prevActive;
+  settled(state, p, uid);
+}
+
+/** Which corners of a matched pair touch, for the HUD. */
+function cornersOf(state, p, hit) {
+  return VERTEX_CARDS[hit.vertex]
+    .map(({ cell, pos }) => ({ sp: topOf(state, p, cell), pos }))
+    .filter((x) => x.sp && hit.uids.includes(x.sp.uid))
+    .map((x) => ({ uid: x.sp.uid, pos: x.pos, rune: runeAtCorner(state, x.sp, x.pos) }));
+}
+
+/** This card's matches have been looked at: it is no longer fresh. */
+function settled(state, p, uid) {
+  if (!state.fresh?.[p]) return;
+  const i = state.fresh[p].indexOf(uid);
+  if (i >= 0) state.fresh[p].splice(i, 1);
+}
+
+/**
+ * Open a chain for this spell action, if one is not already running. Rule B's
+ * counter is NOT cleared here: it is per spell ACTION, and one action can run
+ * several chains (a queued trigger that rotates something runs after the
+ * chain that queued it has ended). Returns whether this call opened it, so
+ * the same caller closes it.
+ */
+export function beginChain(state, p, cause) {
+  if (state.chain) return false;
+  state.chain = { p, cause, spent: [], resolutions: 0, links: 0, active: null };
+  return true;
+}
+
+export function endChain(state, p) {
+  if (!state.chain) return;
   const L = state.players[p].ledger;
   bump(L, 'chainsResolved');
   high(L, 'longestChain', state.chain.resolutions);
@@ -266,5 +275,40 @@ export function* runChain(state, p, cause) {
   state.tableDirty[p] = false;
   if (state.fresh) state.fresh[p] = [];
   emit(state, 'chainEnd', summary);
-  return summary;
 }
+
+/**
+ * A rotation that RESOLVES: the face it brings up fires, and then the card's
+ * matches chain, depth-first. Every rotation in the game goes through here
+ * except the one printed "trigger no effects" (ops.setRot with `quiet`).
+ */
+export function* turnAndResolve(state, uid, { dir = 'left', forced = false, silent = false, cause = 'effect' } = {}) {
+  if (!turn(state, uid, { dir, forced, silent })) return false;
+  const sp = findSpell(state, uid);
+  if (!sp || sp.cell === null) return false;
+  const p = sp.owner;
+  const own = beginChain(state, p, cause);
+  refresh(state);
+  yield* resolveSide(state, sp, activeIndex(sp), { chained: true });
+  refresh(state);
+  if (state.winner === null) yield* chainFrom(state, p, uid);
+  if (own) endChain(state, p);
+  return true;
+}
+
+/**
+ * The pump's chain: everything that changed on this table since the last
+ * chain (a trigger that turned a card, a card exposed by a destruction) gets
+ * its matches looked at, in uid order. With nothing marked fresh -- the
+ * adversarial harness stages a table and asks for a chain -- every card is.
+ */
+export function* runChain(state, p, cause) {
+  const fresh = state.fresh?.[p]?.length ? [...state.fresh[p]] : spellsOn(state, p).map((s) => s.uid).sort((a, b) => a - b);
+  const own = beginChain(state, p, cause);
+  for (const uid of fresh) {
+    if (state.winner !== null) break;
+    yield* chainFrom(state, p, uid);
+  }
+  if (own) endChain(state, p);
+}
+

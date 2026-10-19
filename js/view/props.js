@@ -23,7 +23,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { propSpec } from '../field/arena.js';
+import { propSpec, propR, propH } from '../field/arena.js';
 import { pickLod } from './assets.js';
 import { menhir } from './world.js';
 
@@ -78,8 +78,7 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
   const builders = { boulder, pillar, shard, wall, floater, tree };
 
   function makeProp(pr) {
-    const spec = propSpec(pr.kind);
-    const r = spec.r * MM, h = spec.h * MM;
+    const r = propR(pr) * MM, h = propH(pr) * MM;
     const g = new THREE.Group();
     const seed = hashStr(pr.id);
     const rnd = rng(seed);
@@ -365,7 +364,7 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
 
   /* ------------------------------------------------------------ floater */
 
-  /** A slab of rock with a torn underside, a spinning sigil beneath it and pebbles caught in its field. */
+  /** A slab of rock with a torn underside. Sizes vary per piece (the engine's `scale`). */
   function floater(P) {
     const { r, h, seed, rnd, body } = P;
     const which = ['boulderB', 'boulderC', 'boulderA'][seed % 3];
@@ -390,48 +389,11 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     const under2 = new THREE.Mesh(mergeGeometries(underGeos), mats.dark);
     under2.userData.noShadow = true;        // the slab's shadow is the slab's
     body.add(under2);
-    // The sigil: two rings turning against each other, additive, under the rock.
-    const sigilMat = new THREE.MeshBasicMaterial({ map: sigilTex, color: 0x9a66ff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
-    const sigil = new THREE.Mesh(new THREE.PlaneGeometry(r * 2.6, r * 2.6), sigilMat);
-    sigil.rotation.x = -Math.PI / 2; sigil.position.y = -h * 1.6; sigil.userData.noShadow = true;
-    const ring = new THREE.Mesh(new THREE.RingGeometry(r * 1.05, r * 1.12, 48), new THREE.MeshBasicMaterial({ color: 0x9a66ff, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
-    ring.rotation.x = -Math.PI / 2; ring.position.y = -h * 1.45; ring.userData.noShadow = true;
-    body.add(sigil, ring);
-    // The sigil's light on the ground beneath (in place of a point light).
-    const pool = halo(haloTex, 0x9a66ff, r * 2.2, 0.3);
-    pool.position.y = -h * 1.62;
-    body.add(pool);
-    // Pebbles caught in its field: one instanced mesh, matrices written each frame.
-    const pebbleGeo = blobGeo(0.035, rnd, {});
-    const pebbles = new THREE.InstancedMesh(pebbleGeo, mats.dark, 5);
-    pebbles.frustumCulled = false;
-    pebbles.userData.noShadow = true;
-    const orbits = [];
-    for (let i = 0; i < 5; i++) orbits.push({ a: rnd() * 6.28, d: r * (1.0 + rnd() * 0.35), y: -h * (0.2 + rnd() * 0.9), w: 0.3 + rnd() * 0.4, ph: rnd() * 6.28, s: 0.85 + rnd() * 1.15, rx: rnd() * 6.28, rz: rnd() * 6.28 });
-    body.add(pebbles);
-    const pm = new THREE.Matrix4(), pq = new THREE.Quaternion(), pp = new THREE.Vector3(), ps = new THREE.Vector3(), pe = new THREE.Euler();
-    P.inner.userData.bob = true;
+    // No sigil, no ring, no pool of light, no bobbing: a floating rock is
+    // TERRAIN. It hangs there the way a cliff stands there. (A piece a spell
+    // lifts gets its glow from arena3d's levitating fx, not from here.)
     P.lean.base = 0.02;
     P.lean.extra = 0.2;
-    let dim = 1;
-    P.damage = (f) => { dim = 1 - f * 0.6; let n = 0; for (let i = 0; i < 5; i++) if (f < 0.3 + i * 0.15) n = i + 1; pebbles.count = n; };
-    P.update = (dt, now) => {
-      sigil.rotation.z += dt * 0.35;
-      ring.rotation.z -= dt * 0.6;
-      const flick = dim < 0.7 && Math.random() < 0.1 ? 0.4 : 1;
-      sigilMat.opacity = 0.55 * dim * flick;
-      ring.material.opacity = 0.45 * dim * flick;
-      pool.material.opacity = 0.3 * dim * (0.9 + 0.1 * Math.sin(now / 500)) * flick;
-      for (let i = 0; i < pebbles.count; i++) {
-        const o = orbits[i];
-        const a = o.a + now / 1000 * o.w;
-        pp.set(Math.cos(a) * o.d, o.y + Math.sin(now / 700 + o.ph) * 0.05, Math.sin(a) * o.d);
-        pq.setFromEuler(pe.set(o.rx, a * 2, o.rz));
-        ps.setScalar(o.s);
-        pebbles.setMatrixAt(i, pm.compose(pp, pq, ps));
-      }
-      pebbles.instanceMatrix.needsUpdate = true;
-    };
   }
 
   /* ------------------------------------------------------------ tree */

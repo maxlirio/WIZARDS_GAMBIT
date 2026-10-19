@@ -30,7 +30,7 @@ import {
 import { CELLS, CELL_COLOR, orthoNeighbours, HOME } from './rules/table.js';
 import { activeIndex, NUMERALS } from './rules/orient.js';
 import { refresh, emptyDerived } from './rules/derive.js';
-import { runChain, findMatches, hasMatch } from './rules/match.js';
+import { runChain, chainFrom, beginChain, endChain, findMatches, hasMatch } from './rules/match.js';
 import { resolveSide, makeCtx } from './rules/resolve.js';
 import { gateMet } from './rules/gates.js';
 import { emptyLedger, bump } from './rules/ledger.js';
@@ -59,6 +59,9 @@ import { resolveFalls, recheckSupport } from './field/move.js';
  * for itself that a rotation implies a match check, that card is
  * unimplementable.
  */
+// Which spell actions check the acting card for matches afterwards. A golem
+// card goes to a slot and a destroy exposes the card beneath (which the pump
+// picks up as fresh); the three that change a card on the table chain from it.
 export const CHECKS_MATCHES = Object.freeze({
   play: true, rotate: true, shift: true, destroy: false, pass: false,
 });
@@ -272,34 +275,27 @@ export function apply(state, action) {
       playFromHand(state, p, action.uid, action.cell);
       if (def.kind === 'artifact') bump(state.players[p].ledger, 'artifactsPlayed');
       emit(state, 'afterPlay', { uid: action.uid, p, cell: action.cell });
-      // Playing a card RESOLVES the face it lands on -- side I -- exactly as a
-      // rotation resolves the face it brings up. The match check is not queued
-      // here for the same reason as below: placing the card marked the table
-      // dirty, and the pump queues the one chain once the resolve is done.
-      state.queue.push({ kind: 'resolve', uid: action.uid, p, seq: ++state.actionSeq });
+      // Playing a card RESOLVES the face it lands on -- side I -- and then THAT
+      // card's matches chain (match.js). One work item does both.
+      state.queue.push({ kind: 'played', uid: action.uid, p, seq: ++state.actionSeq });
       did = 'played';
     }
   } else if (action.type === 'rotate') {
-    // Rotating a spell RESOLVES the face it brings to the top, and then the
-    // table is checked for matches as after any rotation. The resolve is queued
-    // ahead of the match check, and the check is not queued here: the rotation
-    // marked the table dirty, and the pump queues the chain for a dirty table
-    // once the resolve is done -- queueing it here as well would run two chains
-    // over one change, the second rescanning junctions the first had spent.
+    // Rotating a spell RESOLVES the face it brings to the top, and then that
+    // card's matches chain, depth-first. Only the rotated card is checked.
     if (turn(state, action.uid, { dir: 'left' })) {
-      state.queue.push({ kind: 'resolve', uid: action.uid, p, seq: ++state.actionSeq });
+      state.queue.push({ kind: 'turned', uid: action.uid, p, seq: ++state.actionSeq });
     }
     did = 'rotated';
   } else if (action.type === 'shift') {
-    shift(state, action.uid, action.cell);
+    if (shift(state, action.uid, action.cell)) {
+      state.queue.push({ kind: 'shifted', uid: action.uid, p, seq: ++state.actionSeq });
+    }
   } else if (action.type === 'destroy') {
     destroy(state, action.uid, { by: 'action' });
   }
 
   refresh(state);
-  // A golem card played into a slot never touches the table, so it cannot
-  // match; `did` distinguishes it from playing a spell for exactly that reason.
-  if (CHECKS_MATCHES[did]) state.queue.push({ kind: 'chain', p, cause: did, seq: ++state.actionSeq });
   pump(state);
   return state;
 }
@@ -319,7 +315,7 @@ function runWork(state, item) {
   if (item.kind === 'unit') return doUnitAction(state, item.action);
   if (item.kind === 'trigger') return runTrigger(state, item);
   if (item.kind === 'onDestroy') return runOnDestroy(state, item);
-  if (item.kind === 'resolve') return runResolve(state, item);
+  if (item.kind === 'played' || item.kind === 'turned' || item.kind === 'shifted') return runChanged(state, item);
   if (item.kind === 'find') return runFind(state, item);
   throw new Error(`unknown work item '${item.kind}'`);
 }
@@ -356,11 +352,23 @@ function* runFind(state, item) {
   return true;
 }
 
-/** A play's or a voluntary rotation's payoff: the face now on top resolves. */
-function* runResolve(state, item) {
+/**
+ * The spell action's own card changed: a play or a rotation resolves the face
+ * now on top, and then -- for a shift as well -- that ONE card's matches
+ * chain, depth-first. The chain is opened and closed here, so a question
+ * asked anywhere inside it parks and replays as one effect.
+ */
+function* runChanged(state, item) {
   const sp = findSpell(state, item.uid);
   if (!sp || sp.cell === null) return false;
-  return yield* resolveSide(state, sp, activeIndex(sp), { voluntary: true });
+  const own = beginChain(state, item.p, item.kind);
+  if (item.kind !== 'shifted') {
+    yield* resolveSide(state, sp, activeIndex(sp), { voluntary: true });
+    refresh(state);
+  }
+  if (state.winner === null) yield* chainFrom(state, item.p, item.uid);
+  if (own) endChain(state, item.p);
+  return true;
 }
 
 function* runTrigger(state, item) {

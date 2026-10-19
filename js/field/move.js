@@ -14,6 +14,7 @@
 import { idiv, imax, imin, isqrt, dist2, DIR64, DIR_SCALE } from './fixed.js';
 import { inBounds, STEP, STEP_UP, STEP_DOWN, CLIMB_COST, FALL_SAFE, propSpec } from './arena.js';
 import { surfaceAt, settle, supported, blockingProp, blockingUnit, findProp, BODY_H } from './query.js';
+import { propTop, propR } from './arena.js';
 
 /**
  * Every body carries `body: 'unit' | 'prop'`.
@@ -26,8 +27,17 @@ import { surfaceAt, settle, supported, blockingProp, blockingUnit, findProp, BOD
 export const isUnitBody = (b) => b.body === 'unit';
 export const fallKey = (b) => (isUnitBody(b) ? `u${b.id}` : `p${b.id}`);
 
-/** The steepest single step a body can haul itself up. Above this, it is a wall. */
-export const CLIMB_RATE = 750;
+/**
+ * The steepest step of GROUND a body can haul itself up, per 100mm. 250 is
+ * 68 degrees; above that the ground is a wall and the way up is a ramp.
+ */
+export const CLIMB_RATE = 250;
+/**
+ * Onto a climbable PROP (a boulder, a wall, a floating rock) the step is its
+ * whole height at once, because its side is vertical. This is the tallest
+ * such top a body can reach from the ground.
+ */
+export const PROP_CLIMB = 1400;
 /** No single move may take more steps than this, whatever the budget says. */
 export const MAX_STEPS = 200;
 
@@ -71,16 +81,20 @@ export function walk(state, body, dir, budget, {
     // The surface we would be standing on. Capped at a climbable rise, so a
     // body walking under a floating rock is not offered its top.
     const feet = body.z;
-    const s = surfaceAt(state, nx, ny, { ignore: self, maxZ: feet + CLIMB_RATE });
+    const s = surfaceAt(state, nx, ny, { ignore: self, maxZ: feet + PROP_CLIMB });
     const rise = s.z - feet;
 
     if (rise > STEP_UP) {
       if (!climb) { blockedBy = { kind: 'rise', mm: rise }; break; }
-      if (rise > CLIMB_RATE) { blockedBy = { kind: 'wall', mm: rise }; break; }
       if (s.support.kind === 'prop') {
         const pr = findProp(state, s.support.id);
         if (!pr || !propSpec(pr.kind).climbable) { blockedBy = { kind: 'sheer', id: s.support.id }; break; }
-      }
+        if (rise > PROP_CLIMB) { blockedBy = { kind: 'wall', mm: rise }; break; }
+      } else if (rise > CLIMB_RATE) { blockedBy = { kind: 'wall', mm: rise }; break; }
+      // A CLIMB IS ATOMIC. Nobody stops half way up a face: if the budget
+      // cannot carry the body to where the ground levels off again, the climb
+      // is not started. Probed ahead, bounded by the budget, touching nothing.
+      if (!climbFits(state, body, x0, y0, ux, uy, k, feet, cost, budget, self)) { blockedBy = { kind: 'climb', mm: rise }; break; }
     }
     if (rise < -STEP_DOWN) {
       // Over a lip. A body being PUSHED goes airborne; a body WALKING climbs
@@ -95,7 +109,16 @@ export function walk(state, body, dir, budget, {
     }
 
     const pr = blockingProp(state, nx, ny, imax(feet, s.z), { ignore: self });
-    if (pr) { blockedBy = { kind: 'prop', id: pr.id }; break; }
+    if (pr) {
+      // A climbable piece in the way is a thing to get ON TOP OF: the body
+      // scrambles up its side and lands on its top, as one atomic climb.
+      const up = climb ? mountOnto(state, body, pr, x0, y0, ux, uy, k, feet, cost, budget, maxSteps, self) : null;
+      if (!up) { blockedBy = { kind: 'prop', id: pr.id }; break; }
+      body.x = up.x; body.y = up.y; body.z = up.z; body.support = { kind: 'prop', id: pr.id };
+      cost = up.cost; taken = up.k; climbed++;
+      k = up.k;
+      continue;
+    }
     if (!ignoreUnits) {
       const u = blockingUnit(state, nx, ny, s.z, { ignore: isUnitBody(body) ? body.id : null });
       if (u) { blockedBy = { kind: 'unit', id: u.id }; break; }
@@ -112,6 +135,7 @@ export function walk(state, body, dir, budget, {
     body.x = nx; body.y = ny; body.z = s.z; body.support = s.support;
   }
 
+  // (see climbFits below for the look-ahead a climb step makes first)
   // AIRBORNE. A shoved body that has gone over a lip keeps travelling at the
   // height it left and only finds the ground when the push runs out. That is
   // what makes being pushed off a plateau worse than walking off one, and it is
@@ -131,7 +155,14 @@ export function walk(state, body, dir, budget, {
       if (!inBounds(state.arena, nx, ny)) { blockedBy = { kind: 'edge' }; break; }
       const under = surfaceAt(state, nx, ny, { ignore: self });
       if (under.z > body.z) { blockedBy = { kind: 'rise', mm: under.z - body.z }; break; }
-      if (blockingProp(state, nx, ny, body.z, { ignore: self })) { blockedBy = { kind: 'prop' }; break; }
+      // What a flying body hits is NAMED, so the impact can shove it on: a
+      // floating rock slammed into a floating rock moves them both.
+      const bp = blockingProp(state, nx, ny, body.z, { ignore: self });
+      if (bp) { blockedBy = { kind: 'prop', id: bp.id }; break; }
+      if (!ignoreUnits) {
+        const bu = blockingUnit(state, nx, ny, body.z, { ignore: isUnitBody(body) ? body.id : null });
+        if (bu) { blockedBy = { kind: 'unit', id: bu.id }; break; }
+      }
       body.x = nx; body.y = ny;
       cost += 1;
       taken = k;
@@ -160,6 +191,58 @@ export function walk(state, body, dir, budget, {
     mm: movedMm, cost: cost * STEP, climbed, blockedBy, fell,
     shortfall: imax(0, budget - cost * STEP), fromZ: z0,
   };
+}
+
+/**
+ * Scramble onto a climbable piece that is blocking step `k`.
+ *
+ * Finds the first step along the same line whose footprint is over the
+ * piece's top, charges a climb for every step from here to there, and refuses
+ * if the budget cannot cover it (nobody hangs off the side of a rock) or if
+ * the top is already taken.
+ */
+function mountOnto(state, body, pr, x0, y0, ux, uy, k, feet, cost, budget, maxSteps, self) {
+  if (!propSpec(pr.kind).climbable) return null;
+  const top = propTop(pr);
+  const rise = top - feet;
+  if (rise <= STEP_UP || rise > PROP_CLIMB) return null;
+  const rr = propR(pr) * propR(pr);
+  for (let j = k; j <= imin(maxSteps, k + 12); j++) {
+    const nx = x0 + idiv(ux * j * STEP, DIR_SCALE);
+    const ny = y0 + idiv(uy * j * STEP, DIR_SCALE);
+    if (!inBounds(state.arena, nx, ny)) return null;
+    if (dist2(pr.x, pr.y, nx, ny) > rr) continue;
+    if (blockingProp(state, nx, ny, top, { ignore: self })) return null;
+    if (blockingUnit(state, nx, ny, top, { ignore: isUnitBody(body) ? body.id : null })) return null;
+    const c = cost + (j - k + 1) * CLIMB_COST;
+    if (c * STEP > budget) return null;
+    return { x: nx, y: ny, z: top, k: j, cost: c };
+  }
+  return null;
+}
+
+/**
+ * Would a climb starting at step `k` reach level ground within the budget?
+ *
+ * Walks the same line the body is about to walk, step by step, until the
+ * rise between steps is back under STEP_UP, adding each step's cost. Bounded
+ * by the budget. Reads only; the body is untouched.
+ */
+function climbFits(state, body, x0, y0, ux, uy, k, feet, cost, budget, self) {
+  let z = feet, c = cost;
+  const maxSteps = imin(idiv(budget, STEP), MAX_STEPS);
+  for (let j = k; j <= maxSteps; j++) {
+    const nx = x0 + idiv(ux * j * STEP, DIR_SCALE);
+    const ny = y0 + idiv(uy * j * STEP, DIR_SCALE);
+    if (!inBounds(state.arena, nx, ny)) return false;
+    const s = surfaceAt(state, nx, ny, { ignore: self, maxZ: z + PROP_CLIMB });
+    const rise = s.z - z;
+    if (rise <= STEP_UP) return true;             // levelled off: the climb has a top
+    c += CLIMB_COST;
+    if (c * STEP > budget) return false;
+    z = s.z;
+  }
+  return false;
 }
 
 /* ------------------------------------------------------------ falling */

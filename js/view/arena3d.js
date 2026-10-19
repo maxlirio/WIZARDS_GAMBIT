@@ -257,7 +257,9 @@ export function createArena(host, state, handlers = {}) {
       const maxHp = propSpec(pr.kind).hp;
       const dmg = maxHp > 0 ? 1 - Math.max(0, pr.hp) / maxHp : 0;
       if (m.userData.damage !== dmg) { m.userData.damage = dmg; m.userData.setDamage?.(dmg); }
-      if (pr.kind === 'floater' || pr.levitated) {
+      // Only a piece a SPELL lifted glows. A floating rock is terrain: it
+      // hangs there the way a cliff stands there, with nothing underneath.
+      if (pr.levitated) {
         if (!m.userData.lev) { m.userData.lev = true; fx.levitating(pr.id + ':lev', pr.x * MM, pr.z * MM - m.userData.h * 0.9, pr.y * MM, m.userData.r); }
       }
     }
@@ -500,7 +502,8 @@ export function createArena(host, state, handlers = {}) {
           if (!m) return;
           const inner = m.userData.inner;
           fx.tween(0.4, (t) => { const k = Math.sin(t * Math.PI) * (1 - t) * (0.06 + dmg * 0.03); inner.scale.set(1 + k, 1 - k * 1.4, 1 + k); }, () => inner.scale.setScalar(1));
-          fx.debris(m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, { n: 2 + dmg, colour: m.userData.kind === 'shard' ? 0x7fdcff : m.userData.kind === 'tree' ? 0x2a1d12 : 0x6b6358, size: 0.09, spread: m.userData.r, up: 2 + dmg });
+          // Rock chips fly on ANY bump, harder with damage: stone meeting stone is loud even when nothing cracks.
+          fx.debris(m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, { n: 6 + dmg * 4, colour: m.userData.kind === 'shard' ? 0x7fdcff : m.userData.kind === 'tree' ? 0x2a1d12 : 0x6b6358, size: 0.09, spread: m.userData.r, up: 2.5 + dmg });
         }
       };
       jolt(body, id, false);
@@ -824,6 +827,16 @@ export function createArena(host, state, handlers = {}) {
   }
 
   /* ---------------------------------------------------------- rings */
+  /**
+   * A ring (and optional disc) draped over the ground and drawn ON TOP of it.
+   *
+   * Depth testing is off and the render order is high on purpose: a move
+   * circle that runs into a plateau used to vanish behind the cliff face,
+   * which is exactly where the player most needs to see where the circle
+   * ends. The disc is a radial mesh -- many rings of vertices, each at its
+   * own ground height -- rather than a fan from the centre, so it hugs a
+   * cliff instead of cutting straight through it.
+   */
   function terrainRing(cx, cy, r, colour, { opacity = 0.95, fill = 0.10, dashed = false } = {}) {
     const g = new THREE.Group();
     const pts = [];
@@ -834,20 +847,37 @@ export function createArena(host, state, handlers = {}) {
       pts.push(new THREE.Vector3(x * MM, groundY(x, y) + 0.06, y * MM));
     }
     const mat = dashed
-      ? new THREE.LineDashedMaterial({ color: colour, dashSize: 0.18, gapSize: 0.1, transparent: true, opacity })
-      : new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity });
+      ? new THREE.LineDashedMaterial({ color: colour, dashSize: 0.18, gapSize: 0.1, transparent: true, opacity, depthTest: false, depthWrite: false })
+      : new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity, depthTest: false, depthWrite: false });
     const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
     if (dashed) line.computeLineDistances();
+    line.renderOrder = 50;
     g.add(line);
     if (fill > 0) {
-      // A filled disc draped on the ground: a fan of triangles, each vertex at its own ground height.
-      const v = [cx * MM, groundY(cx, cy) + 0.04, cy * MM];
+      const rings = Math.max(4, Math.round(r / 400));
+      const v = [];
+      for (let k = 0; k <= rings; k++) {
+        const rr = (k / rings) * r;
+        for (let i = 0; i <= n; i++) {
+          const t = (i / n) * Math.PI * 2;
+          const x = cx + Math.cos(t) * rr, y = cy + Math.sin(t) * rr;
+          v.push(x * MM, groundY(x, y) + 0.04, y * MM);
+        }
+      }
       const idx = [];
-      for (let i = 0; i <= n; i++) { const p = pts[i]; v.push(p.x, p.y - 0.02, p.z); if (i) idx.push(0, i, i + 1); }
+      const row = n + 1;
+      for (let k = 0; k < rings; k++) {
+        for (let i = 0; i < n; i++) {
+          const a = k * row + i, b = a + 1, c = a + row, d = c + 1;
+          idx.push(a, c, d, a, d, b);
+        }
+      }
       const dg = new THREE.BufferGeometry();
       dg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
       dg.setIndex(idx);
-      g.add(new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: fill, depthWrite: false, side: THREE.DoubleSide })));
+      const disc = new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: fill, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
+      disc.renderOrder = 49;
+      g.add(disc);
     }
     return g;
   }

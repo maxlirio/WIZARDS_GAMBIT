@@ -344,3 +344,14 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .pbtns.compass button { display: inline-flex; align-items: center; gap: 6px; }
 .pbtns.compass button i { font-style: normal; font-size: 16px; line-height: 1; color: #7fe0ff; width: 1.1em; text-align: center; }
 .pbtns.compass button small { font-weight: 500; color: var(--ink-dim); }
+
+/* magically bound corners: a bridge between two touching corners that match */
+.table { position: relative; }
+.bonds { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.bond { position: absolute; height: 5px; margin-top: -2.5px; transform-origin: 0 50%; border-radius: 3px;
+  background: linear-gradient(90deg, #9a66ff, #7fe0ff, #9a66ff); box-shadow: 0 0 8px #9a66ff, 0 0 16px #7fe0ff88;
+  animation: bondpulse 1.1s ease-in-out infinite; }
+.bond.knot { width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; transform: none;
+  background: radial-gradient(circle, #e6f4ff 0%, #9a66ff 45%, transparent 70%); box-shadow: 0 0 14px #9a66ff; }
+.bond.spent { opacity: .35; animation: none; filter: saturate(.4); }
+@keyframes bondpulse { 0%, 100% { opacity: .75; } 50% { opacity: 1; } }
