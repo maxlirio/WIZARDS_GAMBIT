@@ -72,7 +72,7 @@ const speedOf = (force, mass) => clamp(idiv(force * 25, imax(1, mass)), 5, 100);
  * you into it -- unless the push carries [Levitate].
  */
 export function push(state, body, dir, force, {
-  depth = 0, byP = null, crush = false, levitate = false, chain = null, mm = null, speed = null, settle = true,
+  depth = 0, byP = null, crush = false, levitate = false, chain = null, mm = null, speed = null, settle = true, cap = null,
 } = {}) {
   const log = chain || [];
   if (!body || body.dead) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
@@ -87,7 +87,9 @@ export function push(state, body, dir, force, {
     topple(state, body, dir, { byP });
     return { mm: 0, shortfall: 0, blockedBy: null, chain: log, toppled: true };
   }
-  const budget = mm !== null ? mm : travelFor(force, mass);
+  // `cap` shortens the force's travel without replacing it: a pull "to you"
+  // stops at your feet instead of bowling you over.
+  const budget = mm !== null ? mm : cap !== null ? imin(travelFor(force, mass), imax(0, cap)) : travelFor(force, mass);
   const v = speed !== null ? speed : speedOf(force, mass);
   if (budget < STEP) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
 
@@ -263,9 +265,18 @@ export const ridersOf = (state, prop) =>
 export const pushAwayFrom = (state, body, fromX, fromY, force, opts = {}) =>
   push(state, body, bearing(fromX, fromY, body.x, body.y), force, opts);
 
-/** Pull a body toward a point. Printed on a handful of blue faces. */
-export const pullToward = (state, body, toX, toY, force, opts = {}) =>
-  push(state, body, bearing(body.x, body.y, toX, toY), force, opts);
+/**
+ * Pull a body toward a point -- "to you", on a handful of blue and red faces.
+ * It comes to REST beside the point: travel is capped at the gap between the
+ * two bodies, so a rock pulled to your mage lands at its feet and does not
+ * slam into it and shove it away (user: "Meteor Call pushed instead of
+ * pulled" -- the pull was right, the arrival was the shove).
+ */
+export const pullToward = (state, body, toX, toY, force, opts = {}) => {
+  const r = isUnitBody(body) ? BODY_R : propR(body);
+  const gap = isqrt(dist2(body.x, body.y, toX, toY)) - r - BODY_R - 50;
+  return push(state, body, bearing(body.x, body.y, toX, toY), force, { cap: gap, ...opts });
+};
 
 /**
  * Lift a prop into the air and let it hang there. Printed Levitation's partner:

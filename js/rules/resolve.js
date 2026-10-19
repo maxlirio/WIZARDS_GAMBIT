@@ -242,17 +242,34 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
       return push(state, body, dir, pp.force, { byP: p, crush: pp.crush, levitate: pp.levitate, ...o });
     },
+    /**
+     * "You", for "toward you" / "away from you": the caster's living mage, or
+     * failing that the caster's origin nearest the body. With neither there
+     * is no "you" and the shove does nothing -- it used to fall back to the
+     * arena's corner, so a pull cast while the mage lay dead dragged its
+     * target toward (0,0), which read as a push the wrong way (user: "Meteor
+     * Call pushed instead of pulled").
+     */
+    selfPoint: (body) => {
+      const m = mageOf(state, p);
+      if (m && !m.dead) return m;
+      const os = rangeOrigins(state, p);
+      if (!os.length || !body) return null;
+      return os.reduce((best, u) => (dist2(u.x, u.y, body.x, body.y) < dist2(best.x, best.y, body.x, body.y) ? u : best));
+    },
     shoveAway: (bodyId, force, o = {}) => {
       const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
-      const o0 = rangeOrigins(state, p)[0] || { x: 0, y: 0 };
       if (!body) return { mm: 0 };
+      const o0 = ctx.selfPoint(body);
+      if (!o0) { fx(state, 'noOrigin', { p }); return { mm: 0 }; }
       const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
       return pushAwayFrom(state, body, o0.x, o0.y, pp.force, { byP: p, crush: pp.crush, levitate: pp.levitate, ...o });
     },
     pullIn: (bodyId, force, o = {}) => {
       const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);
-      const o0 = rangeOrigins(state, p)[0] || { x: 0, y: 0 };
       if (!body) return { mm: 0 };
+      const o0 = ctx.selfPoint(body);
+      if (!o0) { fx(state, 'noOrigin', { p }); return { mm: 0 }; }
       const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
       return pullToward(state, body, o0.x, o0.y, pp.force, { byP: p, crush: pp.crush, levitate: pp.levitate, ...o });
     },

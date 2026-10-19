@@ -89,6 +89,11 @@ export function claimsOf(def, face) {
   // print a bare distance.
   const force = t.match(/with force (\d)/);
   if (force) c.push({ kind: 'travel', mm: Number(force[1]) * 750 });
+  // WHICH WAY. "toward you" / "to you" / "toward your mage" means every body
+  // that moved ended nearer the caster's mage; "away from you(r mage)" means
+  // farther. A pull that went the other way passed every other claim.
+  if (/\b(toward|to) (you|your mage)\b/.test(t)) c.push({ kind: 'direction', way: 'in' });
+  else if (/\baway from (you|your mage)\b/.test(t)) c.push({ kind: 'direction', way: 'out' });
   else {
     const dists = [...t.matchAll(/([\d.]+)m/g)].map((m) => num(m[1]));
     if (/[Pp]ush|[Pp]ull|[Rr]elocate|[Rr]aise/.test(t)) {
@@ -399,7 +404,7 @@ const PASS = 'PASS', FAIL = 'FAIL', UNCHECKED = 'UNCHECKED';
 const POSITIVE = new Set([
   'damage', 'travel', 'draws', 'vp', 'vpScaling', 'vpAny', 'enemySpellsOnly',
   'rotateDir', 'grantsKeyword', 'destroysSpell', 'effectful',
-  'knocks', 'burns', 'ignites', 'propDamage', 'shatters', 'falls', 'spawnsBoulder',
+  'knocks', 'burns', 'ignites', 'propDamage', 'shatters', 'falls', 'spawnsBoulder', 'direction',
 ]);
 
 function judge(st, run, claim) {
@@ -454,6 +459,25 @@ function judge(st, run, claim) {
         const [ax, ay] = after.pos[id].split(',').map(Number);
         const d = Math.round(Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2));
         if (d > claim.mm + 150) return [FAIL, `prints ${claim.mm}mm of travel but moved unit ${id} ${d}mm`];
+      }
+      return [PASS, ''];
+    }
+    case 'direction': {
+      // Every body that moved, unit or terrain, measured from the caster's
+      // mage where it stood AFTER (a pull toward a mage that itself slid is
+      // still a pull toward where it ended).
+      const [mx, my] = after.pos[mine.id].split(',').map(Number);
+      const [bmx, bmy] = before.pos[mine.id].split(',').map(Number);
+      const propPos = (snap) => Object.fromEntries(snap.props.split('|').filter(Boolean).map((e) => { const [id, xyz] = e.split(':'); return [id, xyz.split(',').map(Number)]; }));
+      const pb = propPos(before), pa = propPos(after);
+      const moved = [];
+      for (const id of movedUnits) if (id !== mine.id) moved.push({ id, b: before.pos[id].split(',').map(Number), a: after.pos[id].split(',').map(Number) });
+      for (const id of Object.keys(pa)) if (pb[id] && (pb[id][0] !== pa[id][0] || pb[id][1] !== pa[id][1])) moved.push({ id, b: pb[id], a: pa[id] });
+      if (!moved.length) return [UNCHECKED, 'nothing moved'];
+      for (const m of moved) {
+        const was = Math.hypot(m.b[0] - bmx, m.b[1] - bmy), now = Math.hypot(m.a[0] - mx, m.a[1] - my);
+        if (claim.way === 'in' && now >= was) return [FAIL, `prints "toward you" but ${m.id} went from ${Math.round(was)}mm to ${Math.round(now)}mm from your mage`];
+        if (claim.way === 'out' && now <= was) return [FAIL, `prints "away from you" but ${m.id} went from ${Math.round(was)}mm to ${Math.round(now)}mm from your mage`];
       }
       return [PASS, ''];
     }
@@ -694,6 +718,17 @@ function judge(st, run, claim) {
  * decoration.
  */
 const FAULTS = [
+  {
+    name: 'pulls the wrong way',
+    apply: (defs) => mutate(defs, 'METEOR_CALL', 'II', (f) => ({
+      ...f,
+      *effect(ctx) {
+        // Printed "to you"; shoved away instead.
+        const ids = ctx.propsInRange(4000, { pushableOnly: true });
+        if (ids.length) ctx.shoveAway(ids[0], 3);
+      },
+    })),
+  },
   {
     name: 'ignores its range',
     apply: (defs) => mutate(defs, 'EMBER_LASH', 'I', (f) => ({

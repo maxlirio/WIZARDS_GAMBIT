@@ -558,6 +558,7 @@ function narrate(f) {
     case 'damage': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">${f.amount} damage</span> to ${esc(unitName(f.id))}${f.cause && f.cause !== 'spell' ? ` (${esc(f.cause)})` : ''}`;
     case 'carry': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} rides the ${esc(propName(f.on))} ${m(f.mm)}`;
     case 'scraped': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is scraped off the ${esc(propName(f.off))}`;
+    case 'noOrigin': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="dim">nothing to pull toward or push from: ${f.p === HUMAN ? 'your' : HUMAN === null ? pName(f.p) + "'s" : 'the enemy'} mage is down</span>`;
     case 'push': {
       const force = f.force ? ` with force ${f.force}` : '';
       return f.body === 'unit' ? `&nbsp;&nbsp;&nbsp;&nbsp;pushes ${esc(unitName(f.id))} ${m(f.mm)}${force}` : `&nbsp;&nbsp;&nbsp;&nbsp;shoves a ${esc(propName(f.id))} ${m(f.mm)}${force}`;

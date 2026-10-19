@@ -434,6 +434,10 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
   mass *m* slides `force × 0.75m / m`: a mage (mass 1) the whole way, a boulder half,
   a standing stone a quarter, a wall a sixth. Golem units weigh their tier: A 3, B 2,
   C 1.
+- **Pulled:** "toward you" / "to you" means toward your living mage (or, with the
+  mage down, your nearest range origin; with neither, nothing happens). A pull comes
+  to rest **at your feet**: its travel is capped at the gap between the two bodies,
+  so a pulled rock never slams into you.
 - **Impacts:** when a slide is stopped early, what is left of it is energy — mass ×
   remaining travel — and **both** the moving body and whatever stopped it take
   `energy / 1.5m` damage. Heavier things hit harder; things stopped sooner hit harder.
