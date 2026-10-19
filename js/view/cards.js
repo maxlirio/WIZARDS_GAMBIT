@@ -218,13 +218,20 @@ function centreMarkup(def, rot, kws, ink) {
     });
     const next = def.faces[(rot + 1) & 3];
     if (next) {
-      const yh = y0 + lines.length * step + 14;
-      const nl = wrap(next.text, 29, kws.length ? 2 : 3);
-      centre += `<g class="nxh" fill="none" stroke="${ink}" stroke-width="7" stroke-linecap="round" opacity=".85">
-        <path d="M ${330} ${yh - 6} a 22 22 0 1 1 22 20"/><path d="M ${330 - 14} ${yh - 18} L ${330} ${yh - 6} L ${330 + 10} ${yh - 22}"/></g>
-        <text x="372" y="${yh + 6}" class="nxl" fill="${ink}">next · ${next.numeral}</text>`;
+      // A rule, then one small centred row -- a rotate-left glyph and
+      // "next · N" -- then the next face's text, dim and smaller so the
+      // current face stays the thing you read first.
+      const yd = y0 + lines.length * step - 22;          // the rule
+      const yh = yd + 34;                                 // the row's centre line
+      const nl = wrap(next.text, 30, kws.length ? 2 : 3);
+      const cx = 412, r = 13;
+      centre += `<line x1="330" y1="${yd}" x2="670" y2="${yd}" stroke="${ink}" stroke-width="3" opacity=".35"/>
+        <g fill="none" stroke="${ink}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".8">
+          <path d="M ${cx} ${yh - r} A ${r} ${r} 0 1 0 ${cx + r} ${yh}"/>
+          <path d="M ${cx + 7} ${yh - r - 8} L ${cx - 8} ${yh - r} L ${cx + 7} ${yh - r + 8}" fill="${ink}" stroke="none"/></g>
+        <text x="${cx + 26}" y="${yh + 10}" class="nxl" fill="${ink}">next · ${next.numeral}</text>`;
       nl.forEach((l, i) => {
-        centre += `<text x="500" y="${yh + 50 + i * 46}" text-anchor="middle" class="ctr nxt">${esc(l)}</text>`;
+        centre += `<text x="500" y="${yh + 54 + i * 42}" text-anchor="middle" class="ctr nxt">${esc(l)}</text>`;
       });
     }
   }

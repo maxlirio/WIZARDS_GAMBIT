@@ -134,8 +134,8 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .ctr { font: 600 58px 'Cormorant Garamond', serif; fill: #f4ead2; }
 .ctr.dim { fill: #b9ad94; font-size: 48px; }
 .ctr.now { font-size: 52px; }
-.ctr.nxt { fill: #c4b89f; font-size: 44px; font-weight: 500; }
-.nxl { font: 700 30px Inter, sans-serif; letter-spacing: .08em; text-transform: uppercase; opacity: .85; }
+.ctr.nxt { fill: #a69b84; font-size: 38px; font-weight: 500; }
+.nxl { font: 700 26px Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; opacity: .8; }
 .ckw { font: 600 42px Inter, sans-serif; fill: #d9b2ff; }
 .active-edge { filter: drop-shadow(0 0 12px currentColor); }
 
