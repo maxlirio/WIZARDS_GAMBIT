@@ -28,7 +28,7 @@ import { walk, placeBody, resolveFalls, recheckSupport } from '../field/move.js'
 import { moveDirs, summonPoints, trialWalk, dirLabel } from '../field/candidates.js';
 
 /** The mage's statline. One place, so a balance pass is one edit. */
-export const MAGE = Object.freeze({ hp: 5, move: 2500, atk: 2, reach: 900 });
+export const MAGE = Object.freeze({ hp: 5, move: 3000, atk: 2, reach: 900 });
 
 /**
  * A mage's life is 5 plus whatever ACTIVE passives add (derive.js mageLife).

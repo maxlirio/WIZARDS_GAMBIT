@@ -78,6 +78,7 @@ for (const path of walk(join(ROOT, 'js')).sort()) {
 // yet by deliberate choice.
 
 const PUBLIC = new Set([
+  'mageClipList',           // tools/lab/mage.html
   // js/engine.js -- what a view or a netcode layer imports.
   'createGame', 'legalActions', 'apply', 'choose', 'hashState', 'cloneState',
   'hashField', 'pump', 'spellActions', 'resolveDescriptor', 'actions',

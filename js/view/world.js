@@ -17,6 +17,7 @@
 
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { heightAt } from '../field/arena.js';
 import { pickLod, meshParts } from './assets.js';
 
@@ -172,19 +173,22 @@ function groundColor(L, arena, x, z, y, slope, out) {
  * further out and coarser still toward the horizon, with no seams because
  * every row and column runs the whole way.
  */
-function buildTerrain(L, arena, { extent = 96, fine = 0.25, coarse = 1.0, far = 3.0, farFrom = 36 } = {}) {
+function buildTerrain(L, arena, { extent = 96, fine = 0.25, mid = 0.75, coarse = 2.0, far = 6.0, fineTo = 2, midTo = 12, farFrom = 36 } = {}) {
   const W = L.W, H = L.H;
-  const axis = (lo, hi, fLo, fHi, cLo, cHi) => {
+  // Four zones out from the ward, symmetric: the ward and its apron sampled
+  // at `fine` (the engine's heightfield is bilinear over 0.5m nodes, so this
+  // keeps every ramp and cliff edge exact), the blended margin at `mid`, the
+  // rolling ground at `coarse`, the ridges at `far`. Every row and column
+  // still runs the whole way, so there are no seams, only long triangles.
+  const axis = (lo, hi) => {
+    const b = [lo - extent, lo - farFrom, lo - midTo, lo - fineTo, hi + fineTo, hi + midTo, hi + farFrom, hi + extent];
+    const steps = [far, coarse, mid, fine, mid, coarse, far];
     const xs = [];
-    for (let v = lo; v < cLo; v += far) xs.push(v);
-    for (let v = cLo; v < fLo; v += coarse) xs.push(v);
-    for (let v = fLo; v < fHi; v += fine) xs.push(v);
-    for (let v = fHi; v < cHi; v += coarse) xs.push(v);
-    for (let v = cHi; v <= hi + 1e-6; v += far) xs.push(v);
+    for (let z = 0; z < steps.length; z++) for (let v = b[z]; v < b[z + 1] - 1e-6; v += steps[z]) xs.push(v);
+    xs.push(hi + extent);
     return xs;
   };
-  const xs = axis(-extent, W + extent, -9, W + 9, -farFrom, W + farFrom);
-  const zs = axis(-extent, H + extent, -9, H + 9, -farFrom, H + farFrom);
+  const xs = axis(0, W), zs = axis(0, H);
   const nx = xs.length, nz = zs.length;
   const pos = new Float32Array(nx * nz * 3);
   const col = new Float32Array(nx * nz * 3);
@@ -406,7 +410,9 @@ function bladeTexture() {
  * the fight is.
  */
 function buildGrass(L, arena, seed, count) {
-  const geo = new THREE.PlaneGeometry(0.62, 0.55, 1, 2);
+  // One segment per card: the sway shears the tips, which at the game
+  // camera's distance reads the same as a bend for a third of the triangles.
+  const geo = new THREE.PlaneGeometry(0.62, 0.55, 1, 1);
   geo.translate(0, 0.275, 0);
   const g2 = geo.clone().rotateY(Math.PI / 3);
   const g3 = geo.clone().rotateY(-Math.PI / 3);
@@ -441,15 +447,18 @@ function buildGrass(L, arena, seed, count) {
   const W = L.W, H = L.H;
   const out = { c: new THREE.Color(), wet: 0 };
   for (let tries = 0; tries < count * 6 && n < count; tries++) {
-    // Radial falloff around the arena centre.
+    // Radial falloff around the arena centre: dense round the ward, thinning
+    // with distance, none past the clearing where a blade is a pixel.
     const ang = rnd() * Math.PI * 2;
-    const r = Math.pow(rnd(), 0.75) * 34;
+    const r = Math.pow(rnd(), 0.95) * 26;
     const x = W / 2 + Math.cos(ang) * r * 1.2, z = H / 2 + Math.sin(ang) * r;
+    const o = L.outside(x, z);
+    if (o > 18) continue;
+    if (o > 8 && rnd() < (o - 8) / 12) continue;
     const y = L.height(x, z);
     const slope = Math.abs(L.height(x + 0.3, z) - L.height(x - 0.3, z)) + Math.abs(L.height(x, z + 0.3) - L.height(x, z - 0.3));
     if (slope > 0.42) continue;
     if (arena.spawns.some((sp) => Math.hypot(x - sp.x * MM, z - sp.y * MM) < sp.r * MM + 0.5)) continue;
-    const o = L.outside(x, z);
     const inside = o <= 0;
     // Nothing over the ward line itself: the groove stays visible.
     const edge = inside ? Math.min(x, W - x, z, H - z) : o;
@@ -539,15 +548,18 @@ function buildForest(L, arena, seed, gltfs, { trees = 140, bushes = 90, rocks = 
     return out;
   };
 
-  // The home camera sits behind the x<0 edge, ~8m up, looking across the
-  // middle of the arena: that side gets a deeper clearing, and nothing taller
-  // than knee height stands in the corridor it looks down.
+  // A home camera sits behind EACH short end (x<0 for seat 0, x>W for seat
+  // 1), ~10m up, looking across the middle of the arena: both those sides get
+  // a deeper clearing, and nothing taller than knee height stands in the
+  // corridor either camera looks down. The long sides keep the close ring.
   const corridor = (x, z) => (x < 0 || x > W) && Math.abs(z - H / 2) < 2.4;
-  const clearance = (x, z, o) => o >= (x < 0 ? 9 : 6) && !(corridor(x, z) && o < 14);
+  const clearance = (x, z, o) => o >= ((x < 0 || x > W) ? 9 : 6) && !(corridor(x, z) && o < 14);
   // Trees: clustered by noise so there are stands and glades, not a wall;
-  // denser out on the slopes, sparse on the ridges.
+  // denser out on the slopes, sparse on the ridges (and half as many out
+  // there: at that range in the haze a stand reads as a stand with half the
+  // trunks).
   const treeSpots = place(trees, 6, 72, 4.6, (x, z, o) =>
-    clearance(x, z, o) && (noise.fbm(x * 0.07 + 3, z * 0.07 + 7, 3) > 0.5 || rnd() < 0.05));
+    clearance(x, z, o) && (o < 42 || rnd() < 0.5) && (noise.fbm(x * 0.07 + 3, z * 0.07 + 7, 3) > 0.5 || rnd() < 0.05));
   for (const t of treeSpots) t.scale = 0.45 + rnd() * 0.35;
   // Dead trees: a few, never on the far ridges where their bare cards read as shards.
   const dead = treeSpots.filter((t) => t.o < 40 && noise.v(t.x * 0.3, t.z * 0.3) > 0.8);
@@ -557,9 +569,13 @@ function buildForest(L, arena, seed, gltfs, { trees = 140, bushes = 90, rocks = 
   const rockSpots = place(rocks, 2.2, 50, 1.2, (x, z, o) => (o < 6 ? rnd() < 0.6 : noise.fbm(x * 0.12 + 11, z * 0.12 + 4, 2) > 0.45) && !(corridor(x, z) && o < 14));
   for (const r of rockSpots) r.scale = 0.3 + Math.pow(rnd(), 1.8) * 0.9;
 
-  const instance = (gltf, lod, spots, { sink = 0.05, shadow = true, kind = 'tree', tint = null } = {}) => {
+  // Past 30m a tree is its canopy: the leaf cards of LOD2 over a six-sided
+  // trunk made here (12 triangles) instead of the bake's 600-triangle one.
+  const farTrunk = { geometry: new THREE.CylinderGeometry(0.28, 0.55, 4.6, 6, 1, false).translate(0, 2.3, 0), material: new THREE.MeshStandardMaterial({ color: 0x3e3127, roughness: 1 }), matrix: new THREE.Matrix4() };
+  const instance = (gltf, lod, spots, { sink = 0.05, shadow = true, kind = 'tree', tint = null, canopyOnly = false } = {}) => {
     if (!spots.length) return;
-    const parts = meshParts(pickLod(gltf, lod));
+    let parts = meshParts(pickLod(gltf, lod));
+    if (canopyOnly) parts = [...parts.filter((p) => /leaves|cards/.test(p.material.name)), farTrunk];
     if (tint) for (const part of parts) { part.material = part.material.clone(); part.material.color.multiplyScalar(tint); part.material.roughness = 1; }
     const m = new THREE.Matrix4(), base = new THREE.Matrix4(), s = new THREE.Vector3();
     for (const part of parts) {
@@ -571,6 +587,10 @@ function buildForest(L, arena, seed, gltfs, { trees = 140, bushes = 90, rocks = 
         inst.setMatrixAt(i, m);
       });
       inst.instanceMatrix.needsUpdate = true;
+      // Bounds from the instances (not the bake at the origin), so the
+      // renderer and the shadow pass can cull a stand that is out of frame
+      // without ever dropping one that is in it.
+      inst.computeBoundingSphere();
       inst.castShadow = shadow;
       inst.receiveShadow = true;
       inst.userData.kind = kind;
@@ -579,26 +599,33 @@ function buildForest(L, arena, seed, gltfs, { trees = 140, bushes = 90, rocks = 
       group.add(inst);
     }
   };
-  const near = (t) => t.o < 15, mid = (t) => t.o >= 15 && t.o < 42, farr = (t) => t.o >= 42;
-  const lodNear = quality === 'low' ? 1 : 0, lodMid = quality === 'low' ? 2 : 1;
+  // Levels of detail by distance from the ward. The nearest tree is 6-9m off
+  // the ward, 15-20m from a home camera: LOD1 (2.5k triangles) reads the same
+  // there as LOD0 (8.5k) did, so LOD0 is never used; everything past the
+  // ring is LOD2. Only the ring casts shadows: the shadow map is cropped to
+  // the ward and its apron, so nothing further could land a shadow in it.
+  const farFrom = quality === 'low' ? 15 : 30;
+  const near = (t) => t.o < 15, mid = (t) => t.o >= 15 && t.o < farFrom, farr = (t) => t.o >= farFrom;
+  const lodNear = quality === 'low' ? 2 : 1;
   instance(gltfs.alder, lodNear, live.filter(near));
-  instance(gltfs.alder, lodMid, live.filter(mid));
-  instance(gltfs.alder, 2, live.filter(farr), { shadow: false });
-  instance(gltfs.deadTree, lodNear, dead.filter(near), { tint: 0.5 });
-  instance(gltfs.deadTree, 1, dead.filter((t) => !near(t)), { tint: 0.5 });
-  instance(gltfs.bush, lodNear, bushSpots.filter((b) => b.o < 12), { kind: 'bush' });
-  instance(gltfs.bush, 2, bushSpots.filter((b) => b.o >= 12), { kind: 'bush', shadow: false });
+  instance(gltfs.alder, 2, live.filter(mid), { shadow: false });
+  instance(gltfs.alder, 2, live.filter(farr), { shadow: false, canopyOnly: true });
+  // Dead trees (a handful), bushes and rocks: one group each, one level of
+  // detail, so each is one draw call. The bushes and rocks are small enough
+  // that LOD2 reads the same at 15m as at 60m; the dead trees are their
+  // branches, so they keep LOD1.
+  instance(gltfs.deadTree, 1, dead, { tint: 0.5 });
+  // Bushes cast no shadow: knee-high, 3m+ off the ward, their shadows are
+  // under themselves; the rocks' are not, so the rocks do.
+  instance(gltfs.bush, 2, bushSpots, { kind: 'bush', shadow: false });
   // Rocks: the three boulders by turns, sunk into the ground and tilted.
   const bs = [gltfs.boulderA, gltfs.boulderB, gltfs.boulderC].filter(Boolean);
   if (bs.length) {
     for (const r of rockSpots) r.tilt = (rnd() - 0.5) * 0.5;
-    bs.forEach((b, i) => {
-      const mine = rockSpots.filter((_, k) => k % bs.length === i);
-      instance(b, 1, mine.filter((r) => r.o < 20), { sink: 0.3, kind: 'rock', tint: 0.62 });
-      instance(b, 2, mine.filter((r) => r.o >= 20), { sink: 0.3, kind: 'rock', shadow: false, tint: 0.62 });
-    });
+    bs.forEach((b, i) => instance(b, 2, rockSpots.filter((_, k) => k % bs.length === i), { sink: 0.3, kind: 'rock', tint: 0.62 }));
   }
   group.userData.tris = tris;
+  group.userData.counts = { near: live.filter(near).length, mid: live.filter(mid).length, far: live.filter(farr).length, dead: dead.length, bushes: bushSpots.length, rocks: rockSpots.length };
   group.userData.spots = { trees: treeSpots, bushes: bushSpots, rocks: rockSpots };
   return group;
 }
@@ -623,6 +650,9 @@ function buildRuins(L, seed, stoneMat) {
       if (!best || score > best.score) best = { x, z, y, score };
     }
   }
+  // Every stone goes into ONE geometry: they share the granite, and the ruin
+  // is one draw call (plus one in the shadow pass) instead of sixteen.
+  const geos = [];
   const R = 4.2, n = 9;
   for (let i = 0; i < n; i++) {
     if (rnd() < 0.2) continue;                       // a gap in the ring
@@ -634,27 +664,37 @@ function buildRuins(L, seed, stoneMat) {
     st.rotation.y = a + Math.PI / 2;
     if (rnd() < 0.3) { st.rotation.z = (rnd() < 0.5 ? 1 : -1) * (1.25 + rnd() * 0.3); st.position.y += 0.15; }   // fallen
     else st.rotation.z = (rnd() - 0.5) * 0.16;
-    g.add(st);
+    geos.push(bakeTransform(st));
   }
   // Two lintels' worth of rubble at the centre.
   for (let i = 0; i < 4; i++) {
     const st = menhir(1.2 + rnd() * 0.8, 0.28, stoneMat, 300 + i);
     st.position.set(best.x + (rnd() - 0.5) * 2.5, best.y - 0.1, best.z + (rnd() - 0.5) * 2.5);
     st.rotation.set(1.45 + (rnd() - 0.5) * 0.3, rnd() * 6.28, 0);
-    g.add(st);
+    geos.push(bakeTransform(st));
   }
   // Lone stones nearer in, leaning, like markers on an old road.
   for (let i = 0; i < 3; i++) {
     const a = rnd() * Math.PI * 2, r = 12 + rnd() * 10;
     const x = W / 2 + Math.cos(a) * r * 1.15, z = H / 2 + Math.sin(a) * r;
-    if (L.outside(x, z) < 5 || Math.abs(z - H / 2) < 2.6) continue;   // never in the camera's corridor
+    if (L.outside(x, z) < 5 || Math.abs(z - H / 2) < 2.6) continue;   // never in either camera's corridor
     const st = menhir(1.6 + rnd() * 1.2, 0.26, stoneMat, 400 + i);
     st.position.set(x, L.height(x, z) - 0.15, z);
     st.rotation.set(0, rnd() * 6.28, (rnd() - 0.5) * 0.3);
-    g.add(st);
+    geos.push(bakeTransform(st));
   }
+  const m = new THREE.Mesh(mergeGeometries(geos), stoneMat);
+  m.castShadow = true; m.receiveShadow = true;
+  g.add(m);
   g.userData.at = best;
   return g;
+}
+
+/** A mesh's geometry with its local transform (and its parent chain's) baked in, for merging. */
+function bakeTransform(mesh, parent = null) {
+  mesh.updateMatrix();
+  const m = parent ? parent.matrix.clone().multiply(mesh.matrix) : mesh.matrix;
+  return mesh.geometry.applyMatrix4(m);
 }
 
 /* ------------------------------------------------------------ the ward */
@@ -772,7 +812,13 @@ function buildWard(L, arena, stoneMat) {
   // looks at the fight, and a warm light at the foot of each.
   // The short sides get a PAIR of stones flanking the midpoint, a gateway the
   // home camera looks through, rather than one stone on its axis.
+  // All ten stones are one mesh, their rune faces one mesh over one atlas,
+  // the scorch patches one, the foot-glow one: four draw calls, not forty.
+  // The foot-light used to be a point light each; a warm additive pool on
+  // the ground under the stone gives the same glow for free.
   const stones = [[0, 0], [W, 0], [W, H], [0, H], [W / 2, 0], [W / 2, H], [0, H / 2 - 2.2], [0, H / 2 + 2.2], [W, H / 2 - 2.2], [W, H / 2 + 2.2]];
+  const stoneGeos = [], runeGeos = [], scorchGeos = [], glowGeos = [];
+  const atlas = stoneRuneAtlas();
   stones.forEach(([x, z], i) => {
     const big = i < 4;
     const h = big ? 2.7 : 1.9, r = big ? 0.34 : 0.25;
@@ -783,26 +829,59 @@ function buildWard(L, arena, stoneMat) {
     stone.rotation.y = Math.atan2(W / 2 - sx, H / 2 - sz);
     stone.rotation.z = (i % 2 ? 1 : -1) * 0.05;
     stone.rotation.x = 0.04;
-    const runeFaceMat = new THREE.MeshBasicMaterial({ map: stoneRuneTexture(i), alphaMap: stoneRuneTexture(i), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-    runeFaceMat.color.setRGB(1.3, 0.85, 0.4);
-    const rune = new THREE.Mesh(new THREE.PlaneGeometry(r * 1.3, r * 1.3), runeFaceMat);
+    stone.updateMatrix();
+    const rune = new THREE.Mesh(new THREE.PlaneGeometry(r * 1.3, r * 1.3));
     rune.position.set(0, h * 0.62, r * 0.88);
-    stone.add(rune);
-    stone.userData.rune = runeFaceMat;
-    // A foot-light: cheap, no shadow.
-    const l = new THREE.PointLight(0xffa552, big ? 2.2 : 1.1, 4.5, 2);
-    l.position.set(0, 0.5, 0.7);
-    stone.add(l);
-    // A patch of scorched ground under it.
-    const scorch = new THREE.Mesh(new THREE.CircleGeometry(r * 2.6, 14), new THREE.MeshBasicMaterial({ color: 0x0a0806, transparent: true, opacity: 0.5, depthWrite: false, map: scorchTexture() }));
+    // This stone's glyph: one cell of the atlas.
+    const uv = rune.geometry.attributes.uv, cell = i % atlas.cells;
+    for (let k = 0; k < uv.count; k++) uv.setX(k, (cell + uv.getX(k)) / atlas.cells);
+    runeGeos.push(bakeTransform(rune, stone));
+    stoneGeos.push(bakeTransform(stone));
+    // A patch of scorched ground under it, and the pool of warm light.
+    const y0 = L.height(sx, sz);
+    const scorch = new THREE.Mesh(new THREE.CircleGeometry(r * 2.6, 14));
     scorch.rotation.x = -Math.PI / 2;
-    scorch.position.set(sx, L.height(sx, sz) + 0.015, sz);
-    scorch.renderOrder = 1;
-    g.add(scorch);
-    g.add(stone);
+    scorch.position.set(sx, y0 + 0.015, sz);
+    scorchGeos.push(bakeTransform(scorch));
+    const glow = new THREE.Mesh(new THREE.CircleGeometry(big ? 2.2 : 1.6, 16));
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.set(sx + dx * 0.15, y0 + 0.025, sz + dz * 0.15);
+    glowGeos.push(bakeTransform(glow));
   });
+  const stoneMesh = new THREE.Mesh(mergeGeometries(stoneGeos), stoneMat);
+  stoneMesh.castShadow = true; stoneMesh.receiveShadow = true;
+  g.add(stoneMesh);
+  const runeFaceMat = new THREE.MeshBasicMaterial({ map: atlas.tex, alphaMap: atlas.tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  runeFaceMat.color.setRGB(1.3, 0.85, 0.4);
+  const runeMesh = new THREE.Mesh(mergeGeometries(runeGeos), runeFaceMat);
+  runeMesh.renderOrder = 2;
+  g.add(runeMesh);
+  const scorchMesh = new THREE.Mesh(mergeGeometries(scorchGeos), new THREE.MeshBasicMaterial({ color: 0x0a0806, transparent: true, opacity: 0.5, depthWrite: false, map: scorchTexture() }));
+  scorchMesh.renderOrder = 1;
+  g.add(scorchMesh);
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xff9a40, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending, map: scorchTexture() });
+  const glowMesh = new THREE.Mesh(mergeGeometries(glowGeos), glowMat);
+  glowMesh.renderOrder = 2;
+  g.add(glowMesh);
+  g.userData.footGlow = glowMat;
   g.userData.stones = stones.length;
   return g;
+}
+
+/** The ten stones' glyphs side by side in one strip, so their faces share one material. */
+let _runeAtlas = null;
+function stoneRuneAtlas() {
+  if (_runeAtlas) return _runeAtlas;
+  const cells = 8;
+  const cv = document.createElement('canvas');
+  cv.width = 128 * cells; cv.height = 128;
+  const g = cv.getContext('2d');
+  g.clearRect(0, 0, cv.width, 128);
+  for (let k = 0; k < cells; k++) g.drawImage(stoneRuneTexture(k).image, k * 128, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  _runeAtlas = { tex, cells };
+  return _runeAtlas;
 }
 
 let _halo = null;
@@ -933,10 +1012,14 @@ export function buildWorld(scene, renderer, arena, seed, gltfs, { quality = 'hig
   sun.position.copy(sunDir).multiplyScalar(70).add(new THREE.Vector3(W / 2, 0, H / 2));
   sun.target.position.set(W / 2, 0, H / 2);
   sun.castShadow = true;
-  const sm = quality === 'low' ? 1024 : quality === 'medium' ? 2048 : 4096;
+  const sm = quality === 'low' ? 1024 : quality === 'medium' ? 1024 : 2048;
   sun.shadow.mapSize.set(sm, sm);
-  // Tight on the arena and the ring of trees that shade it.
-  const sx = quality === 'low' ? 15 : 21;
+  // Cropped to the ward and its apron: that is where the fight is and where
+  // the shadows are looked at. The ring of trees that shade it still casts
+  // into it (the shadow camera's depth covers them); nothing past the ring
+  // casts at all, so the shadow pass draws a few thousand triangles, not the
+  // whole forest again.
+  const sx = quality === 'low' ? Math.max(W, H) * 0.6 : Math.max(W, H) * 0.5 + 6;
   Object.assign(sun.shadow.camera, { left: -sx, right: sx, top: sx * 0.85, bottom: -sx * 0.85, near: 20, far: 140 });
   sun.shadow.bias = -0.0003;
   sun.shadow.normalBias = 0.025;
@@ -947,10 +1030,12 @@ export function buildWorld(scene, renderer, arena, seed, gltfs, { quality = 'hig
   scene.add(hemi);
   scene.add(new THREE.AmbientLight(0x4a4a52, 0.25));
 
-  const terrain = buildTerrain(L, arena, { fine: 0.25, coarse: quality === 'low' ? 2 : 1, far: quality === 'low' ? 6 : 3 });
+  const terrain = buildTerrain(L, arena, quality === 'low'
+    ? { fine: 0.5, mid: 1.5, coarse: 3, far: 8 }
+    : quality === 'medium' ? { fine: 0.25, mid: 1.0, coarse: 2.5, far: 8 } : { fine: 0.25, mid: 0.75, coarse: 2, far: 6 });
   scene.add(terrain);
 
-  const grass = buildGrass(L, arena, seed, Math.round(30000 * q));
+  const grass = buildGrass(L, arena, seed, quality === 'low' ? 1800 : quality === 'medium' ? 5000 : 8500);
   scene.add(grass);
 
   const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8c8780, map: stoneTexture(), roughness: 0.86, metalness: 0.02, flatShading: true });
@@ -963,23 +1048,10 @@ export function buildWorld(scene, renderer, arena, seed, gltfs, { quality = 'hig
   const ruins = buildRuins(L, seed, stoneMat);
   scene.add(ruins);
 
-  // Drifting clouds, high and far, above the ridges, outside the fog.
-  const clouds = new THREE.Group();
-  const cloudTexs = [cloudTexture(99), cloudTexture(173), cloudTexture(241)];
-  const cr = stream(seed ^ 0x1f123bb5);
-  for (let i = 0; i < 14; i++) {
-    const mat = new THREE.SpriteMaterial({ map: cloudTexs[i % 3], transparent: true, opacity: 0.5 + cr() * 0.3, depthWrite: false, fog: false, color: 0xe8ddd2 });
-    const sp = new THREE.Sprite(mat);
-    const ang = (i / 14) * Math.PI * 2 + cr() * 0.4, r = 120 + cr() * 90;
-    sp.position.set(W / 2 + Math.cos(ang) * r, 34 + cr() * 26 + r * 0.12, H / 2 + Math.sin(ang) * r);
-    const s = 50 + cr() * 60;
-    sp.scale.set(s, s * 0.375, 1);
-    sp.userData.speed = 0.25 + cr() * 0.35;
-    clouds.add(sp);
-  }
+  const clouds = buildClouds(W, H, seed);
   scene.add(clouds);
 
-  const stats = () => ({ terrain: terrain.userData.tris, grass: grass.userData.tris, forest: forest.userData.tris });
+  const stats = () => ({ terrain: terrain.userData.tris, grass: grass.userData.tris, forest: forest.userData.tris, counts: forest.userData.counts });
 
   return {
     L, terrain, grass, ward, forest, ruins, sun, sky, clouds, stoneMat, stats,
@@ -991,7 +1063,78 @@ export function buildWorld(scene, renderer, arena, seed, gltfs, { quality = 'hig
       ward.userData.band.opacity = 0.14 + pulse * 0.12;
       ward.userData.runes.color.setRGB(1.05 + pulse * 0.45, 0.68 + pulse * 0.28, 0.3 + pulse * 0.1);
       ward.userData.runes.map.offset.x = (now / 1000) * 0.012;
-      for (const c of clouds.children) { c.position.x += dt * c.userData.speed; if (c.position.x > W / 2 + 230) c.position.x = W / 2 - 230; }
+      ward.userData.footGlow.opacity = 0.2 + pulse * 0.06;
+      clouds.material.uniforms.uTime.value = now / 1000;
     },
   };
+}
+
+/**
+ * Drifting clouds, high and far, above the ridges, outside the fog: fourteen
+ * camera-facing cards in ONE mesh, drifting in the vertex shader, over one
+ * atlas of three cloud paintings. (They were fourteen sprites: fourteen
+ * draw calls and fourteen position updates a frame, for the sky.)
+ */
+function buildClouds(W, H, seed) {
+  const N = 14, ROWS = 3;
+  const atlas = document.createElement('canvas');
+  atlas.width = 512; atlas.height = 192 * ROWS;
+  const ag = atlas.getContext('2d');
+  [99, 173, 241].forEach((s, i) => ag.drawImage(cloudTexture(s).image, 0, i * 192));
+  const tex = new THREE.CanvasTexture(atlas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const cr = stream(seed ^ 0x1f123bb5);
+  const pos = new Float32Array(N * 4 * 3), corner = new Float32Array(N * 4 * 2), uv = new Float32Array(N * 4 * 2), drift = new Float32Array(N * 4 * 2), idx = [];
+  const corners = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]];
+  for (let i = 0; i < N; i++) {
+    const opacity = 0.5 + cr() * 0.3;
+    const ang = (i / N) * Math.PI * 2 + cr() * 0.4, r = 120 + cr() * 90;
+    const cx = W / 2 + Math.cos(ang) * r, cy = 34 + cr() * 26 + r * 0.12, cz = H / 2 + Math.sin(ang) * r;
+    const s = 50 + cr() * 60;
+    const speed = 0.25 + cr() * 0.35;
+    const row = i % ROWS;
+    for (let k = 0; k < 4; k++) {
+      const v = i * 4 + k;
+      pos[v * 3] = cx; pos[v * 3 + 1] = cy; pos[v * 3 + 2] = cz;
+      corner[v * 2] = corners[k][0] * s; corner[v * 2 + 1] = corners[k][1] * s * 0.375;
+      uv[v * 2] = corners[k][0] + 0.5; uv[v * 2 + 1] = (ROWS - 1 - row + corners[k][1] + 0.5) / ROWS;
+      drift[v * 2] = speed; drift[v * 2 + 1] = opacity;
+    }
+    idx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('corner', new THREE.BufferAttribute(corner, 2));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('drift', new THREE.BufferAttribute(drift, 2));
+  geo.setIndex(idx);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { map: { value: tex }, uTime: { value: 0 }, uColor: { value: new THREE.Color(0xe8ddd2) }, uWrap: { value: new THREE.Vector2(W / 2 - 230, 460) } },
+    vertexShader: `
+      attribute vec2 corner; attribute vec2 drift;
+      uniform float uTime; uniform vec2 uWrap;
+      varying vec2 vUv; varying float vOpacity;
+      void main() {
+        vUv = uv; vOpacity = drift.y;
+        vec3 p = position;
+        p.x = uWrap.x + mod(p.x - uWrap.x + drift.x * uTime, uWrap.y);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        mv.xy += corner;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform sampler2D map; uniform vec3 uColor;
+      varying vec2 vUv; varying float vOpacity;
+      void main() {
+        vec4 t = texture2D(map, vUv);
+        gl_FragColor = vec4(t.rgb * uColor, t.a * vOpacity);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    transparent: true, depthWrite: false, fog: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -1;
+  return mesh;
 }

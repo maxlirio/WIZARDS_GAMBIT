@@ -24,7 +24,7 @@ import { loadAll, pickLod } from './assets.js';
 import { buildWorld, menhir } from './world.js';
 import { createPropFactory } from './props.js';
 import { createFx } from './fx.js';
-import { makeMageActor } from './actors.js';
+import { makeMageActor } from './mage.js';
 import { makeGolemActor } from './golems.js';
 
 const MM = 1 / 1000;
@@ -39,11 +39,14 @@ export function createArena(host, state, handlers = {}) {
   const quality = handlers.quality || 'high';
 
   const renderer = new THREE.WebGLRenderer({ antialias: quality !== 'high', preserveDrawingBuffer: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(quality === 'low' ? 1 : 2, window.devicePixelRatio || 1));
+  // A Retina display at full ratio is four times the pixels of a 1x one and
+  // bloom, shadows and the sky all scale with it: 1.5 keeps the edges crisp
+  // and the frame time sane. Low quality renders at 1x.
+  renderer.setPixelRatio(Math.min(quality === 'low' ? 1 : quality === 'medium' ? 1.25 : 1.5, window.devicePixelRatio || 1));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.95;
+  renderer.toneMappingExposure = 1.18;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   host.appendChild(renderer.domElement);
   const labels = document.createElement('div');
@@ -54,7 +57,12 @@ export function createArena(host, state, handlers = {}) {
   scene.background = new THREE.Color(0x8fa6c4);
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.2, 400);
-  const HOME = { pos: new THREE.Vector3(-6.4, 10.2, H / 2 + 0.01), tgt: new THREE.Vector3(W / 2 + 0.8, 0.2, H / 2) };
+  // Seat 0 looks along +x from the west end; seat 1 is the same view from the
+  // east end, so each player sees their own mage nearest the camera.
+  const seat = handlers.seat || 0;
+  const HOME = seat === 0
+    ? { pos: new THREE.Vector3(-7.6, 11.4, H / 2 + 0.01), tgt: new THREE.Vector3(W / 2 + 0.8, 0.2, H / 2) }
+    : { pos: new THREE.Vector3(W + 7.6, 11.4, H / 2 + 0.01), tgt: new THREE.Vector3(W / 2 - 0.8, 0.2, H / 2) };
   camera.position.copy(HOME.pos);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.copy(HOME.tgt);
@@ -129,7 +137,7 @@ export function createArena(host, state, handlers = {}) {
 
   function makeUnitActor(u) {
     const actor = u.kind === 'mage'
-      ? makeMageActor(gltfs.mage, { team: TEAM[u.owner], teamDark: TEAM_DARK[u.owner] })
+      ? makeMageActor({ team: TEAM[u.owner], teamDark: TEAM_DARK[u.owner] })
       : makeGolemActor(gltfs, u.def, { team: TEAM[u.owner] });
     const base = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.37, 40),
       new THREE.MeshBasicMaterial({ color: TEAM[u.owner], transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
@@ -339,9 +347,12 @@ export function createArena(host, state, handlers = {}) {
     hit(id, amount, cause = 'spell') {
       const rec = actors.get(id);
       if (!rec) return;
-      rec.actor.hit();
+      // The body reacts to WHAT hit it: a flinch, a flail of burning robes, a
+      // stiff spasm, or being slammed flat.
+      const kind = cause === 'fire' ? 'fire' : cause === 'lightning' ? 'lightning' : cause === 'crush' || cause === 'rock' ? 'crush' : 'blow';
+      rec.actor.hit(kind);
       const p = rec.actor.root.position;
-      const col = cause === 'fire' ? 0xff7a20 : cause === 'poison' ? 0x7fe04a : cause === 'fall' || cause === 'crush' || cause === 'rock' ? 0xd9c9a8 : 0xff4040;
+      const col = cause === 'fire' ? 0xff7a20 : cause === 'lightning' ? 0xb8ecff : cause === 'poison' ? 0x7fe04a : cause === 'fall' || cause === 'crush' || cause === 'rock' ? 0xd9c9a8 : 0xff4040;
       fx.pools.sparks.emit({ x: p.x, y: p.y + rec.actor.height * 0.5, z: p.z, n: 14, spread: 0.2, vspread: 3, vy: 1.5, life: 0.5, size: 0.1, sizeEnd: 0.02, color: 0xffffff, colorEnd: col, gravity: -8 });
       floatAtUnit(id, `−${amount}`, cause === 'fire' ? 'dmg fire' : 'dmg');
       if (cause === 'fall' || cause === 'crush' || cause === 'rock') fx.shake(0.05, 0.3);
@@ -358,7 +369,7 @@ export function createArena(host, state, handlers = {}) {
       if (f && t) { f.actor.lookAt(t.x, t.z); f.actor.strike(); }
     },
     push(id, body, mm, from) {
-      if (body === 'unit') { const rec = actors.get(id); if (rec) { rec.actor.hit(); rec.pushed = true; } }
+      if (body === 'unit') { const rec = actors.get(id); if (rec) { if (rec.actor.shove) rec.actor.shove(); else rec.actor.hit(); rec.pushed = true; } }
       const p = body === 'unit' ? unitPos(id) : propMeshes.get(id)?.position.clone();
       if (p) fx.dust(p.x, p.y, p.z, { n: 14, size: 0.45 });
     },
@@ -401,7 +412,7 @@ export function createArena(host, state, handlers = {}) {
         fx.ring(B.x, B.y, B.z, 2.2, 0xd9c9a8, { dur: 0.5, width: 0.15 });
         fx.shake(0.14, 0.45);
         const rec = actors.get(ontoId);
-        if (rec) rec.actor.hit();
+        if (rec) rec.actor.hit('crush');
       });
     },
     swap(aId, bId) {
@@ -643,10 +654,12 @@ export function createArena(host, state, handlers = {}) {
       } else { actor.moving = false; rec.pushed = false; }
       const dy = tgt.y - pos.y;
       if (dy < -0.35 && !rec.airborne) {
-        // A drop: gravity, then a thump.
+        // A drop: gravity, then a thump. A body going over a real edge
+        // flails on the way down and picks itself up at the bottom.
+        if (!rec.falling) { rec.falling = true; if (dy < -0.9 && actor.tumble) actor.tumble(Math.sqrt(2 * -dy / 9.8)); }
         rec.vy -= 9.8 * dt;
         pos.y = Math.max(tgt.y, pos.y + rec.vy * dt);
-        if (pos.y <= tgt.y + 0.001) { pos.y = tgt.y; if (rec.vy < -3) { fx.dust(pos.x, pos.y, pos.z, { n: 22, size: 0.6 }); fx.shake(0.04, 0.25); } rec.vy = 0; }
+        if (pos.y <= tgt.y + 0.001) { pos.y = tgt.y; if (rec.vy < -3) { fx.dust(pos.x, pos.y, pos.z, { n: 22, size: 0.6 }); fx.shake(0.04, 0.25); } rec.vy = 0; rec.falling = false; }
       } else if (!rec.airborne) {
         rec.vy = 0;
         pos.y += dy * Math.min(1, dt * 10);

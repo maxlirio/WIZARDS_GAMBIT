@@ -40,7 +40,7 @@ import { hurt, checkGolemAttrition } from './rules/combat.js';
 import { fireFor } from './rules/keywords.js';
 import { unitTargets } from './field/candidates.js';
 import { findUnit } from './field/query.js';
-import { TIER_CAP, SLOTS } from './rules/golems.js';
+import { TIER_CAP, SLOTS, slotForTier } from './rules/golems.js';
 import { beginTurn, endTurn } from './rules/turn.js';
 import { makeMage, unitActions, doUnitAction, pendingUnits, canMoveTo, settleMageLife } from './rules/units.js';
 import { seedRng, save as saveRng, shuffle } from './rules/rng.js';
@@ -188,10 +188,11 @@ export function spellActions(state, p) {
   for (const c of [...pl.hand].sort((a, b) => a.uid - b.uid)) {
     const def = defOf(state, c);
     if (def.kind === 'golem') {
-      // "You can have only 1 type of each golem at a time." Checked by DEF ID
-      // across all three slots, not per slot.
-      if (pl.golems.some((g) => g && g.def === c.def)) continue;
-      for (let s = 0; s < SLOTS; s++) if (!pl.golems[s]) out.push({ type: 'play', uid: c.uid, slot: s });
+      // EACH TIER HAS ITS OWN SLOT: an A-tier card can only go in slot A. So
+      // "one of each type" needs no separate check -- a tier slot holds one
+      // card, and the slot is the only question a golem card asks.
+      const s = slotForTier(def.tier);
+      if (s >= 0 && !pl.golems[s]) out.push({ type: 'play', uid: c.uid, slot: s });
     } else {
       for (const cell of homeCells(def)) out.push({ type: 'play', uid: c.uid, cell });
     }

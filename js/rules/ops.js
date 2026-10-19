@@ -16,6 +16,7 @@
 import { CELL_COLOR, CELLS, HOME, orthoNeighbours } from './table.js';
 import { turned } from './orient.js';
 import { shuffle } from './rng.js';
+import { SLOT_TIER } from './golems.js';
 // A real cycle: triggers must read the board, and the board may only be read
 // through ops. Both sides only call each other from inside function bodies, and
 // `export function` is hoisted, so the cycle resolves. Do not move either
@@ -274,6 +275,7 @@ export function playFromHand(state, p, uid, cell) {
 export function deployGolem(state, p, uid, slot) {
   const card = extract(state, uid);
   if (!card) return null;
+  if (SLOT_TIER[slot] !== defOf(state, card).tier) throw new Error(`a ${defOf(state, card).tier}-tier golem cannot go in slot ${SLOT_TIER[slot]}`);
   card.slot = slot;
   state.players[p].golems[slot] = card;
   state.players[p].ledger.golemsPlayed++;

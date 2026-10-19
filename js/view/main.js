@@ -16,7 +16,8 @@
 // destroy; a selected unit gets one over its head with strike / summon / hold;
 // the only free-standing buttons are the turn-flow ones (skip, end turn).
 
-import { createGame, legalActions, apply, choose, cloneState } from '../engine.js';
+import { createGame, legalActions, apply, choose, cloneState, hashState } from '../engine.js';
+import { Net } from './net.js';
 import { chooseAction, answerFor } from '../ai/ai.js';
 import { CARDS, randomDeck } from '../rules/spells/index.js';
 import { defOf, topOf, stackAt, findSpell } from '../rules/ops.js';
@@ -54,16 +55,18 @@ let someChosen = [];     // a multi-select prompt's picks so far
 let matchOver = false;
 let gameId = 0;
 let timers = [];         // scheduled cues, cleared on a new match
+let NET = null;          // the connection when playing online; the other seat is a person
 
-function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool = false, policy = 'oneply' } = {}) {
+function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool = false, policy = 'oneply', seat = 0 } = {}) {
   gameId++;
   for (const t of timers) clearTimeout(t);
   timers = [];
   const rng = seedRng(seed ^ 0xdeed);
   const decks = pool ? [randomDeck(rng, pick), randomDeck(rng, pick)] : null;
   S = createGame({ seed, decks });
-  HUMAN = watch ? null : 0;
+  HUMAN = watch ? null : seat;
   POLICY = policy;
+  seatLayout();
   fxSeen = 0; sel = null; someChosen = []; matchOver = false;
   angles.clear();
   for (const p of [0, 1]) for (const el of document.querySelectorAll(`#table${p} .cell`)) el.dataset.uid = '';
@@ -75,10 +78,11 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
     isPickable: () => true,
     unitLabel: (u) => { const n = unitName(u.id); return n.charAt(0).toUpperCase() + n.slice(1); },
     quality: profile.setting('quality') || 'high',
+    seat: HUMAN ?? 0,
   });
   $('#seed').textContent = `seed ${seed} · ${S.arena.challenge}`;
-  history.replaceState(null, '', `?seed=${seed}${watch ? '&watch' : ''}${pool ? '&pool' : ''}${FAST ? '&fast' : ''}`);
-  logLine(`<b>A new duel.</b> Arena: <i>${esc(S.arena.challenge)}</i>. First to 15 VP.`, 'sys');
+  history.replaceState(null, '', NET ? `?room=${NET.code}` : `?seed=${seed}${watch ? '&watch' : ''}${pool ? '&pool' : ''}${FAST ? '&fast' : ''}`);
+  logLine(`<b>A new duel${NET ? ` in room ${esc(NET.code)}` : ''}.</b> Arena: <i>${esc(S.arena.challenge)}</i>. First to 15 VP.`, 'sys');
   flushFx();
   render();
   updateViewport();
@@ -86,7 +90,31 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   drive();
 }
 
-const whoseTurnName = (p) => (HUMAN === null ? `Player ${p + 1}` : p === HUMAN ? 'You' : 'Enemy');
+const FOE = () => (NET ? 'Opponent' : 'Enemy');
+const whoseTurnName = (p) => (HUMAN === null ? `Player ${p + 1}` : p === HUMAN ? 'You' : FOE());
+
+/**
+ * Put YOUR table in the big panel and the other player's in the small one,
+ * whichever seat you hold. Online, the guest is seat 1 and sees the match
+ * from the other end of the field.
+ */
+function seatLayout() {
+  const me = HUMAN ?? 0, them = 1 - me;
+  const mine = $('#mine'), theirs = $('#theirs');
+  // Lift the six boards out first; the headers are rebuilt and would take
+  // the boards with them otherwise.
+  const parts = {};
+  for (const p of [0, 1]) for (const kind of ['table', 'golems', 'piles']) { const el = $(`#${kind}${p}`); parts[kind + p] = el; el.remove(); }
+  mine.innerHTML = `<div class="shead p${me}">Your Spell Table <span id="mage${me}"></span></div>`;
+  theirs.innerHTML = `<div class="shead p${them}">${FOE()} Spell Table <span id="mage${them}"></span></div>`;
+  for (const [host, p, small] of [[mine, me, false], [theirs, them, true]]) {
+    for (const kind of ['table', 'golems', 'piles']) {
+      const el = parts[kind + p];
+      el.classList.toggle('small', small && kind !== 'piles');
+      host.appendChild(el);
+    }
+  }
+}
 
 /* ================================================================ driving */
 
@@ -99,6 +127,7 @@ const whoseTurnName = (p) => (HUMAN === null ? `Player ${p + 1}` : p === HUMAN ?
  */
 async function drive() {
   if (busy) return;
+  if (NET) { render(); if (S.winner !== null) endMatch(); return; }
   busy = true;
   const my = gameId;
   try {
@@ -134,7 +163,7 @@ async function drive() {
 function act(a) {
   if (busy || !a) return;
   sel = null;
-  try { apply(S, a); } catch (e) { console.error(e); toast(`The engine threw: ${e.message}`, 'bad'); }
+  try { apply(S, a); netSend({ act: a }); } catch (e) { console.error(e); toast(`The engine threw: ${e.message}`, 'bad'); }
   flushFx();
   render();
   drive();
@@ -143,10 +172,115 @@ function act(a) {
 function answer(v) {
   if (busy || !S.pending) return;
   someChosen = [];
-  try { choose(S, v); } catch (e) { console.error(e); toast(`The engine threw: ${e.message}`, 'bad'); }
+  try { choose(S, v); netSend({ answer: v }); } catch (e) { console.error(e); toast(`The engine threw: ${e.message}`, 'bad'); }
   flushFx();
   render();
   drive();
+}
+
+/* ================================================================ online */
+
+/** Every decision made here goes over the wire with the hash it produced. */
+function netSend(move) {
+  if (NET?.ready) NET.sendMove(move, hashState(S));
+}
+
+/** The other player decided something: apply it to our engine and compare. */
+function onRemoteMove(msg) {
+  if (!S || !NET) return;
+  const mv = msg.move || {};
+  try {
+    if ('act' in mv) apply(S, mv.act); else choose(S, mv.answer);
+  } catch (e) {
+    console.error(e);
+    toast(`The engine threw on your opponent's move: ${e.message}`, 'bad');
+  }
+  const mine = hashState(S);
+  if (msg.hash !== mine) {
+    toast('<b>Desync.</b> The two battlefields disagree — start a new duel from the host.', 'bad');
+    NET.reportDesync({ seq: msg.seq, mine, theirs: msg.hash });
+  }
+  flushFx();
+  render();
+  if (S.winner !== null) endMatch();
+}
+
+function leaveRoom() {
+  if (!NET) return;
+  NET.close();
+  NET = null;
+  toast('Left the room.', '');
+  $('#btn-online').textContent = 'Play online';
+}
+
+function startOnline(seed, pool) {
+  // The host picks the seed; both sides build the same game from it and the
+  // decks fall out of the seed too, so nothing but decisions ever crosses.
+  if (NET.isHost) NET.sendSetup({ seed, pool });
+  newMatch({ seed, pool, seat: NET.isHost ? 0 : 1 });
+}
+
+function openOnline() {
+  const url = (code) => `${location.origin}${location.pathname}?room=${code}`;
+  if (NET) {
+    modal(`<h2>Room ${esc(NET.code)}</h2>
+      <p>${NET.ready ? `Connected to your opponent. ${NET.isHost ? 'You are the host: you start the duels.' : 'The host starts the duels.'}` : 'Waiting for your opponent to join…'}</p>
+      <p class="code">${esc(NET.code)}</p>
+      <p class="dim">Share the code or this link: <input class="link" readonly value="${esc(url(NET.code))}"></p>
+      <div class="mbtns">${NET.ready && NET.isHost ? '<button id="ol-new" class="primary">New duel</button>' : ''}<button id="ol-leave" class="ghost">Leave room</button><button id="close" class="ghost">Close</button></div>`);
+    $('#ol-leave').onclick = () => { leaveRoom(); closeModal(); };
+    const n = $('#ol-new'); if (n) n.onclick = () => { closeModal(); openNewGame(); };
+    $('#close').onclick = closeModal;
+    return;
+  }
+  modal(`<h2>Play online</h2>
+    <p>Two browsers, one duel. One of you hosts and reads out the four-letter room code; the other joins with it. No account, no server of ours — the two browsers talk directly.</p>
+    <div class="online-grid">
+      <div><button id="ol-host" class="primary">Host a room</button><p class="dim">You get a code to share, and you start each duel.</p></div>
+      <div><label>Room code <input id="ol-code" maxlength="4" placeholder="ABCD" autocapitalize="characters"></label><button id="ol-join">Join</button></div>
+    </div>
+    <p id="ol-msg" class="dim"></p>
+    <div class="mbtns"><button id="close" class="ghost">Cancel</button></div>`);
+  const say = (t, bad) => { const m = $('#ol-msg'); if (m) { m.innerHTML = t; m.classList.toggle('bad', !!bad); } };
+  $('#close').onclick = closeModal;
+  $('#ol-host').onclick = async () => {
+    say('Opening a room…');
+    const net = new Net();
+    try { await net.host(); } catch (e) { say(esc(e.message), true); return; }
+    bindNet(net);
+    openOnline();
+  };
+  const join = async () => {
+    const code = $('#ol-code').value.trim().toUpperCase();
+    if (code.length !== 4) { say('A room code is four letters.', true); return; }
+    say(`Joining ${esc(code)}…`);
+    const net = new Net();
+    try { await net.join(code); } catch (e) { say(esc(e.message), true); return; }
+    bindNet(net);
+    net.sendHello({ v: 1 });
+    closeModal();
+    toast(`Joined room <b>${esc(code)}</b>. Waiting for the host to start a duel.`, 'good');
+  };
+  $('#ol-join').onclick = join;
+  $('#ol-code').onkeydown = (e) => { if (e.key === 'Enter') join(); };
+  if (params.get('room')) { $('#ol-code').value = params.get('room').toUpperCase(); join(); }
+}
+
+function bindNet(net) {
+  NET = net;
+  $('#btn-online').textContent = `Room ${net.code}`;
+  net.addEventListener('move', (e) => onRemoteMove(e.detail));
+  net.addEventListener('setup', (e) => { closeModal(); startOnline(e.detail.seed, !!e.detail.pool); });
+  net.addEventListener('hello', () => {
+    // The guest is in. The host deals the first duel straight away.
+    toast('Your opponent joined. Dealing…', 'good');
+    closeModal();
+    startOnline(Math.floor(Math.random() * 1e6), params.has('pool'));
+  });
+  net.addEventListener('joined', () => { if (!net.isHost) seatLayout(); });
+  net.addEventListener('left', () => { toast('<b>Your opponent left.</b> The room is closed.', 'bad'); leaveRoom(); render(); });
+  net.addEventListener('neterror', (e) => toast(esc(e.detail.message), 'bad'));
+  net.addEventListener('desync', () => toast('<b>Desync</b> reported by your opponent — start a new duel from the host.', 'bad'));
 }
 
 const humanToMove = () => HUMAN !== null && S.winner === null && !S.pending && S.active === HUMAN && !busy;
@@ -176,7 +310,7 @@ function golemNumber(u) {
   const same = S.field.units.filter((x) => x.owner === u.owner && x.def === u.def && !x.dead).sort((a, b) => a.id - b.id);
   return same.length > 1 ? `#${same.indexOf(u) + 1}` : '';
 }
-const pName = (p) => (HUMAN === null ? `P${p + 1}` : p === HUMAN ? 'You' : 'Enemy');
+const pName = (p) => (HUMAN === null ? `P${p + 1}` : p === HUMAN ? 'You' : FOE());
 const pCls = (p) => `p${p}`;
 const propName = (id) => { const pr = S.field.props.find((x) => x.id === id); return pr ? ({ boulder: 'boulder', pillar: 'standing stone', shard: 'crystal', wall: 'wall', floater: 'floating rock', tree: 'tree' }[pr.kind] || pr.kind) : 'terrain'; };
 
@@ -228,7 +362,7 @@ function flushFx() {
         if ((cause === 'spell' || cause === 'unstable') && ctx) {
           const el = ctx.element || 'arcane';
           const big = ctx.big;
-          later(delay, () => cues().bolt(ctx.p, id, { element: el, big, onArrive: () => cues().hit(id, amount, cause) }));
+          later(delay, () => cues().bolt(ctx.p, id, { element: el, big, onArrive: () => cues().hit(id, amount, el === 'lightning' || el === 'fire' ? el : cause) }));
           t += el === 'lightning' ? 220 : 450;
         } else if (cause === 'strike') {
           later(delay + 320, () => cues().hit(id, amount, cause));
@@ -352,7 +486,7 @@ function toast(html, cls = '') {
 function banner(p) {
   const el = $('#banner');
   el.className = `banner ${pCls(p)}`;
-  el.textContent = HUMAN === null ? `Player ${p + 1}'s turn` : p === HUMAN ? 'Your turn' : "Enemy's turn";
+  el.textContent = HUMAN === null ? `Player ${p + 1}'s turn` : p === HUMAN ? 'Your turn' : `${FOE()}'s turn`;
   void el.offsetWidth;
   el.classList.add('show');
 }
@@ -453,7 +587,7 @@ function renderTable(p) {
 
   document.querySelectorAll(`#golems${p} .gslot`).forEach((el, s) => {
     const g = pl.golems[s];
-    if (!g) { el.innerHTML = `<span class="empty">slot ${'ABC'[s]}</span>`; el.dataset.uid = ''; return; }
+    if (!g) { el.innerHTML = `<span class="empty">${'ABC'[s]} slot<small>${['the giant', 'the warden', 'the swarm'][s]}</small></span>`; el.dataset.uid = ''; return; }
     const d = defOf(S, g);
     if (el.dataset.uid !== String(g.uid)) {
       el.innerHTML = `<div class="gcard">${cardSVG(d)}</div><div class="gcount"></div>`;
@@ -753,7 +887,7 @@ function renderFlow() {
   if (S.winner !== null) { el.innerHTML = `<span class="turnno">Turn <b>${S.turn}</b></span><span class="step now"><i></i><span>Match over</span></span>`; return; }
   const mine = S.active === HUMAN;
   if (!mine) {
-    el.innerHTML = `<span class="turnno">Turn <b>${S.turn}</b></span><span class="step enemy"><i></i><span>${HUMAN === null ? `Player ${S.active + 1}` : 'Enemy'}'s turn — ${S.phase === 'spell' ? 'spell action' : 'units'}</span></span>`;
+    el.innerHTML = `<span class="turnno">Turn <b>${S.turn}</b></span><span class="step enemy"><i></i><span>${HUMAN === null ? `Player ${S.active + 1}` : FOE()}'s turn — ${S.phase === 'spell' ? 'spell action' : 'units'}</span></span>`;
     return;
   }
   const steps = [
@@ -893,6 +1027,7 @@ async function endTurn() {
     const a = legalActions(S).find((x) => x.type === 'unit' && x.act === 'pass');
     if (!a) break;
     apply(S, a);
+    netSend({ act: a });
     flushFx();
   }
   sel = null;
@@ -1062,7 +1197,11 @@ function endMatch() {
     <div class="mbtns"><button id="again" class="primary">New duel</button><button id="sb">Open Spellbook</button><button id="close" class="ghost">Look at the battlefield</button></div>`), FAST ? 0 : 1800);
   const hook = () => {
     const again = $('#again'); if (!again) { setTimeout(hook, 100); return; }
-    again.onclick = () => { closeModal(); newMatch({ pool: params.has('pool'), policy: POLICY, watch: HUMAN === null }); };
+    again.onclick = () => {
+      closeModal();
+      if (NET) { if (NET.isHost) startOnline(Math.floor(Math.random() * 1e6), params.has('pool')); else toast('The host starts the next duel.', ''); return; }
+      newMatch({ pool: params.has('pool'), policy: POLICY, watch: HUMAN === null });
+    };
     $('#sb').onclick = openSpellbook;
     $('#close').onclick = closeModal;
   };
@@ -1111,19 +1250,22 @@ function openSpellbook() {
 }
 
 function openNewGame() {
-  modal(`<h2>New duel</h2>
+  if (NET && !NET.isHost) { toast('The host starts duels in an online room. Leave the room to play the AI.', ''); return; }
+  modal(`<h2>New duel${NET ? ` — room ${esc(NET.code)}` : ''}</h2>
     <label>Arena seed <input id="ng-seed" type="number" value="${Math.floor(Math.random() * 1e6)}"></label>
     <label>Opponent <select id="ng-ai"><option value="oneply">Adept (strongest)</option><option value="greedy">Apprentice</option><option value="random">Novice (random)</option></select></label>
     <label>Decks <select id="ng-deck"><option value="std">Standard ten-card deck</option><option value="pool">Random decks from all 60 cards</option></select></label>
     <label>Graphics <select id="ng-q"><option value="high">High (bloom, 4k shadows)</option><option value="medium">Medium</option><option value="low">Low (laptops)</option></select></label>
     <label class="row"><input id="ng-watch" type="checkbox"> Just watch two AIs</label>
     <div class="mbtns"><button id="ng-go" class="primary">Begin</button><button id="close" class="ghost">Cancel</button></div>`);
+  if (NET) for (const id of ['ng-ai', 'ng-watch']) $('#' + id).closest('label').hidden = true;
   $('#ng-ai').value = POLICY;
   $('#ng-q').value = profile.setting('quality') || 'high';
   $('#ng-go').onclick = () => {
     const seed = Number($('#ng-seed').value) || 1;
     profile.setting('quality', $('#ng-q').value);
     closeModal();
+    if (NET) { startOnline(seed, $('#ng-deck').value === 'pool'); return; }
     newMatch({ seed, policy: $('#ng-ai').value, pool: $('#ng-deck').value === 'pool', watch: $('#ng-watch').checked });
   };
   $('#close').onclick = closeModal;
@@ -1163,6 +1305,14 @@ window.WG = {
   state: null,
   act, answer, legal: () => legalActions(S),
   newMatch,
+  hash: () => hashState(S),
+  get net() { return NET ? { code: NET.code, isHost: NET.isHost, ready: NET.ready, seat: HUMAN } : null; },
+  /** Test hook: let the AI make this seat's next decision through the real act/answer path. */
+  auto(policy = 'greedy') {
+    if (humanToAnswer()) { answer(answerFor(S, { policy })); return 'answer'; }
+    if (humanToMove()) { const a = chooseAction(S, { policy }); if (a) { act(a); return 'act'; } }
+    return null;
+  },
   get busy() { return busy; },
   get arena() { return arena; },
 };
@@ -1173,6 +1323,7 @@ function boot() {
   $('#btn-new').onclick = openNewGame;
   $('#btn-book').onclick = openSpellbook;
   $('#btn-rules').onclick = openRules;
+  $('#btn-online').onclick = openOnline;
   $('#btn-log').onclick = () => { const w = $('#logwrap'); w.classList.toggle('collapsed'); $('#btn-log').textContent = w.classList.contains('collapsed') ? 'Expand' : 'Collapse'; $('#log').scrollTop = $('#log').scrollHeight; };
   $('#btn-hide').onclick = toggleHud;
   document.addEventListener('click', (e) => {
@@ -1189,7 +1340,8 @@ function boot() {
   window.addEventListener('resize', () => { updateViewport(); render(); });
   const seed = params.has('seed') ? Number(params.get('seed')) : undefined;
   newMatch({ seed, watch: params.has('watch'), pool: params.has('pool'), policy: params.get('ai') || 'oneply' });
-  if (!params.has('seed') && !profile.seen('rules')) openRules();
+  if (params.has('room')) openOnline();
+  else if (!params.has('seed') && !profile.seen('rules')) openRules();
 }
 
 function toggleHud() {

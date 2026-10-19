@@ -12,7 +12,7 @@ import { CELLS, CELL_COLOR, MATCH_SITES } from '../js/rules/table.js';
 import { everySpell, spellsOn, defOf } from '../js/rules/ops.js';
 import { KEYWORD_NAMES, MAX_KEYWORDS } from '../js/rules/keywords.js';
 import { LEDGER_KEYS } from '../js/rules/ledger.js';
-import { TIER_CAP, SLOTS } from '../js/rules/golems.js';
+import { TIER_CAP, SLOTS, SLOT_TIER } from '../js/rules/golems.js';
 import { REVOLUTION } from '../js/rules/ops.js';
 import { CHAIN_ASSERT } from '../js/rules/match.js';
 import { heightAt, inBounds, BODY_R } from '../js/field/arena.js';
@@ -88,6 +88,7 @@ export function invariants(state, where = '') {
       const g = pl.golems[s];
       if (!g) continue;
       if (g.slot !== s) say(`golem ${g.uid} in slot ${s} says ${g.slot}`);
+      if (defOf(state, g).tier !== SLOT_TIER[s]) say(`${defOf(state, g).tier}-tier golem ${g.def} sits in slot ${SLOT_TIER[s]}`);
       if (defsSeen.has(g.def)) say(`player ${p} has two ${g.def} golem cards`);
       defsSeen.add(g.def);
       const cap = TIER_CAP[defOf(state, g).tier];

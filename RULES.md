@@ -324,7 +324,7 @@ units pushed, kills, cards discarded, chain links, longest chain, …). The rule
 
 **5 life**, unless an active **passive** raises it (Ward Lantern II: *"Your mage has
 +2 life"*). Gaining the bonus gives that much life; losing it takes that much away,
-never below 1 — turning a card away cannot kill your own mage. Moves 2.5m, attacks
+never below 1 — turning a card away cannot kill your own mage. Moves 3m, attacks
 adjacent enemies, summons golem units adjacent to itself, and acts as a **range
 origin** for most spells.
 
@@ -351,16 +351,19 @@ the knob if objectives should lead again.
 A **golem card** occupies one of your three golem slots; its **units** stand on the
 battlefield. The card is the source, the units are the bodies.
 
-- **You may have only one of each golem type at a time** — no duplicate golem cards
-  across your slots.
-- A golem card's **tier** caps how many of its units may be on the battlefield at
-  once:
+- **Each tier has its own slot.** Slot A (beneath cell 6) holds an A-tier card,
+  slot B (cell 7) a B-tier, slot C (cell 8) a C-tier. A golem card can only be
+  played into the slot of its tier, so you field at most one of each tier — and
+  never two of the same golem.
+- The **better golems are the higher tiers**: an A-tier is a single giant with the
+  biggest statline, a C-tier is a swarm of small bodies. The tier caps how many
+  of the card's units may be on the battlefield at once:
 
-| tier | simultaneous units |
-|---|---|
-| **A** | 1 |
-| **B** | 2 |
-| **C** | 3 |
+| tier | slot | simultaneous units | what it is |
+|---|---|---|---|
+| **A** | under cell 6 | 1 | the giant: most hit points and damage |
+| **B** | under cell 7 | 2 | the warden class |
+| **C** | under cell 8 | 3 | the swarm: cheap bodies |
 
 - Your mage summons a unit of a golem card adjacent to itself during the Unit Phase,
   up to that cap.

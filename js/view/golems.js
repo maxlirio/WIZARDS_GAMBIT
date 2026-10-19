@@ -3,7 +3,7 @@
 // There is no golem model; each one is assembled from the boulder bakes (and,
 // for the Glass Sentinel, from crystal shards generated here) -- a pelvis, a
 // torso, a head, limbs on pivots -- and animated in code. The arena drives it
-// through the same actor API the mage has (see actors.js): it sets
+// through the same actor API the mage has (see mage.js): it sets
 // `root.position`, `moving` and `facingTarget`, and calls `update(dt, now)`
 // each frame. `root.rotation.y` is the facing (0 = facing +Z); the ground is
 // y = 0 of `root`; everything is in metres.
@@ -102,11 +102,17 @@ function stripSlivers(geo) {
   cleanGeo.set(geo, out);
   return out;
 }
+/**
+ * Returns {geometry, local}: the bake's (sliver-stripped) geometry and the
+ * matrix that turns it into that unit box. A golem's rocks of one bake are
+ * drawn as ONE instanced mesh, each instance = pivot's matrix * size * local.
+ */
 function rockPart(gltfs, which, variant = 0, lod = 2) {
   const key = `${which}:${variant}:${lod}`;
   if (partCache.has(key)) return partCache.get(key);
   const g = pickLod(gltfs[which], lod);
-  g.traverse((o) => { if (o.isMesh) o.geometry = stripSlivers(o.geometry); });
+  let mesh = null;
+  g.traverse((o) => { if (o.isMesh && !mesh) { o.geometry = stripSlivers(o.geometry); mesh = o; } });
   const rot = new THREE.Group();
   rot.rotation.set(...VARIANTS[variant % VARIANTS.length]);
   rot.add(g);
@@ -117,10 +123,10 @@ function rockPart(gltfs, which, variant = 0, lod = 2) {
   const holder = new THREE.Group();
   holder.add(rot);
   holder.scale.set(1 / size.x, 1 / size.y, 1 / size.z);
-  const norm = new THREE.Group();
-  norm.add(holder);
-  partCache.set(key, norm);
-  return norm;
+  holder.updateMatrixWorld(true);
+  const out = { geometry: mesh.geometry, local: mesh.matrixWorld.clone() };
+  partCache.set(key, out);
+  return out;
 }
 
 function bakeMaterial(gltfs, which) {
@@ -407,8 +413,11 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
   }
   let glassMat = null;
   if (look.glass) {
-    glassMat = new THREE.MeshPhysicalMaterial({ color: 0xd4f4ff, roughness: 0.08, metalness: 0, transmission: 0.82, thickness: 0.45, ior: 1.45, attenuationColor: new THREE.Color(0x8fdcff), attenuationDistance: 0.7, flatShading: true, emissive: 0x0b3a4e, emissiveIntensity: 0.55, envMapIntensity: 1.3 });
-    glassMat.userData.emissiveI = 0.55;
+    // No transmission (it would re-render the whole scene into a texture
+    // every frame): glass here is sky reflection, a lit heart and a little
+    // see-through.
+    glassMat = new THREE.MeshPhysicalMaterial({ color: 0x9fdcf5, roughness: 0.08, metalness: 0, transparent: true, opacity: 0.62, flatShading: true, emissive: 0x0e4a63, emissiveIntensity: 0.8, envMapIntensity: 1.6, clearcoat: 0.5, clearcoatRoughness: 0.1 });
+    glassMat.userData.emissiveI = 0.8;
     myMats.push(glassMat);
   }
   const coreColor = new THREE.Color(look.core);
@@ -419,20 +428,25 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
   myMats.push(coreMat, eyeMat);
 
   /* part makers */
+  // Every rock of one bake is an instance of one InstancedMesh under `root`;
+  // `part` is its pivot (an empty group), and each frame the pivot's matrix
+  // relative to the root is written into the instance. Twenty rocks, three
+  // draw calls (and three in the shadow pass) instead of twenty each.
+  const instanced = new Map();    // which -> [{part, pre}]
   function rock(spec, parent, extraRot) {
     const [which, size, at, variant = 0, waist = 0.5, rot = null] = spec;
     const part = new THREE.Group();
-    let inner;
     if (which === 'shard') {
-      inner = new THREE.Mesh(shardGeo(variant, waist), glassMat);
+      const inner = new THREE.Mesh(shardGeo(variant, waist), glassMat);
       inner.castShadow = true; inner.receiveShadow = true;
+      inner.scale.set(size[0], size[1], size[2]);
+      part.add(inner);
     } else {
-      inner = rockPart(gltfs, which, variant).clone(true);
-      const m = matFor(which);
-      inner.traverse((o) => { if (o.isMesh) { o.material = m; o.castShadow = true; o.receiveShadow = true; } });
+      const rp = rockPart(gltfs, which, variant);
+      const pre = new THREE.Matrix4().makeScale(size[0], size[1], size[2]).multiply(rp.local);
+      if (!instanced.has(which)) instanced.set(which, []);
+      instanced.get(which).push({ part, pre });
     }
-    inner.scale.set(size[0], size[1], size[2]);
-    part.add(inner);
     part.position.set(at[0], at[1], at[2]);
     const r = rot || extraRot;
     if (r) part.rotation.set(r[0], r[1], r[2]);
@@ -458,11 +472,23 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
     const g = glow(look.core, r * (look.glass ? 5 : 7), 0.7);
     g.material.depthTest = false;   // the halo sits half inside the rock; let it bloom over it
     c.add(g); glows.push(g);
-    const light = new THREE.PointLight(look.core, lightI, 4.5, 2);
-    light.position.set(at[0], at[1] + 0.1, at[2] + 0.25);
-    parent.add(c, light);
-    rig.core = c; rig.coreGlow = g; rig.light = light; rig.lightI = lightI;
+    parent.add(c);
+    rig.core = c; rig.coreGlow = g; rig.light = pool(look.core, look.height * 0.55, lightI); rig.lightI = lightI;
     return c;
+  }
+  /**
+   * The core's light on the ground: an additive disc under the golem that
+   * stands in for the point light each one used to carry (a point light
+   * taxes every lit pixel in the scene). `intensity` drives its opacity on
+   * the light's old scale.
+   */
+  function pool(color, radius, lightI) {
+    const m = new THREE.Mesh(new THREE.CircleGeometry(radius, 20), new THREE.MeshBasicMaterial({ map: glowTexture(), color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }));
+    m.rotation.x = -Math.PI / 2; m.position.y = 0.03; m.renderOrder = 1;
+    body.add(m);
+    myMats.push(m.material);
+    m.material.userData.pool = true;
+    return { mesh: m, k: 0.3 / Math.max(0.5, lightI), set intensity(v) { m.material.opacity = Math.min(0.75, Math.max(0, v * this.k)); }, get intensity() { return m.material.opacity / this.k; }, position: m.position };
   }
   const G = (parent, at) => { const g = new THREE.Group(); g.position.set(at[0], at[1], at[2]); parent.add(g); return g; };
 
@@ -555,7 +581,7 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
       tp = G(tp, [0, 0, -0.17]);
     }
     core([0, -0.08, 0.26], 0.07, chestRock, 1.8);
-    rig.light.position.set(0, 0.2, 0.3);
+    rig.light.position.z = 0.2;
   }
 
   /* ------------------------------------------------ build: wisp */
@@ -565,19 +591,43 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
     const inner = glow(0xffffff, 0.26, 1);
     const g1 = glow(look.core, 0.8, 0.55), g2 = glow(team, 0.42, 0.5);
     c.add(inner, g1, g2); glows.push(inner, g1, g2);
-    const light = new THREE.PointLight(look.core, 3.0, 5, 2);
-    c.add(light);
     body.add(c);
     parts.push(c);
-    rig.core = c; rig.coreGlow = g1; rig.coreGlow2 = g2; rig.inner = inner; rig.light = light; rig.lightI = 3.0;
+    rig.core = c; rig.coreGlow = g1; rig.coreGlow2 = g2; rig.inner = inner; rig.light = pool(look.core, 0.9, 3.0); rig.lightI = 3.0;
     rig.orbiters = [];
+    // Three sparks per orbit (each is a sprite, a draw call of its own).
     for (let i = 0; i < 4; i++) {
       const plane = new THREE.Group();
       plane.rotation.set((rnd() - 0.5) * 1.6, rnd() * TAU, (rnd() - 0.5) * 1.2);
       c.add(plane);
       const trail = [];
-      for (let j = 0; j < 5; j++) { const s = glow(team, 0.17 * Math.pow(0.8, j), 0.85 * Math.pow(0.6, j)); plane.add(s); trail.push(s); }
+      for (let j = 0; j < 3; j++) { const s = glow(team, 0.17 * Math.pow(0.75, j), 0.85 * Math.pow(0.55, j)); plane.add(s); trail.push(s); }
       rig.orbiters.push({ plane, trail, r: 0.32 + rnd() * 0.18, spd: (2.2 + rnd() * 1.6) * (rnd() < 0.5 ? 1 : -1), off: rnd() * TAU });
+    }
+  }
+
+  /* ------------------------------------------------ the instanced rocks */
+  const instMeshes = [];
+  for (const [which, list] of instanced) {
+    const rp = rockPart(gltfs, which, 0);
+    const im = new THREE.InstancedMesh(rp.geometry, matFor(which), list.length);
+    im.castShadow = true; im.receiveShadow = true;
+    im.frustumCulled = false;       // its bounds are its instances', which move
+    root.add(im);
+    instMeshes.push({ im, list });
+  }
+  const rootInv = new THREE.Matrix4(), instM = new THREE.Matrix4();
+  /** Write every rock's pivot matrix (relative to the root) into its instance. */
+  function syncInstances() {
+    if (!instMeshes.length) return;
+    root.updateMatrixWorld(true);
+    rootInv.copy(root.matrixWorld).invert();
+    for (const { im, list } of instMeshes) {
+      for (let i = 0; i < list.length; i++) {
+        instM.multiplyMatrices(rootInv, list[i].part.matrixWorld).multiply(list[i].pre);
+        im.setMatrixAt(i, instM);
+      }
+      im.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -822,7 +872,7 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
     for (const m of myMats) if (m.userData.emissiveI) m.emissiveIntensity = m.userData.emissiveI * (1 - k);
     if (deathT > 2.6) {
       const o = clamp01(1 - (deathT - 2.6) / 0.8);
-      for (const m of myMats) { m.transparent = true; m.opacity = o; m.depthWrite = o > 0.5; }
+      for (const m of myMats) { if (m.userData.pool) { m.opacity = Math.min(m.opacity, o * 0.3); continue; } m.transparent = true; m.opacity = o; m.depthWrite = o > 0.5; }
     }
   }
 
@@ -837,7 +887,7 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
       this.facing += d * Math.min(1, dt * 7);
       root.rotation.y = this.facing;
       const t = now / 1000;
-      if (dead) { stepDeath(dt, t); return; }
+      if (dead) { stepDeath(dt, t); syncInstances(); return; }
       walkK += ((this.moving ? 1 : 0) - walkK) * Math.min(1, dt * 7);
       for (const c in pose) pose[c] = 0;
       if (look.kind === 'biped') {
@@ -853,6 +903,7 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
         layerActs(now); layerRise(now);
         wispApply(t, dt);
       }
+      syncInstances();
     },
     lookAt(x, z) { this.facingTarget = Math.atan2(x - root.position.x, z - root.position.z); },
     cast() { start('cast'); },
@@ -885,7 +936,8 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
       dead = this.dead = false; deathT = 0; debris = null;
       for (const p of allParts) { p.userData.home.parent.add(p); p.position.copy(p.userData.home.p); p.quaternion.copy(p.userData.home.q); }
       this.parts = allParts.slice();
-      for (const m of myMats) { m.transparent = false; m.opacity = 1; m.depthWrite = true; if (m.userData.emissiveI) m.emissiveIntensity = m.userData.emissiveI; }
+      for (const m of myMats) { if (m.userData.pool || m === glassMat) continue; m.transparent = false; m.opacity = 1; m.depthWrite = true; if (m.userData.emissiveI) m.emissiveIntensity = m.userData.emissiveI; }
+      if (glassMat) { glassMat.opacity = 0.62; glassMat.depthWrite = true; glassMat.emissiveIntensity = glassMat.userData.emissiveI; }
       coreMat.emissive.copy(coreColor); eyeMat.emissive.setHex(team);
       for (const gl of glows) { gl.material.opacity = gl.userData.opacity; gl.scale.set(gl.userData.size, gl.userData.size, 1); if (gl.userData.v) { gl.userData.v = null; } }
       if (look.kind === 'wisp') { rig.inner.scale.setScalar(0.26); for (const o of rig.orbiters) o.trail.forEach((s) => s.position.set(0, 0, 0)); }

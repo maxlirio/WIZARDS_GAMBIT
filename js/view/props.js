@@ -40,7 +40,9 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     mortar: new THREE.MeshStandardMaterial({ color: 0x4a443b, roughness: 1 }),
     moss: new THREE.MeshStandardMaterial({ color: 0x4f7030, roughness: 1 }),
     ivy: new THREE.MeshStandardMaterial({ color: 0x3f7a2c, roughness: 0.9, side: THREE.DoubleSide }),
+    lump: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }),   // moss, chips, rubble: one mesh per piece
   };
+  const MOSS = 0x4f7030, CHIP = 0x5c5750;
   mats.wall = mats.stone.clone(); mats.wall.vertexColors = true;
   const sigilTex = sigilTexture();
   const haloTex = haloTexture();
@@ -48,7 +50,8 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
 
   /** One LOD0 copy of a HIGHGROUND bake, with its footprint measured once. */
   function rockModel(which) {
-    const g = pickLod(gltfs[which], 0);
+    // LOD0 only on high: LOD1 keeps the silhouette at a third of the triangles.
+    const g = pickLod(gltfs[which], high ? 0 : 1);
     if (!bounds[which]) bounds[which] = new THREE.Box3().setFromObject(g);
     return { g, box: bounds[which] };
   }
@@ -118,17 +121,17 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     rock.position.y -= h * 0.07;              // settled in, not resting on the grass
     rock.rotation.y = (seed % 7) * 0.9;
     body.add(rock);
-    // Moss on the shaded side of a mossy rock.
-    if (tint === 0xcfdcbd) for (let i = 0; i < 4; i++) body.add(blob(mats.moss, r * (0.22 + rnd() * 0.12), rnd, { x: (rnd() - 0.5) * r * 1.2, y: h * (0.3 + rnd() * 0.5), z: -r * 0.75 - rnd() * 0.15, flat: 0.35 }));
-    // Chips knocked off it, shown as the damage mounts.
-    const chips = [];
-    for (let i = 0; i < 5; i++) {
-      const c = blob(mats.dark, 0.05 + rnd() * 0.06, rnd, { x: Math.cos(i * 1.3 + seed) * r * (1.2 + rnd() * 0.5), y: 0.03, z: Math.sin(i * 1.3 + seed) * r * (1.2 + rnd() * 0.5) });
-      c.visible = false; chips.push(c); body.add(c);
-    }
+    // Moss on the shaded side of a mossy rock, and the chips knocked off it
+    // (shown one by one as the damage mounts): ONE mesh, no shadow.
+    const specs = [];
+    if (tint === 0xcfdcbd) for (let i = 0; i < 4; i++) specs.push([MOSS, r * (0.22 + rnd() * 0.12), { x: (rnd() - 0.5) * r * 1.2, y: h * (0.3 + rnd() * 0.5), z: -r * 0.75 - rnd() * 0.15, flat: 0.35 }]);
+    const fixedN = specs.length;
+    for (let i = 0; i < 5; i++) specs.push([CHIP, 0.05 + rnd() * 0.06, { x: Math.cos(i * 1.3 + seed) * r * (1.2 + rnd() * 0.5), y: 0.03, z: Math.sin(i * 1.3 + seed) * r * (1.2 + rnd() * 0.5) }]);
+    const lump = lumps(mats.lump, specs, rnd, fixedN);
+    body.add(lump);
     P.lean.base = 0.02 + rnd() * 0.03;
     P.lean.extra = 0.14;
-    P.damage = (f) => { chips.forEach((c, i) => { c.visible = f > 0.15 + i * 0.17; }); };
+    P.damage = (f) => { let n = 0; for (let i = 0; i < 5; i++) if (f > 0.15 + i * 0.17) n = i + 1; lump.userData.show(n); };
   }
 
   /* ------------------------------------------------------------ pillar */
@@ -146,15 +149,14 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     // picture of one stone, so stretch them back to 0..1 (the geometry is ours).
     normaliseUv(stone.geometry);
     body.add(stone);
-    // The runes sit at u = 0.5 of the cylinder, which is the -z face.
-    const glow = new THREE.PointLight(RUNE, 2.2, 3.6, 2);
-    glow.position.set(0, h * 0.5, 0);
-    body.add(glow);
-    for (let i = 0; i < 6; i++) {
-      const a = rnd() * 6.28, d = r * (0.8 + rnd() * 0.35);
-      body.add(blob(mats.moss, r * (0.25 + rnd() * 0.2), rnd, { x: Math.cos(a) * d, y: 0.02, z: Math.sin(a) * d, flat: 0.3 }));
-    }
-    for (let i = 0; i < 3; i++) { const a = rnd() * 6.28; body.add(blob(mats.dark, 0.04 + rnd() * 0.05, rnd, { x: Math.cos(a) * r * 1.4, y: 0.03, z: Math.sin(a) * r * 1.4 })); }
+    // The runes' light on the grass: an additive pool at the foot (a point
+    // light here made every lit pixel in the scene dearer).
+    const pool = halo(haloTex, RUNE, r * 2.4, 0.28);
+    body.add(pool);
+    const specs = [];
+    for (let i = 0; i < 6; i++) { const a = rnd() * 6.28, d = r * (0.8 + rnd() * 0.35); specs.push([MOSS, r * (0.25 + rnd() * 0.2), { x: Math.cos(a) * d, y: 0.02, z: Math.sin(a) * d, flat: 0.3 }]); }
+    for (let i = 0; i < 3; i++) { const a = rnd() * 6.28; specs.push([CHIP, 0.04 + rnd() * 0.05, { x: Math.cos(a) * r * 1.4, y: 0.03, z: Math.sin(a) * r * 1.4 }]); }
+    body.add(lumps(mats.lump, specs, rnd));
     body.rotation.y = (seed % 9) * 0.7;
     P.lean.base = rnd() * 0.05;
     P.lean.extra = 0.12;
@@ -164,7 +166,7 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     P.update = (dt, now) => {
       const k = dim * (0.85 + 0.15 * Math.sin(now / 700 + phase)) * (dim < 0.6 && Math.random() < 0.08 ? 0.5 : 1);
       mat.emissiveIntensity = 2.4 * k;
-      glow.intensity = 2.2 * k;
+      pool.material.opacity = 0.28 * k;
     };
   }
 
@@ -173,32 +175,40 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
   /** A faceted crystal cluster: one spire, two leaning companions, a litter of small ones, all lit from a core. */
   function shard(P) {
     const { r, h, seed, rnd, body } = P;
+    // No transmission: a transmissive material makes three.js render the
+    // whole scene a second time into a texture every frame. Glassiness comes
+    // from the sky reflection, the emissive heart and a little see-through.
     const mat = new THREE.MeshPhysicalMaterial({
       color: 0x6fd0f4, emissive: 0x1a7aa8, emissiveIntensity: 0.9, roughness: 0.18, metalness: 0,
-      transmission: high ? 0.55 : 0, thickness: 0.5, ior: 1.5, attenuationColor: new THREE.Color(0x5fc8ee), attenuationDistance: 0.9,
-      transparent: !high, opacity: high ? 1 : 0.88, flatShading: true, envMapIntensity: 1.2,
+      transparent: true, opacity: 0.86, flatShading: true, envMapIntensity: 1.4, clearcoat: high ? 0.6 : 0, clearcoatRoughness: 0.15,
     });
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xd8f6ff });
-    const crystals = [];
+    // Every crystal in ONE geometry, the big ones first and the small litter
+    // last, so damage can hide the litter by shortening the draw range.
+    const geos = [], smallGeos = [];
     const place = (rad, hgt, x, z, tiltRad, yaw, small) => {
-      const c = new THREE.Mesh(crystalGeo(rad, hgt, rnd), mat);
+      const c = new THREE.Mesh(crystalGeo(rad, hgt, rnd));
       c.position.set(x, 0, z);
       c.rotation.set(0, yaw, 0);
       c.rotateOnAxis(new THREE.Vector3(1, 0, 0), tiltRad);
-      c.userData.small = small;
-      body.add(c); crystals.push(c);
+      c.updateMatrix();
+      (small ? smallGeos : geos).push(c.geometry.applyMatrix4(c.matrix));
       return c;
     };
-    const main = place(r * 0.55, h, 0, 0, 0.04, rnd() * 6.28, false);
+    place(r * 0.55, h, 0, 0, 0.04, rnd() * 6.28, false);
     const core = new THREE.Mesh(crystalGeo(r * 0.28, h * 0.6, rnd), coreMat);
     core.position.y = h * 0.1; core.userData.noShadow = true;
-    main.add(core);
+    body.add(core);
     for (let i = 0; i < 2; i++) { const a = seed * 0.3 + i * 3.1 + rnd() * 0.8; place(r * 0.32, h * (0.45 + rnd() * 0.15), Math.cos(a) * r * 0.55, Math.sin(a) * r * 0.55, 0.35 + rnd() * 0.2, a + Math.PI / 2, false); }
     for (let i = 0; i < 5; i++) { const a = rnd() * 6.28; const d = r * (0.6 + rnd() * 0.5); place(r * (0.12 + rnd() * 0.1), h * (0.14 + rnd() * 0.12), Math.cos(a) * d, Math.sin(a) * d, 0.5 + rnd() * 0.4, a + Math.PI / 2, true); }
-    const glow = new THREE.PointLight(CRYSTAL, 3, 4.5, 2);
-    glow.position.set(r * 0.4, h * 0.35, r * 0.4);
-    body.add(glow);
-    const halo = new THREE.Mesh(new THREE.CircleGeometry(r * 1.7, 24), new THREE.MeshBasicMaterial({ map: haloTex, color: CRYSTAL, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+    // The litter, ordered by how long it survives (longest first), so the
+    // survivors are always a prefix.
+    const order = smallGeos.map((g, i) => ({ g, at: 0.3 + (i % 3) * 0.25 })).sort((a, b) => b.at - a.at);
+    const counts = order.map(({ g }) => g.index ? g.index.count : g.attributes.position.count);
+    const cluster = new THREE.Mesh(mergeGeometries([...geos, ...order.map((o) => o.g)]), mat);
+    const bigN = geos.reduce((s, g) => s + (g.index ? g.index.count : g.attributes.position.count), 0);
+    body.add(cluster);
+    const halo = new THREE.Mesh(new THREE.CircleGeometry(r * 1.9, 24), new THREE.MeshBasicMaterial({ map: haloTex, color: CRYSTAL, transparent: true, opacity: 0.42, blending: THREE.AdditiveBlending, depthWrite: false }));
     halo.rotation.x = -Math.PI / 2; halo.position.y = 0.012; halo.userData.noShadow = true;
     body.add(halo);
     P.lean.base = 0.03;
@@ -207,15 +217,17 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     const phase = rnd() * 6.28;
     P.damage = (f) => {
       dim = 1 - f * 0.8;
-      crystals.forEach((c, i) => { if (c.userData.small) c.visible = f < 0.3 + (i % 3) * 0.25; });
+      // The litter goes first, a shard at a time.
+      let keep = 0;
+      for (let i = 0; i < order.length; i++) { if (f < order[i].at) keep = i + 1; else break; }
+      cluster.geometry.setDrawRange(0, bigN + counts.slice(0, keep).reduce((s, c) => s + c, 0));
       coreMat.color.setHex(0xd8f6ff).lerp(new THREE.Color(0x2b5566), f * 0.85);
       mat.color.setHex(0x6fd0f4).lerp(new THREE.Color(0x4e6a74), f * 0.6);
     };
     P.update = (dt, now) => {
       const s = 0.8 + 0.2 * Math.sin(now / 420 + phase) + 0.08 * Math.sin(now / 95 + phase * 2);
       mat.emissiveIntensity = 0.9 * dim * s;
-      glow.intensity = 3 * dim * (0.9 + 0.1 * s);
-      halo.material.opacity = 0.35 * dim * s;
+      halo.material.opacity = 0.42 * dim * s;
       core.scale.setScalar(0.96 + 0.05 * s);
     };
   }
@@ -272,26 +284,42 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
         cores.push(cg);
       }
     }
-    const merged = new THREE.Mesh(mergeGeometries(fixed), mats.wall);
-    const core = new THREE.Mesh(mergeGeometries(cores), mats.mortar);
-    body.add(merged, core);
-    // Loose blocks stand on the wall until the damage knocks them down to a fallen twin.
-    const pairs = loose.map(({ geo, m }, i) => {
-      const up = new THREE.Mesh(geo, mats.wall); up.applyMatrix4(m);
-      const p = new THREE.Vector3().setFromMatrixPosition(m);
-      const down = new THREE.Mesh(geo, mats.wall);
-      down.position.set(p.x + (rnd() - 0.5) * 0.3, 0.09, (rnd() < 0.5 ? -1 : 1) * (thick * 0.6 + rnd() * 0.35));
-      down.rotation.set((rnd() - 0.5) * 0.6, rnd() * 6.28, 0.9 + rnd() * 0.5);
-      down.visible = false;
-      body.add(up, down);
-      return { up, down, at: 0.25 + (i / Math.max(1, loose.length - 1)) * 0.65 };
-    });
-    // Rubble, thickest at the broken end; moss where the wall meets the grass.
+    // Rubble, thickest at the broken end, painted and merged into the ashlar
+    // mesh (it shares the granite); moss where the wall meets the grass, one mesh.
     for (let i = 0; i < 7; i++) {
       const x = brokenEnd * (len / 2) * (0.2 + rnd() * 1.1) - brokenEnd * len * 0.25 * rnd();
-      body.add(blob(rnd() < 0.3 ? mats.stone : mats.dark, 0.05 + rnd() * 0.08, rnd, { x, y: 0.03, z: (rnd() - 0.5) * 1.1 }));
+      const dark = rnd() >= 0.3;
+      const g = blobGeo(0.05 + rnd() * 0.08, rnd, { x, y: 0.03, z: (rnd() - 0.5) * 1.1 });
+      fixed.push(paint(g, col.setRGB(dark ? 0.62 : 1, dark ? 0.6 : 0.98, dark ? 0.56 : 0.94)));
     }
-    for (let i = 0; i < 6; i++) body.add(blob(mats.moss, 0.07 + rnd() * 0.09, rnd, { x: (rnd() - 0.5) * len, y: 0.02, z: (rnd() < 0.5 ? -1 : 1) * (thick * 0.5 + rnd() * 0.1), flat: 0.3 }));
+    const merged = new THREE.Mesh(mergeGeometries(fixed.map((g) => (g.index ? g.toNonIndexed() : g))), mats.wall);
+    body.add(merged);
+    const mossSpecs = [];
+    for (let i = 0; i < 6; i++) mossSpecs.push([MOSS, 0.07 + rnd() * 0.09, { x: (rnd() - 0.5) * len, y: 0.02, z: (rnd() < 0.5 ? -1 : 1) * (thick * 0.5 + rnd() * 0.1), flat: 0.3 }]);
+    body.add(lumps(mats.lump, mossSpecs, rnd));
+    // Loose blocks stand on the wall until the damage knocks them down to a
+    // fallen twin. The standing ones are one mesh and the fallen ones another;
+    // since they fall in order, the standing set is always a prefix of the
+    // one and the fallen set a suffix of the other, drawn by range.
+    const ups = [], downs = [], upN = [], downN = [];
+    // Reversed: the block that falls LAST comes first, so the standing set is a prefix.
+    const byFall = loose.slice().reverse();
+    const ats = byFall.map((_, k) => { const i = loose.length - 1 - k; return 0.25 + (i / Math.max(1, loose.length - 1)) * 0.65; });
+    byFall.forEach(({ geo, m }, i) => {
+      const up = geo.clone().applyMatrix4(m);
+      const p = new THREE.Vector3().setFromMatrixPosition(m);
+      const down = new THREE.Mesh(geo.clone());
+      down.position.set(p.x + (rnd() - 0.5) * 0.3, 0.09, (rnd() < 0.5 ? -1 : 1) * (thick * 0.6 + rnd() * 0.35));
+      down.rotation.set((rnd() - 0.5) * 0.6, rnd() * 6.28, 0.9 + rnd() * 0.5);
+      down.updateMatrix();
+      ups.push(up); downs.push(down.geometry.applyMatrix4(down.matrix));
+      upN.push(up.index.count); downN.push(downs[i].index.count);
+    });
+    const upMesh = ups.length ? new THREE.Mesh(mergeGeometries(ups), mats.wall) : null;
+    const downMesh = downs.length ? new THREE.Mesh(mergeGeometries(downs), mats.wall) : null;
+    if (upMesh) body.add(upMesh);
+    if (downMesh) { downMesh.geometry.setDrawRange(0, 0); body.add(downMesh); }
+    const upTotal = upN.reduce((s, n) => s + n, 0);
     // Ivy: a vine climbing the whole end of the front face, leaves flat against the stone, one merged mesh.
     const ivyX = -brokenEnd * len * 0.3;
     const ivyTop = topAt(ivyX) - 0.02;
@@ -314,12 +342,25 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
       }
     }
     body.add(new THREE.Mesh(mergeGeometries(leaves), mats.ivy));
-    const stem = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(vine), 24, 0.008, 4, false), mats.mortar);
-    body.add(stem);
+    // The vine's stem is mortar-coloured too: it goes in with the core.
+    cores.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(vine), 24, 0.008, 4, false));
+    body.add(new THREE.Mesh(mergeGeometries(cores), mats.mortar));
     body.rotation.y = (seed % 4) * 0.4 - 0.6;
     P.lean.base = 0;
     P.lean.extra = 0.06;
-    P.damage = (f) => { for (const p of pairs) { p.up.visible = f < p.at; p.down.visible = f >= p.at; } };
+    P.damage = (f) => {
+      let standing = 0;
+      for (let i = 0; i < ats.length; i++) { if (f < ats[i]) standing = i + 1; else break; }
+      let upCount = 0;
+      for (let i = 0; i < standing; i++) upCount += upN[i];
+      let downStart = 0;
+      for (let i = 0; i < standing; i++) downStart += downN[i];
+      upMesh?.geometry.setDrawRange(0, upCount);
+      downMesh?.geometry.setDrawRange(downStart, Infinity);
+      if (upMesh) upMesh.visible = upCount > 0;
+      if (downMesh) downMesh.visible = standing < ats.length;
+    };
+    if (upMesh) upMesh.geometry.setDrawRange(0, upTotal);
   }
 
   /* ------------------------------------------------------------ floater */
@@ -332,17 +373,23 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     rock.rotation.y = (seed % 5) * 1.1;
     body.add(rock);
     // The torn underside: an inverted, jittered cone with a few roots of rock hanging from it.
-    const under = new THREE.Mesh(new THREE.ConeGeometry(r * 0.85, h * 1.5, 12, 4), mats.dark);
+    // The underside and its roots are one mesh.
+    const under = new THREE.Mesh(new THREE.ConeGeometry(r * 0.85, h * 1.5, 12, 4));
     jitter(under.geometry, 0.2, seed);
     under.geometry.computeVertexNormals();
     under.rotation.x = Math.PI; under.position.y = -h * 0.75 + 0.06;
-    body.add(under);
+    under.updateMatrix();
+    const underGeos = [under.geometry.applyMatrix4(under.matrix)];
     for (let i = 0; i < 4; i++) {
       const a = rnd() * 6.28, d = r * (0.3 + rnd() * 0.4);
-      const root = new THREE.Mesh(new THREE.ConeGeometry(0.04 + rnd() * 0.04, 0.18 + rnd() * 0.22, 5), mats.dark);
+      const root = new THREE.Mesh(new THREE.ConeGeometry(0.04 + rnd() * 0.04, 0.18 + rnd() * 0.22, 5));
       root.rotation.x = Math.PI; root.position.set(Math.cos(a) * d, -h * (0.3 + rnd() * 0.5), Math.sin(a) * d);
-      body.add(root);
+      root.updateMatrix();
+      underGeos.push(root.geometry.applyMatrix4(root.matrix));
     }
+    const under2 = new THREE.Mesh(mergeGeometries(underGeos), mats.dark);
+    under2.userData.noShadow = true;        // the slab's shadow is the slab's
+    body.add(under2);
     // The sigil: two rings turning against each other, additive, under the rock.
     const sigilMat = new THREE.MeshBasicMaterial({ map: sigilTex, color: 0x9a66ff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
     const sigil = new THREE.Mesh(new THREE.PlaneGeometry(r * 2.6, r * 2.6), sigilMat);
@@ -350,33 +397,40 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     const ring = new THREE.Mesh(new THREE.RingGeometry(r * 1.05, r * 1.12, 48), new THREE.MeshBasicMaterial({ color: 0x9a66ff, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
     ring.rotation.x = -Math.PI / 2; ring.position.y = -h * 1.45; ring.userData.noShadow = true;
     body.add(sigil, ring);
-    const glow = new THREE.PointLight(RUNE, 2.6, 4.5, 2);
-    glow.position.y = -h * 1.1;
-    body.add(glow);
-    const pebbles = [];
-    for (let i = 0; i < 5; i++) {
-      const p = blob(mats.dark, 0.03 + rnd() * 0.04, rnd, {});
-      p.userData.orbit = { a: rnd() * 6.28, d: r * (1.0 + rnd() * 0.35), y: -h * (0.2 + rnd() * 0.9), w: 0.3 + rnd() * 0.4, ph: rnd() * 6.28 };
-      body.add(p); pebbles.push(p);
-    }
+    // The sigil's light on the ground beneath (in place of a point light).
+    const pool = halo(haloTex, 0x9a66ff, r * 2.2, 0.3);
+    pool.position.y = -h * 1.62;
+    body.add(pool);
+    // Pebbles caught in its field: one instanced mesh, matrices written each frame.
+    const pebbleGeo = blobGeo(0.035, rnd, {});
+    const pebbles = new THREE.InstancedMesh(pebbleGeo, mats.dark, 5);
+    pebbles.frustumCulled = false;
+    pebbles.userData.noShadow = true;
+    const orbits = [];
+    for (let i = 0; i < 5; i++) orbits.push({ a: rnd() * 6.28, d: r * (1.0 + rnd() * 0.35), y: -h * (0.2 + rnd() * 0.9), w: 0.3 + rnd() * 0.4, ph: rnd() * 6.28, s: 0.85 + rnd() * 1.15, rx: rnd() * 6.28, rz: rnd() * 6.28 });
+    body.add(pebbles);
+    const pm = new THREE.Matrix4(), pq = new THREE.Quaternion(), pp = new THREE.Vector3(), ps = new THREE.Vector3(), pe = new THREE.Euler();
     P.inner.userData.bob = true;
     P.lean.base = 0.02;
     P.lean.extra = 0.2;
     let dim = 1;
-    P.damage = (f) => { dim = 1 - f * 0.6; pebbles.forEach((p, i) => { p.visible = f < 0.3 + i * 0.15; }); };
+    P.damage = (f) => { dim = 1 - f * 0.6; let n = 0; for (let i = 0; i < 5; i++) if (f < 0.3 + i * 0.15) n = i + 1; pebbles.count = n; };
     P.update = (dt, now) => {
       sigil.rotation.z += dt * 0.35;
       ring.rotation.z -= dt * 0.6;
       const flick = dim < 0.7 && Math.random() < 0.1 ? 0.4 : 1;
       sigilMat.opacity = 0.55 * dim * flick;
       ring.material.opacity = 0.45 * dim * flick;
-      glow.intensity = 2.6 * dim * (0.9 + 0.1 * Math.sin(now / 500)) * flick;
-      for (const p of pebbles) {
-        const o = p.userData.orbit;
+      pool.material.opacity = 0.3 * dim * (0.9 + 0.1 * Math.sin(now / 500)) * flick;
+      for (let i = 0; i < pebbles.count; i++) {
+        const o = orbits[i];
         const a = o.a + now / 1000 * o.w;
-        p.position.set(Math.cos(a) * o.d, o.y + Math.sin(now / 700 + o.ph) * 0.05, Math.sin(a) * o.d);
-        p.rotation.y = a * 2;
+        pp.set(Math.cos(a) * o.d, o.y + Math.sin(now / 700 + o.ph) * 0.05, Math.sin(a) * o.d);
+        pq.setFromEuler(pe.set(o.rx, a * 2, o.rz));
+        ps.setScalar(o.s);
+        pebbles.setMatrixAt(i, pm.compose(pp, pq, ps));
       }
+      pebbles.instanceMatrix.needsUpdate = true;
     };
   }
 
@@ -385,7 +439,9 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
   /** The alder, young (3.2 m), with its own bark and leaf materials so it can char alone. */
   function tree(P) {
     const { h, seed, rnd, body } = P;
-    const tr = pickLod(gltfs.alder, 0);
+    // LOD1 (2.5k triangles): at 3.2m tall and 10m+ from the camera it reads
+    // as LOD0 (8.5k) did, and it is drawn twice (once into the shadow map).
+    const tr = pickLod(gltfs.alder, quality === 'low' ? 2 : 1);
     tr.scale.setScalar(h / 12.69);
     tr.rotation.y = (seed % 11) * 0.55;
     let bark = null, leaves = null;
@@ -452,14 +508,40 @@ function jitter(geo, amt, seed) {
   geo.computeVertexNormals();
 }
 
-/** A small lump: moss, a pebble, a chip of stone. `flat` squashes it into a cushion. */
-function blob(mat, size, rnd, { x = 0, y = 0, z = 0, flat = 0.7 } = {}) {
+/** A small lump: moss, a pebble, a chip of stone. `flat` squashes it into a cushion. Returns the placed geometry. */
+function blobGeo(size, rnd, { x = 0, y = 0, z = 0, flat = 0.7 } = {}) {
   const geo = new THREE.DodecahedronGeometry(size, 0);
   jitter(geo, 0.25, Math.floor(rnd() * 1e6) + 1);
-  const m = new THREE.Mesh(geo, mat);
+  const m = new THREE.Mesh(geo);
   m.position.set(x, y, z);
   m.scale.set(1, flat, 1);
   m.rotation.set(rnd() * 6.28, rnd() * 6.28, 0);
+  m.updateMatrix();
+  return geo.applyMatrix4(m.matrix);
+}
+
+/**
+ * Lumps in ONE mesh, vertex-coloured, no shadow (they are moss and chips on
+ * the ground). `specs` are [colour, size, placement]; the first `fixedN`
+ * always show, and `userData.show(k)` adds the next k, for chips that
+ * appear one by one as damage mounts.
+ */
+function lumps(mat, specs, rnd, fixedN = specs.length) {
+  const geos = [], counts = [];
+  const c = new THREE.Color();
+  for (const [colour, size, at] of specs) { const g = paint(blobGeo(size, rnd, at), c.setHex(colour)); geos.push(g); counts.push(g.attributes.position.count); }
+  const m = new THREE.Mesh(mergeGeometries(geos), mat);
+  m.userData.noShadow = true;
+  m.userData.show = (k) => { let n = 0; for (let i = 0; i < fixedN + k && i < specs.length; i++) n += counts[i]; m.geometry.setDrawRange(0, n); m.visible = n > 0; };
+  m.userData.show(0);
+  return m;
+}
+
+/** A soft additive disc of light on the ground: what a point light used to put there. */
+function halo(tex, colour, radius, opacity) {
+  const m = new THREE.Mesh(new THREE.CircleGeometry(radius, 20), new THREE.MeshBasicMaterial({ map: tex, color: colour, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; m.position.y = 0.014; m.userData.noShadow = true;
+  m.renderOrder = 1;
   return m;
 }
 

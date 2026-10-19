@@ -1,9 +1,9 @@
 // The arena: a small seeded battlefield, generated as a pure function of the
 // seed so two machines build the same ground without sending it over the wire.
 //
-// 12m x 9m, which is "arena" rather than "battlefield" on purpose -- everything
-// is within a few moves of everything, and the terrain matters at every step
-// instead of being scenery you march past.
+// 16m x 12m. Big enough that the middle is contested ground you have to cross
+// and the terrain is something you fight over, small enough that nobody is
+// ever more than a few turns from the fight.
 //
 // TWO REPRESENTATIONS, and the division is the whole design:
 //
@@ -31,8 +31,8 @@
 import { M, idiv, dist2, iabs, imin, clamp, snap } from './fixed.js';
 import { seedRng, int, range } from '../rules/rng.js';
 
-export const ARENA_W = 12 * M;
-export const ARENA_H = 9 * M;
+export const ARENA_W = 16 * M;
+export const ARENA_H = 12 * M;
 export const NODE = 500;              // heightfield node spacing, mm
 export const QUANT = 250;             // heights snap to this, so steps read as steps
 
@@ -129,7 +129,7 @@ export function makeArena(seed) {
     trench(0, idiv(ARENA_H, 2) - 1200, 1250);
     trench(idiv(ARENA_H, 2) + 1200, ARENA_H, 1250);
   } else {
-    const plateaus = range(r, 2, 4);
+    const plateaus = range(r, 3, 5);
     for (let k = 0; k < plateaus; k++) {
       // Tall enough to matter. A 500mm plateau is a kerb; the interesting
       // feature is one a body can be shoved off and take damage for.
@@ -146,8 +146,8 @@ export function makeArena(seed) {
   // Spawn circles at opposite ends, flattened so a respawning mage never
   // materialises inside a cliff.
   const spawns = [
-    { x: 900, y: idiv(ARENA_H, 2), r: 900 },
-    { x: ARENA_W - 900, y: idiv(ARENA_H, 2), r: 900 },
+    { x: 1200, y: idiv(ARENA_H, 2), r: 900 },
+    { x: ARENA_W - 1200, y: idiv(ARENA_H, 2), r: 900 },
   ];
   for (const s of spawns) {
     for (let j = 0; j < ny; j++) {
@@ -232,21 +232,21 @@ export function makeProps(arena, seed) {
   const r = seedRng(seed ^ 0x27d4eb2f);
   const out = [];
   const want = arena.challenge === 'levitation'
-    ? { floater: 5, boulder: 3, shard: 2 }
-    : arena.challenge === 'spires' ? { pillar: 6, boulder: 2, tree: 1 }
-    : arena.challenge === 'ruins' ? { wall: 5, shard: 3, boulder: 2, tree: 2 }
-    : arena.challenge === 'grove' ? { tree: 7, boulder: 2, shard: 1 }
-    : { boulder: 4, pillar: 2, shard: 2, floater: 1, tree: 3 };
+    ? { floater: 7, boulder: 4, shard: 3, tree: 2 }
+    : arena.challenge === 'spires' ? { pillar: 8, boulder: 3, tree: 2 }
+    : arena.challenge === 'ruins' ? { wall: 7, shard: 4, boulder: 3, tree: 3 }
+    : arena.challenge === 'grove' ? { tree: 11, boulder: 3, shard: 2 }
+    : { boulder: 6, pillar: 3, shard: 3, floater: 2, tree: 4 };
 
   const midLo = idiv(arena.w, 5), midHi = arena.w - idiv(arena.w, 5);
   for (const kind of Object.keys(want).sort()) {
     const spec = PROP_KINDS[kind];
     for (let k = 0; k < want[kind]; k++) {
       let x = 0, y = 0, ok = false;
-      // A bounded search. Twenty tries and then this piece simply does not
+      // A bounded search. Thirty tries and then this piece simply does not
       // exist -- an unbounded "keep looking" loop is a hang waiting for a seed
       // that fills the map.
-      for (let tries = 0; tries < 20 && !ok; tries++) {
+      for (let tries = 0; tries < 30 && !ok; tries++) {
         x = range(r, midLo, midHi);
         y = range(r, 700, arena.h - 700);
         // o.r does not exist: a prop's radius lives on its KIND, not its

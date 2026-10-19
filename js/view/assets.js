@@ -1,7 +1,8 @@
 // Loading the models, once, and handing out copies.
 //
 // Everything drawn on the battlefield that is not generated in code comes
-// through here: the rigged mage, the trees, the bushes, the boulders. Each file
+// through here: the trees, the bushes, the boulders (the mage and the golems are
+// built in code). Each file
 // is fetched once and cached; `clone()` hands out a fresh scene graph that
 // shares geometry and (unless asked otherwise) materials, so a hundred trees
 // cost one set of buffers.
@@ -16,7 +17,6 @@ import { clone as skelClone } from 'three/addons/utils/SkeletonUtils.js';
 const BASE = new URL('../../assets/models/', import.meta.url).href;
 
 const MODELS = {
-  mage: 'mage.glb',
   alder: 'alder.glb',
   deadTree: 'dead_tree.glb',
   bush: 'bush.glb',
@@ -75,11 +75,6 @@ function prepare(root, name) {
     }
     if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
     if (/baked/.test(m.name)) { m.roughness = Math.min(1, (m.roughness ?? 1)); m.metalness = 0; }
-    if (name === 'mage' && m.map) {
-      // The KayKit palette is crisp pixels; let it stay crisp.
-      m.map.magFilter = THREE.NearestFilter;
-      m.map.minFilter = THREE.LinearMipMapLinearFilter;
-    }
   });
 }
 

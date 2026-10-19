@@ -318,3 +318,14 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
   #tray { right: 12px; }
   #hand { left: 8px; right: 8px; }
 }
+
+/* ---------------------------------------------------------------- online */
+.code { font: 700 44px/1 Cinzel, serif; letter-spacing: .3em; text-align: center; color: #ffcf5a; margin: 10px 0 6px; text-shadow: 0 0 18px #ffcf5a66; }
+.online-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 14px 0 6px; }
+.online-grid > div { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #ffffff22; border-radius: 10px; background: #ffffff08; }
+.online-grid input { text-transform: uppercase; letter-spacing: .2em; font: 600 18px Inter, sans-serif; width: 6.5em; }
+.online-grid button { align-self: flex-start; }
+#modal .link { width: 100%; font: 12px ui-monospace, monospace; background: #0008; color: #cfe; border: 1px solid #ffffff22; padding: 4px 6px; border-radius: 4px; }
+#ol-msg.bad { color: #ff7b7b; }
+.gslot .empty small { display: block; font-size: 9px; opacity: .6; letter-spacing: 0; text-transform: none; }
+.golems.small .gslot .empty small { display: none; }

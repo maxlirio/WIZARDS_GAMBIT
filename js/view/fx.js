@@ -418,7 +418,15 @@ export class Particles {
       i++;
     }
     this.geo.setDrawRange(0, this.n);
-    for (let k = 0; k < this.attrs.length; k++) this.attrs[k].needsUpdate = true;
+    // Upload only the live prefix, and nothing at all when the pool is empty.
+    if (this.n > 0) {
+      for (let k = 0; k < this.attrs.length; k++) {
+        const a = this.attrs[k];
+        a.clearUpdateRanges();
+        a.addUpdateRange(0, this.n * a.itemSize);
+        a.needsUpdate = true;
+      }
+    }
   }
 
   swapOut(i) {
@@ -473,7 +481,9 @@ export function createFx(scene, { quality = 'high' } = {}) {
   // A fixed pool, always in the scene at zero intensity, handed out to
   // flashes and held by emitters. Adding/removing lights would make three.js
   // rebuild every shader in the scene mid-effect.
-  const LIGHT_MAX = quality === 'low' ? 4 : 8;
+  // Three is the whole budget for real lights outside the sun, the sky and
+  // the mages' orbs: every point light in the scene costs every lit pixel.
+  const LIGHT_MAX = quality === 'low' ? 2 : 3;
   const lights = [];
   for (let i = 0; i < LIGHT_MAX; i++) {
     const l = new THREE.PointLight(0xffffff, 0, 1, 1.8);
@@ -979,7 +989,7 @@ export function createFx(scene, { quality = 'high' } = {}) {
           if (Math.random() < 0.25) stars.emit({ x, y: e.y - 0.05, z, n: 1, vy: -0.45, life: 1.2, lifeSpread: 0.4, size: 0.15, sizeEnd: 0.04, color: 0xd2b4ff, alpha: 0.9, fade: 3, spinJitter: 1 });
           else soft.emit({ x, y: e.y - 0.1, z, n: 1, vy: -0.6, vspread: 0.1, life: 1.5, lifeSpread: 0.5, size: 0.12, sizeEnd: 0.03, color: 0xb98bff, colorEnd: 0x6a3cff, alpha: 0.85, fade: 1, turb: 0.5 });
         }
-        if (!e.light && freeLights() > 3) { e.light = acquireLight(true); if (e.light) { e.light.l.color.set(0x9a6cff); e.light.l.distance = 3 + e.r * 2; } }
+        if (!e.light && freeLights() > 1) { e.light = acquireLight(true); if (e.light) { e.light.l.color.set(0x9a6cff); e.light.l.distance = 3 + e.r * 2; } }
         if (e.light) { e.light.l.position.set(e.x, e.y - 0.2, e.z); e.light.l.intensity = 2.5 + 0.6 * Math.sin(now / 150 + e.seed); }
       }
     }
