@@ -35,7 +35,7 @@ import { makeCtx } from '../rules/resolve.js';
 import { moveBudget, canMoveTo, moveReach } from '../rules/units.js';
 import { rangeOrigins } from '../field/query.js';
 import { cardSVG, centreSVG, faceListHTML, SCHOOL_INK, runeGlyphInline, cardBackSVG } from './cards.js';
-import { createArena, SCHOOL_HEX, pushSlideMs } from './arena3d.js';
+import { createArena, SCHOOL_HEX } from './arena3d.js';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -337,30 +337,6 @@ const propName = (id) => { const pr = S.field.props.find((x) => x.id === id); re
  * each into a cue on a timeline. Returns the timeline's length in ms, so the
  * AI's pause can match it.
  */
-/**
- * Lift every push note ahead of the impacts its walk produced. The engine
- * logs [impact(A into B), <B's own notes>, push(B), push(A)]; the view wants
- * [push(A), impact(A into B), push(B), ...], so each push is moved to just
- * before the first impact of the same body that follows the previous push
- * of that body. Nothing else moves.
- */
-function pushOrdered(notes) {
-  const out = notes.slice();
-  for (let i = 0; i < out.length; i++) {
-    const n = out[i];
-    if (n.kind !== 'push') continue;
-    // The previous push of this body, if any, bounds the search.
-    let lo = 0;
-    for (let j = i - 1; j >= 0; j--) if (out[j].kind === 'push' && out[j].id === n.id && out[j].body === n.body) { lo = j + 1; break; }
-    let first = -1;
-    for (let j = lo; j < i; j++) if (out[j].kind === 'impact' && out[j].id === n.id && out[j].body === n.body) { first = j; break; }
-    if (first < 0) continue;
-    out.splice(i, 1);
-    out.splice(first, 0, n);
-  }
-  return out;
-}
-
 function flushFx() {
   let t = 0;
   const flash = new Map();
@@ -369,22 +345,39 @@ function flushFx() {
   let holdDamage = 0;        // ms to delay the next damage cue (a rock still falling)
   let tMeteor = 0;           // when the last meteor strikes, so its boulder appears then
   const cues = () => arena.cues;
-  // The push family keeps its own clock. The engine writes a push's notes
-  // inside out -- the impact, then the struck body's own push, then at last
-  // the pusher's push with its whole travel -- so played in order the slam
-  // flashed first, the struck body slid, and the pusher was then set back to
-  // its start and slid again (user: "keeps restarting and smashing into
-  // things"). Here each push note is lifted ahead of the impacts its walk
-  // caused, every slide gets a start time, an impact lands when its body
-  // reaches the point of contact, and whatever comes after the whole shove
-  // waits for the last slide to end.
-  const slideStart = new Map();   // `${body}:${id}` -> [startMs, fromX, fromY, mm, slideMs]
-  let tSlidesEnd = 0;             // when the last slide of the current shove ends
-  const PUSH_FAMILY = new Set(['push', 'impact', 'carry', 'pushResult', 'scraped']);
-  for (const f of pushOrdered(S.fx.slice(fxSeen))) {
-    if (!PUSH_FAMILY.has(f.kind) && tSlidesEnd > t) { t = tSlidesEnd; tSlidesEnd = 0; slideStart.clear(); }
+  // A rigid-body run (`dyn`) keeps its own clock. The engine writes the note
+  // ahead of everything the run caused and stamps each of those notes with
+  // `dynMs`, the moment inside the run it belongs to; such a note is
+  // scheduled at the run's start plus its stamp, not at the running cursor,
+  // so the number lands when the rock does and the knockdown when the hit
+  // does. The cursor itself jumps past the whole run. A note from inside
+  // the run that carries no stamp (a landing's fall damage, a slam into a
+  // rise) is timed by the event that caused it, or by the timed note just
+  // before it (a kill follows its damage).
+  let dynStart = null, dynNote = null, dynUsed = null;
+  let lastDynT = null;            // when the previous note was timed by the run, its moment
+  const DYN_EVENTS = new Set(['hit', 'crumple', 'wall', 'ward', 'land']);
+  const dynTimeOf = (f) => {
+    if (dynStart === null) return null;
+    if (f.dynMs !== undefined) return dynStart + f.dynMs;
+    if (f.kind === 'damage' && (f.cause === 'fall' || f.cause === 'impact' || f.cause === 'rock')) {
+      const key = `u${f.id}`;
+      if (dynNote.bodies.some((b) => b.key === key)) {
+        const i = dynNote.events.findIndex((e, j) => e.key === key && DYN_EVENTS.has(e.kind) && !dynUsed.has(j));
+        if (i >= 0) { dynUsed.add(i); return dynStart + dynNote.events[i].t; }
+      }
+    }
+    if (lastDynT !== null && (f.kind === 'kill' || f.kind === 'knockdown' || f.kind === 'propHit' || f.kind === 'shatter' || f.kind === 'absorb' || f.kind === 'damage')) return lastDynT;
+    return null;
+  };
+  for (const f of S.fx.slice(fxSeen)) {
     const line = narrate(f);
     if (line) logLine(line, f.kind);
+    // Inside a run: the note's own moment, and the cursor is put back after.
+    const at = dynTimeOf(f);
+    const keep = t;
+    if (at !== null) t = at;
+    lastDynT = at;
     switch (f.kind) {
       case 'match': t += 350; for (const u of f.uids) flash.set(u, 'match'); break;
       case 'resolveStart': {
@@ -429,35 +422,21 @@ function flushFx() {
       }
       case 'strike': { const { from, to } = f; later(t - 200, () => cues().strike(from ?? f.id, to)); t += 300; break; }
       case 'kill': { const id = f.id; later(t + 150, () => cues().kill(id)); t += 500; break; }
-      case 'carry': {
-        // Rides the slide of the prop it stands on: same start, same duration.
-        const { id, mm, from, dir, speed, to, on } = f;
-        const st = slideStart.get(`prop:${on}`);
-        later(st ? st[0] : t, () => cues().carry(id, mm, from, dir ?? 0, speed ?? 50, to ?? null));
-        break;
-      }
-      case 'push': {
-        const { id, body, mm, from, dir, force, speed, to } = f;
-        const ms = pushSlideMs(mm, speed ?? 50);
-        slideStart.set(`${body}:${id}`, [t, from?.x ?? to?.x ?? 0, from?.y ?? to?.y ?? 0, mm, ms]);
-        tSlidesEnd = Math.max(tSlidesEnd, t + ms + 60);
-        later(t, () => cues().push(id, body, mm, from, dir ?? 0, force ?? 1, speed ?? 50, to ?? null));
-        break;
-      }
-      case 'impact': {
+      // A rigid-body run: held at its first frame NOW (the sync has already
+      // moved the engine's targets), played at its turn, and the cursor
+      // jumps past it. The notes it caused follow, stamped with their moment.
+      case 'dyn': {
         const note = f;
-        // The slam lands when the mover reaches the point of contact: that
-        // far along its slide, on a cubic ease-out.
-        const st = slideStart.get(`${f.body}:${f.id}`);
-        if (st && f.at && st[3] > 0) {
-          const frac = Math.min(1, Math.hypot(f.at.x - st[1], f.at.y - st[2]) / st[3]);
-          const k = 1 - Math.cbrt(Math.max(0, 1 - frac));           // inverse of ease-out(1-(1-t)^3)
-          t = Math.max(t, st[0] + Math.round(k * st[4]));
-        }
-        later(t, () => cues().impact(note));
-        tSlidesEnd = Math.max(tSlidesEnd, t + 260);
+        dynStart = t; dynNote = note; dynUsed = new Set();
+        cues().dynHold(note);
+        later(t, () => cues().dyn(note));
+        for (const line2 of narrateDyn(note)) logLine(line2, 'dyn');
+        t += (note.ms || 0) + 150;
         break;
       }
+      // A rider on a sliding piece: the run's playback carries it (the note's
+      // `carried` list); the line in the log is all that is left to do.
+      case 'carry': break;
       case 'topple': {
         const { id, dir, hits } = f;
         // Marked NOW, before render() syncs the destroyed piece away, so it
@@ -513,6 +492,7 @@ function flushFx() {
       case 'move': t += 120; break;
       default: break;
     }
+    if (at !== null) t = Math.max(keep, t);
   }
   fxSeen = S.fx.length;
   pendingFlash = flash;
@@ -520,6 +500,21 @@ function flushFx() {
 }
 let pendingFlash = new Map();
 const SOURCE = { objective: 'an objective completed', mage: 'a mage slain', golem: 'a golem slain' };
+
+/** The log lines a rigid-body run deserves: the slams, the crush, a body going over an edge. */
+function narrateDyn(note) {
+  const idOf = new Map((note.bodies || []).map((b) => [b.key, b]));
+  const who = (key) => { const b = idOf.get(key); if (!b) return 'something'; return b.body === 'unit' ? esc(unitName(b.id)) : `a ${esc(propName(b.id))}`; };
+  const pad = '&nbsp;&nbsp;&nbsp;&nbsp;';
+  const out = [];
+  for (const e of note.events || []) {
+    if (e.kind === 'hit' && (e.dmg > 0 || idOf.get(e.into)?.body === 'unit')) out.push(`${pad}<b>${who(e.key)} slams into ${who(e.into)}</b>${e.dmg > 0 ? ` for <span class="red">${e.dmg}</span>` : ', no harm done'}`);
+    else if (e.kind === 'crumple') out.push(`${pad}<b>${who(e.key)} is crushed under ${who(e.by)}</b>`);
+    else if ((e.kind === 'wall' || e.kind === 'ward') && idOf.get(e.key)?.body === 'unit' && e.speed > 1500) out.push(`${pad}<b>${who(e.key)} is slammed against ${e.kind === 'ward' ? 'the ward' : 'a wall of rock'}</b>`);
+    else if (e.kind === 'edge') out.push(`${pad}${who(e.key)} goes over the edge`);
+  }
+  return out;
+}
 
 function narrate(f) {
   const P = (p) => `<span class="${pCls(p)}">${pName(p)}</span>`;
@@ -559,16 +554,7 @@ function narrate(f) {
     case 'carry': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} rides the ${esc(propName(f.on))} ${m(f.mm)}`;
     case 'scraped': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} is scraped off the ${esc(propName(f.off))}`;
     case 'noOrigin': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="dim">nothing to pull toward or push from: ${f.p === HUMAN ? 'your' : HUMAN === null ? pName(f.p) + "'s" : 'the enemy'} mage is down</span>`;
-    case 'push': {
-      const force = f.force ? ` with force ${f.force}` : '';
-      return f.body === 'unit' ? `&nbsp;&nbsp;&nbsp;&nbsp;pushes ${esc(unitName(f.id))} ${m(f.mm)}${force}` : `&nbsp;&nbsp;&nbsp;&nbsp;shoves a ${esc(propName(f.id))} ${m(f.mm)}${force}`;
-    }
-    case 'impact': {
-      const who = f.body === 'unit' ? esc(unitName(f.id)) : `a ${esc(propName(f.id))}`;
-      const into = f.into?.kind === 'unit' ? esc(unitName(f.into.id)) : f.into?.kind === 'prop' ? `a ${esc(propName(f.into.id))}`
-        : f.into?.kind === 'edge' ? 'the edge of the ward' : f.into?.kind === 'rise' ? 'a rise in the ground' : 'a wall of rock';
-      return `&nbsp;&nbsp;&nbsp;&nbsp;<b>${who} slams into ${into}</b>${f.dmg > 0 ? ` for <span class="red">${f.dmg}</span>` : ', no harm done'}`;
-    }
+    case 'dyn': return null;
     case 'topple': {
       const onto = (f.hits || []).map((id) => esc(unitName(id)));
       return `&nbsp;&nbsp;&nbsp;&nbsp;<b>the ${esc(propName(f.id))} topples</b>${onto.length ? ` onto ${onto.join(' and ')}` : ''}`;

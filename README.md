@@ -27,7 +27,7 @@ on the ground shows exactly where it can walk (what a wall or a cliff cuts off i
 not lit). When a card asks a
 question, the answers glow on the table or the field and are listed under the
 question. Hover anything to read it in the inspector; right-click a table card to
-see it big. **Tab** hides the panels,
+see it big. Pushes are rigid-body motion: boulders roll, fly off edges and land on people. **Tab** hides the panels,
 **H** homes the camera, **Esc** cancels.
 
 The mage is an original character built and rigged in code (`js/view/mage.js`:

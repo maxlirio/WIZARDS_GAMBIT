@@ -430,22 +430,37 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
 | standing stone | 4 | 5 | a quake can crack it |
 | wall | 6 | 6 | slides a hand's width, but it slides |
 
-- **Pushed:** a push has a **force** (1–8) and a **direction you drag**. A body of
-  mass *m* slides `force × 0.75m / m`: a mage (mass 1) the whole way, a boulder half,
-  a standing stone a quarter, a wall a sixth. Golem units weigh their tier: A 3, B 2,
-  C 1.
+- **Pushed:** a push has a **force** (1–8) and a **direction you drag**, and what
+  happens next is **rigid-body motion**, simulated by the engine in integer
+  millimetres at 32 steps a second (so two machines in lockstep see the same
+  trajectory). The force sets a launch speed: on the flat, a body of mass *m* that
+  SLIDES comes to rest after `force × 0.75m / m` — a mage (mass 1) the whole way, a
+  wall a sixth. Golem units weigh their tier: A 3, B 2, C 1.
+- **Rolling:** a **boulder rolls**. It loses speed only to rolling resistance (a fifth
+  of sliding friction), so the same launch carries it several times further; it
+  **speeds up downhill** and slows uphill, **flies off a cliff edge** and lands with a
+  thump, **bounces** off walls and the ward, and a hard landing cracks it. Floating
+  rocks glide. Everything else — units, shards, standing stones, walls — slides and
+  stops.
+- **Impacts:** bodies collide. Each takes damage from the **other's momentum** (mass ×
+  speed, 1 point per 2.5 mass·m/s, at most 5), so a rolling boulder hurts more than a
+  thrown shard and a fast body more than a slow one; a thing that cannot move (an
+  earth wall, the arena's ward, a rise too tall to climb) hits you with your own. The
+  struck body is knocked on along the line of contact, sharing momentum by mass — a
+  heavy rock barely notices a mage, a mage goes flying — and nothing passes the
+  whole blow along like a line of balls. A unit that takes 2+ from an impact is
+  **knocked down** and loses its action this turn. `[Crush]` doubles what the pushed
+  body deals.
+- **Crumpled:** a rock that comes **down on a unit** — rolled off a ledge above it,
+  dropped on it, thrown over it — lands on it: damage from the rock's mass and its
+  falling speed (1 per 3.5 mass·m/s, at most 5), a knockdown, and the rock bounces
+  off to one side. Whatever stood on a boulder when it started rolling is thrown
+  off; whatever stands on a sliding piece rides it.
+- **Falls** inside a push are real falls: a unit knocked over an edge takes the fall
+  table's damage for the drop, credited to the pusher.
 - **Pulled:** "toward you" / "to you" means toward your living mage (or, with the
   mage down, your nearest range origin; with neither, nothing happens). A pull comes
-  to rest **at your feet**: its travel is capped at the gap between the two bodies,
-  so a pulled rock never slams into you.
-- **Impacts:** when a slide is stopped early, what is left of it is energy — mass ×
-  remaining travel — and **both** the moving body and whatever stopped it take
-  `energy / 1.5m` damage. Heavier things hit harder; things stopped sooner hit harder.
-  The collision is inelastic: **the moving body stops where it hit**, and whatever it
-  struck is knocked on with **half** the leftover travel (scaled by its own mass), so
-  a thrown mage can knock a golem into a pillar but a line of bodies never clacks
-  along like a Newton's cradle. A unit that takes 2+ from an impact is **knocked down**
-  and loses its action this turn. `[Crush]` doubles impact damage.
+  to rest **at your feet**: its travel is capped at the gap between the two bodies.
 - **Toppled:** a tall piece (standing stone, tree) pushed with enough force — or hit
   hard enough — **falls over along the push**, dealing 2 to every unit under its
   length, and is gone.

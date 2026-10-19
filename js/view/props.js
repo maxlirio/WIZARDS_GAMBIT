@@ -70,9 +70,10 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
    * by position so split normals and seams do not split the rock. Cached per
    * source geometry.
    */
-  const soloCache = new WeakMap();
-  function soloIsland(geo) {
-    if (soloCache.has(geo)) return soloCache.get(geo);
+  const soloCache = new WeakMap(), restCache = new WeakMap();
+  function soloIsland(geo, { rest = false } = {}) {
+    const cache = rest ? restCache : soloCache;
+    if (cache.has(geo)) return cache.get(geo);
     const idx = geo.index ? geo.index.array : null;
     const pos = geo.attributes.position.array;
     const nv = pos.length / 3;
@@ -90,11 +91,11 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     const size = new Map(); let best = -1, bestN = 0;
     for (let t = 0; t < idx.length; t += 3) { const r = find(rep[idx[t]]); const n = (size.get(r) || 0) + 1; size.set(r, n); if (n > bestN) { bestN = n; best = r; } }
     const keep = [];
-    for (let t = 0; t < idx.length; t += 3) if (find(rep[idx[t]]) === best) keep.push(idx[t], idx[t + 1], idx[t + 2]);
+    for (let t = 0; t < idx.length; t += 3) if ((find(rep[idx[t]]) === best) !== rest) keep.push(idx[t], idx[t + 1], idx[t + 2]);
     const out = geo.clone();
     out.setIndex(keep);
     out.computeBoundingBox(); out.computeBoundingSphere();
-    soloCache.set(geo, out);
+    cache.set(geo, out);
     return out;
   }
 
@@ -129,7 +130,7 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     inner.add(body);
     // What the builder fills in: the hooks, and how far the piece leans when
     // whole (base) and how much further it leans as it breaks (extra).
-    const P = { r, h, seed, rnd, body, inner, lean: { base: 0, extra: 0 }, burning: null, damage: null, update: null };
+    const P = { r, h, seed, rnd, body, inner, rock: null, lean: { base: 0, extra: 0 }, burning: null, damage: null, update: null };
     const leanAxis = new THREE.Vector3(Math.cos(rnd() * 6.28), 0, Math.sin(rnd() * 6.28)).normalize();
     const applyLean = (frac) => body.quaternion.setFromAxisAngle(leanAxis, P.lean.base + P.lean.extra * frac);
 
@@ -143,7 +144,7 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     hit.userData.pick = { kind: 'prop', id: pr.id };
     g.add(hit);
     Object.assign(g.userData, {
-      h, r, kind: pr.kind, inner,
+      h, r, kind: pr.kind, inner, rock: P.rock || null,
       setBurning: (on) => P.burning?.(!!on),
       setDamage: (frac) => { frac = THREE.MathUtils.clamp(frac || 0, 0, 1); applyLean(frac); P.damage?.(frac); },
       update: (dt, now) => P.update?.(dt, now),
@@ -223,16 +224,32 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     const which = ['boulderA', 'boulderB', 'boulderC'][seed % 3];
     const tint = [0xf2efe8, 0xcfdcbd, 0xe3d6b8, 0xc9cfd8][(seed >> 3) % 4];
     const rock = fittedRock(which, r, h, { tint });
-    rock.position.y -= h * 0.07;              // settled in, not resting on the grass
     rock.rotation.y = (seed % 7) * 0.9;
-    body.add(rock);
-    // Moss on the shaded side of a mossy rock, and the chips knocked off it
-    // (shown one by one as the damage mounts): ONE mesh, no shadow.
-    const specs = [];
-    if (tint === 0xcfdcbd) for (let i = 0; i < 4; i++) specs.push([MOSS, r * (0.22 + rnd() * 0.12), { x: (rnd() - 0.5) * r * 1.2, y: h * (0.3 + rnd() * 0.5), z: -r * 0.75 - rnd() * 0.15, flat: 0.35 }]);
-    const fixedN = specs.length;
-    for (let i = 0; i < 5; i++) specs.push([CHIP, 0.05 + rnd() * 0.06, { x: Math.cos(i * 1.3 + seed) * r * (1.2 + rnd() * 0.5), y: 0.03, z: Math.sin(i * 1.3 + seed) * r * (1.2 + rnd() * 0.5) }]);
-    const lump = lumps(mats.lump, specs, rnd, fixedN);
+    // The bake is the stone plus its companions (grass tufts, a pebble),
+    // separate islands of triangles. The STONE goes into a group the arena
+    // turns when the boulder rolls, with the moss that grows on it; the
+    // companions keep the same fit but stay in `body`, on the grass, or
+    // they would orbit the rolling rock.
+    const tufts = rock.clone();
+    rock.traverse((o) => { if (o.isMesh) o.geometry = soloIsland(o.geometry); });
+    tufts.traverse((o) => { if (o.isMesh) o.geometry = soloIsland(o.geometry, { rest: true }); });
+    const roll = new THREE.Group();
+    roll.position.y = -h * 0.07;              // settled in, not resting on the grass
+    roll.add(rock);
+    body.add(roll);
+    tufts.position.y += roll.position.y;
+    body.add(tufts);
+    P.rock = roll;
+    // Moss on the shaded side of a mossy rock; the chips knocked off it
+    // (shown one by one as the damage mounts) lie on the ground around.
+    if (tint === 0xcfdcbd) {
+      const moss = [];
+      for (let i = 0; i < 4; i++) moss.push([MOSS, r * (0.22 + rnd() * 0.12), { x: (rnd() - 0.5) * r * 1.2, y: h * (0.3 + rnd() * 0.5), z: -r * 0.75 - rnd() * 0.15, flat: 0.35 }]);
+      roll.add(lumps(mats.lump, moss, rnd));
+    }
+    const chips = [];
+    for (let i = 0; i < 5; i++) chips.push([CHIP, 0.05 + rnd() * 0.06, { x: Math.cos(i * 1.3 + seed) * r * (1.2 + rnd() * 0.5), y: 0.03, z: Math.sin(i * 1.3 + seed) * r * (1.2 + rnd() * 0.5) }]);
+    const lump = lumps(mats.lump, chips, rnd, 0);
     body.add(lump);
     P.lean.base = 0.02 + rnd() * 0.03;
     P.lean.extra = 0.14;

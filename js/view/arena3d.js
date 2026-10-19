@@ -37,19 +37,6 @@ export const SCHOOL_HEX = { red: 0xff6a52, blue: 0x52b6ff, green: 0x5ee68f, purp
 /** The pushing school's blue-white: the propulsion behind a shoved body, the drag arrow. */
 const PUSH_HEX = 0x7fe0ff;
 
-/**
- * How long a push's slide takes on screen, in ms. The engine's `speed`
- * (0..100) is the launch speed; the slide eases out from it, so a hard push
- * covers the same distance faster rather than further. main.js uses this to
- * time the impact after the slide, so the number lives in one place.
- */
-export function pushSlideMs(mm, speed = 50) {
-  const d = Math.max(0.2, mm * MM);
-  const v0 = 3 + speed * 0.09;            // m/s at launch, 3..12
-  // A cubic ease-out leaves at three times the mean speed: T = 3d / v0.
-  return Math.round(Math.max(300, Math.min(1500, (3 * d / v0) * 1000)));
-}
-
 export function createArena(host, state, handlers = {}) {
   const a = state.arena;
   const W = a.w * MM, H = a.h * MM;
@@ -175,7 +162,7 @@ export function createArena(host, state, handlers = {}) {
     label.className = `ulabel p${u.owner}`;
     labels.appendChild(label);
     scene.add(actor.root);
-    return { actor, base, label, unit: u, target: new THREE.Vector3(u.x * MM, u.z * MM, u.y * MM), vy: 0, airborne: false, slide: null, crushedAt: -1e9 };
+    return { actor, base, label, unit: u, target: new THREE.Vector3(u.x * MM, u.z * MM, u.y * MM), vy: 0, airborne: false, dyn: null, ride: null, crushedAt: -1e9 };
   }
 
   /* ---------------------------------------------------------- sync */
@@ -188,7 +175,7 @@ export function createArena(host, state, handlers = {}) {
       let rec = actors.get(u.id);
       if (u.dead) {
         if (rec && !rec.actor.dead) {
-          if (rec.slide) { endSlide(rec.slide); rec.slide = null; }
+          dynRelease(rec);
           if (rec.burning) { rec.burning = false; fx.unburn(`u${u.id}`); }
           rec.actor.die();
           const kept = rec;
@@ -235,7 +222,7 @@ export function createArena(host, state, handlers = {}) {
       } else if (!alight && rec.burning) { rec.burning = false; fx.unburn(`u${u.id}`); }
     }
     for (const [id, rec] of actors) {
-      if (!seen.has(id)) { if (rec.slide) endSlide(rec.slide); rec.gather?.cancel(); if (rec.burning) { rec.burning = false; fx.unburn(`u${id}`); } scene.remove(rec.actor.root); rec.label.remove(); rec.actor.dispose(); actors.delete(id); }
+      if (!seen.has(id)) { dynRelease(rec); rec.gather?.cancel(); if (rec.burning) { rec.burning = false; fx.unburn(`u${id}`); } scene.remove(rec.actor.root); rec.label.remove(); rec.actor.dispose(); actors.delete(id); }
     }
     for (const pr of s.field.props) {
       let m = propMeshes.get(pr.id);
@@ -370,46 +357,287 @@ export function createArena(host, state, handlers = {}) {
   const unitTop = (id) => { const rec = actors.get(id); const p = unitPos(id); if (p && rec) p.y += rec.actor.height * 0.55; return p; };
   const mageOf = (p) => [...actors.values()].find((r) => r.unit.owner === p && r.unit.kind === 'mage');
 
-  /* ---------------------------------------------------------- slides */
-  // A pushed body does not walk: it is THROWN, with a propulsion streaming
-  // out behind it that fades as it decelerates. One slide record per body,
-  // stepped by the frame loop; the plume is a pair of additive cones so no
-  // light is spent on it.
-  function startSlide(A, B, D, dur, force, extra) {
-    fx.ring(A.x, A.y, A.z, 0.9 + force * 0.2, PUSH_HEX, { dur: 0.45, width: 0.14 });
-    fx.flash(A.x, A.y + 0.8, A.z, PUSH_HEX, 6 + force * 1.5, 0.3, 4 + force * 0.5);
-    fx.pools.sparks.emit({ x: A.x - D.x * 0.3, y: A.y + 0.6, z: A.z - D.z * 0.3, n: 10 + force * 4, spread: 0.2, vx: -D.x * 4, vz: -D.z * 4, vspread: 2, vy: 1, life: 0.5, size: 0.08, sizeEnd: 0.02, color: 0xffffff, colorEnd: PUSH_HEX, gravity: -4 });
-    fx.dust(A.x, A.y, A.z, { n: 10 + force * 2, size: 0.45 });
-    const plume = makePlume(force);
-    scene.add(plume);
-    return { from: A, to: B, D, dur, t: 0, force, plume, acc: 0, travelled: 0, lastX: A.x, lastZ: A.z, ...extra };
+  /* ---------------------------------------------------------- dynamics playback */
+  // The engine's `dyn` note is a sampled rigid-body run: every body it moved,
+  // its trajectory at 16 Hz, and the events along the way (a hit, a landing,
+  // a rock coming down on somebody). Nothing here is physics; it is a
+  // replay. A play owns the listed bodies' positions from the moment its
+  // cue fires until the note's `ms` have elapsed, then hands them back to
+  // the ordinary walk-to-target (whose target is where the engine put them,
+  // which is where the last frame leaves them). Between the engine writing
+  // the note and the cue's turn on the timeline the bodies are HELD at the
+  // note's first frame (dynHold), or the sync would already have walked them
+  // to where the rock ends up before the rock had moved.
+  const dynPlays = [];
+  const dynQueue = [];                 // notes held, not yet playing, in timeline order
+  const _axis = new THREE.Vector3(), _dq = new THREE.Quaternion(), _dv = new THREE.Vector3();
+  const PROP_COLOUR = (kind) => (kind === 'shard' ? 0x7fdcff : kind === 'tree' ? 0x2a1d12 : kind === 'earthwall' ? 0x4a3a28 : 0x6b6358);
+
+  /** The note's body resolved to what draws it, or null if it is not on the field. */
+  function dynBody(b) {
+    if (b.body === 'unit') { const rec = actors.get(b.id); return rec ? { ...b, rec, unit: true } : null; }
+    const m = propMeshes.get(b.id);
+    return m ? { ...b, m, unit: false } : null;
   }
-  /** One frame of the propulsion behind a sliding body at (x, y, z); `thrust` 1..0 as it dies. */
-  function plumeStep(sl, x, y, z, groundY, thrust, dt) {
-    const { D, force, plume } = sl;
-    plume.position.set(x - D.x * 0.25, y, z - D.z * 0.25);
-    plume.rotation.y = Math.atan2(D.z, -D.x);
-    const flick = 0.85 + 0.15 * Math.sin(performance.now() * 0.05);
-    plume.scale.set(0.3 + thrust * flick, 0.5 + thrust * 0.5, 0.5 + thrust * 0.5);
-    plume.children[0].material.opacity = 0.5 * thrust;
-    plume.children[1].material.opacity = 0.8 * thrust;
-    // The nozzle itself: a hot glow where the magic meets the body.
-    fx.pools.soft.emit({ x: x - D.x * 0.2, y, z: z - D.z * 0.2, n: 1, life: 0.08, size: (0.5 + force * 0.08) * (0.5 + thrust * 0.5), color: 0xffffff, alpha: 0.7 * thrust, fade: 0 });
-    // Motes streaming back out of the nozzle, and the ground scuffed as it goes.
-    sl.acc += dt * (70 + force * 25) * thrust;
-    const v = 3 + force * 0.7;
-    while (sl.acc >= 1) {
-      sl.acc -= 1;
-      fx.pools.soft.emit({ x: x - D.x * 0.3, y: y + (Math.random() - 0.5) * 0.3, z: z - D.z * 0.3, n: 1, spread: 0.12, vx: -D.x * v, vz: -D.z * v, vspread: 0.9, vy: 0.3, life: 0.4, lifeSpread: 0.15, size: 0.22, sizeEnd: 0.05, color: 0xdffbff, colorEnd: PUSH_HEX, alpha: 0.85, fade: 1, drag: 1.5 });
-      if (Math.random() < 0.3) fx.pools.sparks.emit({ x: x - D.x * 0.2, y: y - 0.2, z: z - D.z * 0.2, n: 1, spread: 0.1, vx: -D.x * v * 0.7, vz: -D.z * v * 0.7, vspread: 1.2, vy: 1.2, life: 0.6, size: 0.06, sizeEnd: 0.015, color: 0xffffff, colorEnd: PUSH_HEX, gravity: -6 });
+  const dynOwner = (d) => (d.unit ? d.rec.dyn : d.m.userData.dyn);
+  const dynOwn = (d, owner) => { if (d.unit) d.rec.dyn = owner; else d.m.userData.dyn = owner; };
+  /** A unit leaves the playback (it died, it was removed): nothing owns it any more. */
+  function dynRelease(rec) { rec.dyn = null; rec.ride = null; }
+
+  /** Freeze one body of `note` at the note's first frame until the note plays. */
+  function dynHoldKey(note, key, hold) {
+    const f0 = note.frames?.[0]?.p;
+    if (!f0) return;
+    const b = note.bodies.find((x) => x.key === key);
+    if (b) {
+      const d = dynBody(b);
+      if (!d || dynOwner(d)) return;                 // on the field and not already in a play or an earlier hold
+      const p = f0[key];
+      if (!p) return;
+      dynOwn(d, hold);
+      // A unit keeps its height (a lift cue may still be raising it); a piece
+      // of terrain takes the frame's, which is where it rests.
+      if (d.unit) { const pos = d.rec.actor.root.position; pos.x = p[0] * MM; pos.z = p[1] * MM; d.rec.actor.moving = false; }
+      else d.m.position.set(p[0] * MM, p[2] * MM, p[1] * MM);
+      return;
     }
-    sl.travelled += Math.hypot(x - sl.lastX, z - sl.lastZ);
-    sl.lastX = x; sl.lastZ = z;
-    if (sl.travelled > 0.14) { sl.travelled = 0; fx.dust(x - D.x * 0.2, groundY, z - D.z * 0.2, { n: 3, size: 0.4, up: 0.8 }); }
+    // A rider: it is where it stands; it just must not walk off yet.
+    const rec = actors.get(Number(key.slice(1)));
+    if (rec && !rec.dyn) rec.dyn = hold;
   }
-  function endSlide(sl) {
-    scene.remove(sl.plume);
-    for (const c of sl.plume.children) { c.geometry.dispose(); c.material.dispose(); }
+  /** Called the moment the note is read, ahead of its turn: nobody moves until the play starts. */
+  function dynHold(note) {
+    const hold = { note, hold: true };
+    for (const b of note.bodies || []) dynHoldKey(note, b.key, hold);
+    for (const c of note.carried || []) dynHoldKey(note, c.key, hold);
+    dynQueue.push(note);
+  }
+
+  /** A unit leaving the ground flails until the engine says it landed. */
+  function tumbleUntilLand(play, d, fromT) {
+    const land = play.events.find((e) => e.key === d.key && e.kind === 'land' && e.t > fromT);
+    const air = ((land ? land.t : play.ms) - fromT) / 1000;
+    const a = d.rec.actor;
+    if (a.tumble) a.tumble(Math.max(0.15, air)); else a.hit();
+  }
+
+  /** Start the replay: every body back to its first frame, then driven by the frame loop. */
+  function dynPlay(note) {
+    const qi = dynQueue.indexOf(note);
+    if (qi >= 0) dynQueue.splice(qi, 1);
+    const frames = note.frames || [];
+    if (!frames.length) return;
+    const play = { note, t0: performance.now(), ms: note.ms || 0, frames, fi: 0, events: (note.events || []).slice().sort((p, q) => p.t - q.t), ei: 0, bodies: [], byKey: new Map(), riders: [] };
+    for (const b of note.bodies || []) {
+      const d = dynBody(b);
+      if (!d) continue;
+      const p0 = frames[0].p[b.key];
+      if (!p0) continue;
+      d.x = p0[0] * MM; d.y = p0[2] * MM; d.z = p0[1] * MM;
+      d.vx = d.vz = d.vy = d.speed = d.lean = d.travel = 0; d.air = false;
+      dynOwn(d, play);
+      play.bodies.push(d); play.byKey.set(b.key, d);
+      const p1 = frames[1]?.p[b.key];
+      const rises = p1 ? p1[2] > p0[2] + 1 : false;
+      const moves = p1 ? Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) > 5 : false;
+      if (d.unit) {
+        const rec = d.rec;
+        rec.ride = null; rec.carry = null; rec.airY = 0; rec.airborne = false; rec.falling = false; rec.vy = 0; rec.airApplied = 0;
+        rec.actor.root.position.set(d.x, d.y, d.z);
+        rec.actor.moving = false;
+        // Thrown: it leaves along the ground stumbling, or leaves the ground flailing.
+        if (rises) { d.air = true; tumbleUntilLand(play, d, 0); }
+        else if (moves) { if (rec.actor.shove) rec.actor.shove(); else rec.actor.hit(); }
+      } else {
+        d.m.position.set(d.x, d.y, d.z);
+        if (d.sphere) {
+          // A boulder ROLLS: the drawn rock turns about its own centre by
+          // distance / r, its orientation kept from one shove to the next.
+          const rock = d.m.userData.rock;
+          if (rock) {
+            if (!rock.userData.rest) rock.userData.rest = { q: rock.quaternion.clone(), p: rock.position.clone() };
+            rock.userData.roll ||= new THREE.Quaternion();
+            d.roll = rock.userData.roll;
+            d.centre = new THREE.Vector3(0, rock.userData.rest.p.y + d.m.userData.h * 0.5, 0);
+          }
+        }
+        if (moves || rises) fx.dust(d.x, d.y, d.z, { n: 8, size: 0.45, spread: d.r * MM, up: 0.8 });
+      }
+    }
+    for (const c of note.carried || []) {
+      const rec = actors.get(Number(c.key.slice(1)));
+      const on = play.byKey.get(c.on);
+      if (!rec || !on) continue;
+      rec.dyn = play; rec.ride = { on, off: [c.off[0] * MM, c.off[1] * MM], z: c.z * MM };
+      rec.actor.brace?.();
+      play.riders.push(rec);
+    }
+    dynPlays.push(play);
+  }
+
+  /** The replay is over: the bodies go back to the ordinary walk, or into the next note's hold. */
+  function dynFinish(play) {
+    const rehold = (key) => {
+      const next = dynQueue.find((n) => (n.bodies || []).some((b) => b.key === key) || (n.carried || []).some((c) => c.key === key));
+      if (next) dynHoldKey(next, key, { note: next, hold: true });
+    };
+    for (const d of play.bodies) {
+      if (dynOwner(d) !== play) continue;
+      if (d.unit) { d.rec.dyn = null; d.rec.ride = null; d.rec.airY = 0; d.rec.airborne = false; d.rec.falling = false; d.rec.vy = 0; }
+      else d.m.userData.dyn = null;
+      rehold(d.key);
+    }
+    for (const rec of play.riders) { if (rec.dyn === play) { rec.dyn = null; rec.ride = null; rehold(`u${rec.unit.id}`); } }
+  }
+
+  /** The slam itself at the point of contact `c`, the mover going `D`: flash, sparks, dust, the ground jumps. */
+  function slam(c, D, dmg, colour = 0xe6fbff) {
+    const hard = Math.min(1, 0.35 + dmg * 0.25);
+    fx.flash(c.x, c.y + 0.8, c.z, colour, 8 + dmg * 5, 0.22, 4 + dmg);
+    fx.pools.sparks.emit({ x: c.x, y: c.y + 0.7, z: c.z, n: 18 + dmg * 10, spread: 0.15, radial: 3 + dmg, radialSpread: 1.5, vx: -D.x * 2, vz: -D.z * 2, vy: 2, life: 0.55, lifeSpread: 0.2, size: 0.09, sizeEnd: 0.02, color: 0xffffff, colorEnd: PUSH_HEX, gravity: -9, drag: 0.6 });
+    fx.pools.soft.emit({ x: c.x, y: c.y + 0.7, z: c.z, n: 1, life: 0.18, size: 0.9 + dmg * 0.4, sizeEnd: 0.2, color: 0xffffff, alpha: 0.9 * hard, fade: 0 });
+    fx.ring(c.x, c.y, c.z, 0.9 + dmg * 0.35, 0xdff6ff, { dur: 0.4, width: 0.12 });
+    fx.dust(c.x, c.y, c.z, { n: 12 + dmg * 6, size: 0.5, spread: 0.4, up: 1 + dmg * 0.3 });
+    fx.shake(Math.min(0.2, 0.04 + 0.03 * dmg), 0.35);
+  }
+  /** What a struck body does: a unit reels (or is slammed flat), a piece of terrain shudders and chips. */
+  function jolt(d, dmg, D, away) {
+    if (d.unit) {
+      const rec = d.rec;
+      if (dmg >= 2) { rec.actor.hit('crush'); rec.crushedAt = performance.now(); } else rec.actor.hit();
+      if (away) rec.actor.lookAt(d.x - D.x * 2, d.z - D.z * 2);
+    } else {
+      const m = d.m, inner = m.userData.inner;
+      fx.tween(0.4, (t) => { const k = Math.sin(t * Math.PI) * (1 - t) * (0.06 + dmg * 0.03); inner.scale.set(1 + k, 1 - k * 1.4, 1 + k); }, () => inner.scale.setScalar(1));
+      // Rock chips fly on ANY bump, harder with damage: stone meeting stone is loud even when nothing cracks.
+      fx.debris(m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, { n: 6 + dmg * 4, colour: PROP_COLOUR(m.userData.kind), size: 0.09, spread: m.userData.r, up: 2.5 + dmg });
+    }
+  }
+
+  /** One of the note's events, at its moment. */
+  function dynEvent(play, ev) {
+    const d = play.byKey.get(ev.key);
+    const P = ev.at ? new THREE.Vector3(ev.at.x * MM, ev.at.z * MM, ev.at.y * MM) : d ? new THREE.Vector3(d.x, d.y, d.z) : null;
+    if (!P) return;
+    const r = d ? d.r * MM : 0.3;
+    const dir = d && d.speed > 0.05 ? new THREE.Vector3(d.vx, 0, d.vz).normalize() : new THREE.Vector3(1, 0, 0);
+    switch (ev.kind) {
+      case 'hit': {
+        const o = play.byKey.get(ev.into);
+        const D = o && (o.x !== P.x || o.z !== P.z) ? new THREE.Vector3(o.x - P.x, 0, o.z - P.z).normalize() : dir;
+        const c = P.clone().addScaledVector(D, r);
+        const dmg = ev.dmg || 0;
+        slam(c, D, dmg);
+        if (d) jolt(d, dmg, D, false);
+        if (o) jolt(o, dmg, D, true);
+        else fx.debris(c.x, c.y, c.z, { n: 3 + dmg, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });
+        break;
+      }
+      case 'wall': case 'ward': {
+        // Into a rise in the ground, or the ward's wall of light.
+        const c = P.clone().addScaledVector(dir, r);
+        const dmg = Math.min(4, Math.round((ev.speed || 0) / 1800));
+        slam(c, dir, dmg, ev.kind === 'ward' ? 0xbfe8ff : 0xe6fbff);
+        if (ev.kind === 'ward') fx.pools.sparks.emit({ x: c.x, y: c.y + 1.2, z: c.z, n: 24 + dmg * 8, spread: 0.3, vspread: 2.5, vy: 1, life: 0.7, size: 0.08, sizeEnd: 0.02, color: 0xffffff, colorEnd: 0x7fe0ff, gravity: -5 });
+        else fx.debris(c.x, c.y, c.z, { n: 3 + dmg, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });
+        if (d) jolt(d, dmg, dir, false);
+        break;
+      }
+      case 'edge':
+        fx.dust(P.x, P.y, P.z, { n: 10, size: 0.45, spread: 0.3, up: 0.8 });
+        if (d) { d.air = true; if (d.unit) tumbleUntilLand(play, d, ev.t); }
+        break;
+      case 'land': {
+        const hard = Math.min(1, (ev.speed || 0) / 7000);
+        const heavy = d ? Math.min(1, (d.mass || 1) / 3) : 0.5;
+        if (d) d.air = false;
+        fx.dust(P.x, P.y, P.z, { n: Math.round(10 + 40 * hard), size: 0.5 + 0.5 * hard, spread: 0.3 + r, up: 0.8 + 1.5 * hard });
+        if (hard > 0.2) { fx.ring(P.x, P.y, P.z, 0.8 + 1.4 * hard, 0xd9c9a8, { dur: 0.5 }); fx.shake(0.03 + 0.14 * hard * heavy, 0.35); }
+        if (d && !d.unit && hard > 0.4) fx.debris(P.x, P.y, P.z, { n: 4, colour: PROP_COLOUR(d.m.userData.kind), size: 0.08, spread: r, up: 2 });
+        break;
+      }
+      case 'crumple': {
+        // A rock comes down on a unit: slammed flat, squashed under it, and the ground jumps.
+        if (!d?.unit) break;
+        const rec = d.rec;
+        rec.actor.hit('crush'); rec.crushedAt = performance.now();
+        fx.shake(0.22, 0.5);
+        fx.ring(P.x, P.y, P.z, 1.5, 0xd9c9a8, { dur: 0.55, width: 0.16 });
+        fx.dust(P.x, P.y, P.z, { n: 46, size: 0.7, spread: 0.6, up: 1.6 });
+        fx.flash(P.x, P.y + 0.8, P.z, 0xfff0d0, 10, 0.25, 5);
+        fx.debris(P.x, P.y + 0.9, P.z, { n: 6, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });
+        const sc = rec.actor.root.scale;
+        fx.tween(0.6, (t) => { const k = t < 0.18 ? t / 0.18 : 1 - fx.ease.out((t - 0.18) / 0.82); sc.set(1 + 0.3 * k, 1 - 0.45 * k, 1 + 0.3 * k); }, () => sc.setScalar(1));
+        break;
+      }
+      case 'rest':
+        if (d && !d.unit && (d.mass || 0) >= 2 && d.travel > 0.2) fx.dust(P.x, P.y, P.z, { n: 6, size: 0.4, spread: r * 0.8, up: 0.5 });
+        if (d?.unit) d.lean = 0;
+        break;
+      default: break;
+    }
+  }
+
+  /** One frame of every replay: positions from the sampled frames, events as their moment comes. */
+  function stepDyn(now) {
+    for (let i = dynPlays.length - 1; i >= 0; i--) {
+      const play = dynPlays[i];
+      const e = now - play.t0;
+      const fr = play.frames;
+      while (play.fi < fr.length - 2 && fr[play.fi + 1].t <= e) play.fi++;
+      const a = fr[play.fi], b = fr[Math.min(play.fi + 1, fr.length - 1)];
+      const span = b.t - a.t;
+      const k = span > 0 ? Math.min(1, Math.max(0, (e - a.t) / span)) : 1;
+      for (const d of play.bodies) {
+        if (dynOwner(d) !== play) continue;
+        const pa = a.p[d.key], pb = b.p[d.key] || pa;
+        if (!pa) continue;
+        const x = (pa[0] + (pb[0] - pa[0]) * k) * MM, z = (pa[1] + (pb[1] - pa[1]) * k) * MM, y = (pa[2] + (pb[2] - pa[2]) * k) * MM;
+        // Velocity over this pair of frames: mm per ms is m per s.
+        const vx = span > 0 ? (pb[0] - pa[0]) / span : 0, vz = span > 0 ? (pb[1] - pa[1]) / span : 0, vy = span > 0 ? (pb[2] - pa[2]) / span : 0;
+        const sp = Math.hypot(vx, vz);
+        if (d.unit) {
+          const rec = d.rec, pos = rec.actor.root.position;
+          pos.set(x, y, z);
+          rec.airY = 0;
+          // Stumbling backwards: it faces the way it came, shoulders leading the feet.
+          if (!d.air && sp > 0.4) rec.actor.facingTarget = Math.atan2(-vx, -vz);
+          const want = d.air ? 0 : Math.min(0.32, sp * 0.07);
+          d.lean += (want - d.lean) * 0.25;
+          rec.actor.root.rotation.x = -d.lean;
+          if (!d.air && sp > 2 && Math.random() < 0.35) fx.dust(x, y, z, { n: 2, size: 0.35, up: 0.6 });
+        } else {
+          const m = d.m;
+          const dx = x - m.position.x, dz = z - m.position.z;
+          const dist = Math.hypot(dx, dz);
+          d.travel += dist;
+          m.position.set(x, y, z);
+          if (d.sphere && d.roll && dist > 1e-5) {
+            // Rolling: about the axis up x v, by distance / r. In the air the
+            // horizontal speed is what it was, so the spin is too.
+            _axis.set(dz, 0, -dx).normalize();
+            _dq.setFromAxisAngle(_axis, dist / Math.max(0.05, d.r * MM));
+            d.roll.premultiply(_dq);
+            const rock = m.userData.rock, rest = rock.userData.rest;
+            rock.quaternion.copy(d.roll).multiply(rest.q);
+            rock.position.copy(_dv.copy(rest.p).sub(d.centre).applyQuaternion(d.roll).add(d.centre));
+          } else if (!d.sphere && !d.air && sp > 0.3 && Math.random() < 0.3) {
+            // A sliding piece grinds along the ground.
+            fx.dust(x - (vx / sp) * d.r * MM * 0.5, y, z - (vz / sp) * d.r * MM * 0.5, { n: 2, size: 0.4, up: 0.7 });
+          }
+        }
+        d.speed = sp; d.vx = vx; d.vz = vz; d.vy = vy; d.x = x; d.y = y; d.z = z;
+      }
+      for (const rec of play.riders) {
+        if (rec.dyn !== play || !rec.ride) continue;
+        const on = rec.ride.on;
+        rec.actor.root.position.set(on.x + rec.ride.off[0], on.y + rec.ride.z, on.z + rec.ride.off[1]);
+        rec.airY = 0;
+        rec.actor.moving = false;
+      }
+      while (play.ei < play.events.length && play.events[play.ei].t <= e) dynEvent(play, play.events[play.ei++]);
+      if (e >= play.ms) { dynFinish(play); dynPlays.splice(i, 1); }
+    }
   }
 
   const cues = {
@@ -471,93 +699,13 @@ export function createArena(host, state, handlers = {}) {
       if (f && t) { f.actor.lookAt(t.x, t.z); f.actor.strike(); }
     },
     /**
-     * A push: the body is thrown from `from` to `to` along DIR64 `dir` with
-     * a propulsion streaming out behind it. `force` (1-8) sizes the plume,
-     * `speed` (0-100) the launch; both are the engine's numbers. The sync has
-     * already moved the engine's target, so the body is set back to `from`
-     * and slid from there -- the slide is the cue, not the walk.
+     * The engine's rigid-body run (a `dyn` note). `dynHold` is called the
+     * moment the note is read, so the bodies wait at the note's first frame
+     * for their turn on the timeline; `dyn` starts the replay (see the
+     * dynamics playback section above).
      */
-    push(id, body, mm, from, dir = 0, force = 1, speed = 50, to = null) {
-      const D = dirVec(dir);
-      const dur = pushSlideMs(mm, speed) / 1000;
-      if (body === 'unit') {
-        const rec = actors.get(id);
-        if (!rec) return;
-        const pos = rec.actor.root.position;
-        const A = new THREE.Vector3(from ? from.x * MM : pos.x, pos.y, from ? from.y * MM : pos.z);
-        const B = to ? new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM) : rec.target.clone();
-        pos.x = A.x; pos.z = A.z;
-        if (rec.actor.shove) rec.actor.shove(); else rec.actor.hit();
-        rec.pushed = true;
-        // Face the pusher and stumble backwards, the top of the body leaning
-        // into the slide (the feet are dragged, the shoulders lead).
-        rec.slide = startSlide(A, B, D, dur, force, { facing: Math.atan2(-D.x, -D.z), lean: 0.1 + 0.03 * force });
-      } else {
-        const m = propMeshes.get(id);
-        if (!m) return;
-        const A = new THREE.Vector3(from ? from.x * MM : m.position.x, m.position.y, from ? from.y * MM : m.position.z);
-        const B = to ? new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM) : m.userData.target.clone();
-        m.position.x = A.x; m.position.z = A.z;
-        m.userData.slide = startSlide(A, B, D, dur, force, { axis: perpAxis(dir), tilt: 0.06 + 0.02 * force });
-      }
-    },
-    /**
-     * A rider carried along on a shoved prop: the same slide, same clock, no
-     * plume and no stumble -- it is standing on the thing that moves.
-     */
-    carry(id, mm, from, dir = 0, speed = 50, to = null) {
-      const rec = actors.get(id);
-      if (!rec) return;
-      const pos = rec.actor.root.position;
-      const dur = pushSlideMs(mm, speed) / 1000;
-      const A = new THREE.Vector3(from ? from.x * MM : pos.x, from ? from.z * MM : pos.y, from ? from.y * MM : pos.z);
-      const B = to ? new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM) : rec.target.clone();
-      pos.set(A.x, A.y, A.z);
-      rec.carry = { from: A, to: B, dur, t: 0 };
-      rec.actor.brace?.();
-    },
-    /**
-     * The moving body hit something: `into` is what, `at` where (engine mm),
-     * `dmg` what both sides take. Numbers come from the damage notes after
-     * this; here is the slam itself.
-     */
-    impact(note) {
-      const { id, body, into, dmg = 0, at, dir = 0 } = note;
-      const D = dirVec(dir);
-      const p = at ? new THREE.Vector3(at.x * MM, at.z * MM, at.y * MM)
-        : (body === 'unit' ? unitPos(id) : propMeshes.get(id)?.position.clone());
-      if (!p) return;
-      const r = body === 'unit' ? 0.3 : (propMeshes.get(id)?.userData.r || 0.4);
-      // The point of contact: the leading edge of the mover.
-      const c = p.clone().addScaledVector(D, r);
-      const hard = Math.min(1, 0.35 + dmg * 0.25);
-      fx.flash(c.x, c.y + 0.8, c.z, 0xe6fbff, 8 + dmg * 5, 0.22, 4 + dmg);
-      fx.pools.sparks.emit({ x: c.x, y: c.y + 0.7, z: c.z, n: 18 + dmg * 10, spread: 0.15, radial: 3 + dmg, radialSpread: 1.5, vx: -D.x * 2, vz: -D.z * 2, vy: 2, life: 0.55, lifeSpread: 0.2, size: 0.09, sizeEnd: 0.02, color: 0xffffff, colorEnd: PUSH_HEX, gravity: -9, drag: 0.6 });
-      fx.pools.soft.emit({ x: c.x, y: c.y + 0.7, z: c.z, n: 1, life: 0.18, size: 0.9 + dmg * 0.4, sizeEnd: 0.2, color: 0xffffff, alpha: 0.9 * hard, fade: 0 });
-      fx.ring(c.x, c.y, c.z, 0.9 + dmg * 0.35, 0xdff6ff, { dur: 0.4, width: 0.12 });
-      fx.dust(c.x, c.y, c.z, { n: 12 + dmg * 6, size: 0.5, spread: 0.4, up: 1 + dmg * 0.3 });
-      fx.shake(Math.min(0.2, 0.04 + 0.03 * dmg), 0.35);
-      const jolt = (kind, bid, away) => {
-        if (kind === 'unit') {
-          const rec = actors.get(bid);
-          if (!rec) return;
-          if (dmg >= 2) { rec.actor.hit('crush'); rec.crushedAt = performance.now(); } else rec.actor.hit();
-          if (away) rec.actor.lookAt(c.x - D.x * 2, c.z - D.z * 2);
-        } else if (kind === 'prop') {
-          const m = propMeshes.get(bid);
-          if (!m) return;
-          const inner = m.userData.inner;
-          fx.tween(0.4, (t) => { const k = Math.sin(t * Math.PI) * (1 - t) * (0.06 + dmg * 0.03); inner.scale.set(1 + k, 1 - k * 1.4, 1 + k); }, () => inner.scale.setScalar(1));
-          // Rock chips fly on ANY bump, harder with damage: stone meeting stone is loud even when nothing cracks.
-          fx.debris(m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, { n: 6 + dmg * 4, colour: m.userData.kind === 'shard' ? 0x7fdcff : m.userData.kind === 'tree' ? 0x2a1d12 : 0x6b6358, size: 0.09, spread: m.userData.r, up: 2.5 + dmg });
-        }
-      };
-      jolt(body, id, false);
-      if (into) {
-        if (into.kind === 'unit' || into.kind === 'prop') jolt(into.kind, into.id, true);
-        else fx.debris(c.x, c.y, c.z, { n: 3 + dmg, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });   // the ward, a wall, a rise: the ground gives a little
-      }
-    },
+    dynHold(note) { dynHold(note); },
+    dyn(note) { dynPlay(note); },
     /** A topple is coming for this prop: keep it standing until the cue plays. */
     toppling(propId) { topplePending.add(propId); },
     /**
@@ -1267,6 +1415,7 @@ export function createArena(host, state, handlers = {}) {
     last = now;
     if (world) world.update(dt, now);
     fx.update(dt, now);
+    stepDyn(now);
 
     for (const [id, rec] of actors) {
       const { actor } = rec;
@@ -1279,52 +1428,41 @@ export function createArena(host, state, handlers = {}) {
       pos.y -= rec.airApplied || 0;
       rec.airApplied = 0;
       const tgt = rec.target;
-      // Walk toward the engine's point on the ground plane; height follows
-      // the ground or falls.
-      const dx = tgt.x - pos.x, dz = tgt.z - pos.z;
-      const dist = Math.hypot(dx, dz);
-      const speed = rec.pushed ? 7 : actor.speed;
-      if (rec.carry) {
-        // Riding: the prop's slide owns the position, height included.
+      if (rec.dyn) {
+        // A rigid-body replay owns the ground position and the height (or
+        // its hold does, in which case the body waits where it stands).
+        actor.moving = false; rec.falling = false; rec.vy = 0;
+      } else if (rec.carry) {
+        // Carried along a straight run (a charge): the run owns the position, height included.
         const c = rec.carry;
         c.t += dt;
         const k = fx.ease.out(Math.min(1, c.t / c.dur));
         pos.x = c.from.x + (c.to.x - c.from.x) * k; pos.y = c.from.y + (c.to.y - c.from.y) * k; pos.z = c.from.z + (c.to.z - c.from.z) * k;
-        actor.moving = false;
         if (c.t >= c.dur) rec.carry = null;
-        continue;
-      }
-      if (rec.slide) {
-        // Thrown: the slide owns the ground position, the facing and the lean.
-        const sl = rec.slide;
-        sl.t += dt;
-        const k = fx.ease.out(Math.min(1, sl.t / sl.dur));
-        pos.x = sl.from.x + (sl.to.x - sl.from.x) * k; pos.z = sl.from.z + (sl.to.z - sl.from.z) * k;
-        actor.facingTarget = sl.facing;
-        actor.moving = false;
-        const thrust = (1 - k) * Math.min(1, sl.t / 0.08);
-        actor.root.rotation.x = -sl.lean * thrust;
-        plumeStep(sl, pos.x, pos.y + actor.height * 0.45, pos.z, pos.y, thrust, dt);
-        if (sl.t >= sl.dur) { endSlide(sl); rec.slide = null; }
-      } else if (dist > 0.02) {
-        const step = Math.min(dist, speed * dt);
-        pos.x += dx / dist * step; pos.z += dz / dist * step;
-        actor.facingTarget = Math.atan2(dx, dz);
-        actor.moving = !rec.pushed;
-        if (rec.pushed && Math.random() < 0.5) fx.dust(pos.x, pos.y, pos.z, { n: 2, size: 0.35 });
-      } else { actor.moving = false; rec.pushed = false; }
-      if (!rec.slide && actor.root.rotation.x !== 0) actor.root.rotation.x = Math.abs(actor.root.rotation.x) < 1e-3 ? 0 : actor.root.rotation.x * (1 - Math.min(1, dt * 8));
-      const dy = tgt.y - pos.y;
-      if (dy < -0.35 && !rec.airborne) {
-        // A drop: gravity, then a thump. A body going over a real edge
-        // flails on the way down and picks itself up at the bottom.
-        if (!rec.falling) { rec.falling = true; if (dy < -0.9 && actor.tumble) actor.tumble(Math.sqrt(2 * -dy / 9.8)); }
-        rec.vy -= 9.8 * dt;
-        pos.y = Math.max(tgt.y, pos.y + rec.vy * dt);
-        if (pos.y <= tgt.y + 0.001) { pos.y = tgt.y; if (rec.vy < -3) { fx.dust(pos.x, pos.y, pos.z, { n: 22, size: 0.6 }); fx.shake(0.04, 0.25); } rec.vy = 0; rec.falling = false; }
-      } else if (!rec.airborne) {
-        rec.vy = 0;
-        pos.y += dy * Math.min(1, dt * 10);
+      } else {
+        // Walk toward the engine's point on the ground plane; height follows
+        // the ground or falls.
+        const dx = tgt.x - pos.x, dz = tgt.z - pos.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 0.02) {
+          const step = Math.min(dist, actor.speed * dt);
+          pos.x += dx / dist * step; pos.z += dz / dist * step;
+          actor.facingTarget = Math.atan2(dx, dz);
+          actor.moving = true;
+        } else actor.moving = false;
+        if (actor.root.rotation.x !== 0) actor.root.rotation.x = Math.abs(actor.root.rotation.x) < 1e-3 ? 0 : actor.root.rotation.x * (1 - Math.min(1, dt * 8));
+        const dy = tgt.y - pos.y;
+        if (dy < -0.35 && !rec.airborne) {
+          // A drop: gravity, then a thump. A body going over a real edge
+          // flails on the way down and picks itself up at the bottom.
+          if (!rec.falling) { rec.falling = true; if (dy < -0.9 && actor.tumble) actor.tumble(Math.sqrt(2 * -dy / 9.8)); }
+          rec.vy -= 9.8 * dt;
+          pos.y = Math.max(tgt.y, pos.y + rec.vy * dt);
+          if (pos.y <= tgt.y + 0.001) { pos.y = tgt.y; if (rec.vy < -3) { fx.dust(pos.x, pos.y, pos.z, { n: 22, size: 0.6 }); fx.shake(0.04, 0.25); } rec.vy = 0; rec.falling = false; }
+        } else if (!rec.airborne) {
+          rec.vy = 0;
+          pos.y += dy * Math.min(1, dt * 10);
+        }
       }
       actor.airY = rec.airY || 0;
       rec.airApplied = actor.airY;
@@ -1364,16 +1502,8 @@ export function createArena(host, state, handlers = {}) {
       if (d.t > 3.5) { scene.remove(d.rec.actor.root); d.rec.label.remove(); d.rec.actor.dispose(); dying.splice(i, 1); }
     }
     for (const [pid, m] of propMeshes) {
-      const sl = m.userData.slide;
-      if (sl) {
-        sl.t += dt;
-        const k = fx.ease.out(Math.min(1, sl.t / sl.dur));
-        m.position.lerpVectors(sl.from, sl.to, k);
-        const thrust = (1 - k) * Math.min(1, sl.t / 0.08);
-        // Tipped back against the motion while the thrust is on it.
-        m.userData.inner.quaternion.setFromAxisAngle(sl.axis, sl.tilt * thrust);
-        plumeStep(sl, m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, m.position.y, thrust, dt);
-        if (sl.t >= sl.dur) { endSlide(sl); m.userData.slide = null; m.userData.inner.quaternion.identity(); }
+      if (m.userData.dyn) {
+        // A rigid-body replay (or its hold) owns the position.
       } else if (m.userData.target && !m.userData.flying) {
         const d = m.position.distanceTo(m.userData.target);
         if (d > 0.01) { m.position.lerp(m.userData.target, 1 - Math.pow(0.0005, dt)); if (d > 0.3 && Math.random() < 0.4) fx.dust(m.position.x, m.position.y, m.position.z, { n: 2, size: 0.4 }); }
@@ -1455,35 +1585,6 @@ function dirVec(d) { const [ux, uy] = DIR64[d & 63]; return new THREE.Vector3(ux
  * to -X.
  */
 function perpAxis(d) { const [ux, uy] = DIR64[d & 63]; return new THREE.Vector3(-uy / DIR_SCALE, 0, ux / DIR_SCALE); }
-
-/**
- * The propulsion behind a pushed body: an outer cone of the push's blue and
- * a hot white core, additive, nozzle at the group's origin and the tail
- * along local +X. Scaled per frame by the thrust left in the slide.
- */
-function makePlume(force) {
-  const g = new THREE.Group();
-  const len = 0.7 + force * 0.22, rad = 0.18 + force * 0.025;
-  const mk = (r, l, colour, opacity) => {
-    const geo = new THREE.ConeGeometry(r, l, 14, 1, true);
-    // Additive black is nothing: painting the vertices from the colour at
-    // the nozzle to black at the tail makes the cone a streak that dies out
-    // instead of a hard-edged paper dart.
-    const c = new THREE.Color(colour);
-    const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
-    for (let i = 0; i < pos.count; i++) { const k = (l / 2 - pos.getY(i)) / l; const k2 = k * k; col[i * 3] = c.r * k2; col[i * 3 + 1] = c.g * k2; col[i * 3 + 2] = c.b * k2; }
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const m = new THREE.Mesh(geo,
-      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
-    // A cone's apex is +Y: turned so the apex (the tail) points down +X, base at the nozzle.
-    m.rotation.z = -Math.PI / 2;
-    m.position.x = l / 2;
-    m.renderOrder = 8;
-    return m;
-  };
-  g.add(mk(rad, len, PUSH_HEX, 0.32), mk(rad * 0.5, len * 0.7, 0xeafdff, 0.55));
-  return g;
-}
 
 /**
  * The drag arrow, flat on the ground: a shaft that widens from its tail to

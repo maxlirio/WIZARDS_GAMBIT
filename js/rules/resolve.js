@@ -39,7 +39,7 @@ import { push, pushAwayFrom, pullToward, levitate, removeTerrain, smashProp, ign
 import { propR, propOnBoard, propSpec, propBurnable, propBurning, FALL_SAFE } from '../field/arena.js';
 import { walk, placeBody, fallDamageFor, recheckSupport, resolveFalls } from '../field/move.js';
 import { setBurning } from './units.js';
-import { bearing, isqrt, dist2, clamp, DIR64, DIR_SCALE } from '../field/fixed.js';
+import { bearing, isqrt, dist2, clamp, imax, DIR64, DIR_SCALE } from '../field/fixed.js';
 import { turnAndResolve } from './match.js';
 import { pushDirs, pushPreferred, ringPoints, elevatedNear, unitTargets, terrainTargets, bodyTargets, dirLabel } from '../field/candidates.js';
 
@@ -631,23 +631,11 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       const u = findUnit(state, unitId);
       if (!u || u.dead) return 0;
       const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
-      const z0 = u.z;
-      u.z += up;
-      u.support = null;
-      fx(state, 'lift', { id: unitId, mm: up, from: { x: u.x, y: u.y, z: z0 } });
-      push(state, u, dir, pp.force, { byP: p, crush: pp.crush, levitate: true, settle: false });
-      // The landing, by hand: whatever is under it now, no higher than it is.
-      const before = u.z;
-      const s = surfaceAt(state, u.x, u.y, { maxZ: before });
-      u.z = s.z; u.support = s.support;
-      const drop = before - s.z;
-      fx(state, 'falls', { landed: [{ key: `u${u.id}`, drop, z: s.z }] });
-      if (drop > FALL_SAFE) bump(state.players[p].ledger, 'fallsCaused');
-      const dmg = fallDamageFor(drop);
-      const dealt = dmg > 0 ? hurt(state, u, dmg, { cause: 'fall', byP: p, drop }) : 0;
-      recheckSupport(state);
-      resolveFalls(state, hurt);
-      return dealt;
+      // Thrown UP as well as along: the simulation flies it, lands it, and
+      // the landing is the fall damage, credited to the caster.
+      const hp0 = u.hp;
+      push(state, u, dir, pp.force, { byP: p, crush: pp.crush, lift: up });
+      return imax(0, hp0 - u.hp);
     },
 
     /** The enemy unit nearest a point, ties to the lowest id. Null if none. */

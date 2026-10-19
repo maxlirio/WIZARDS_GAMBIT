@@ -12,14 +12,12 @@
 //   slides force x 750 / m millimetres: a mage (mass 1) the whole way, a
 //   boulder (2) half, a standing stone (4) a quarter, a wall (6) a sixth.
 //
-//   IMPACTS. When the slide is stopped early, what is left of it is energy:
-//   mass x remaining travel. That energy becomes damage to BOTH the moving
-//   body and whatever stopped it -- heavier things hit harder, and things hit
-//   harder the earlier they are stopped (that is "faster"). The collision is
-//   INELASTIC: the moving body stops where it hit, and whatever it struck is
-//   knocked on with HALF the leftover travel -- enough for a thrown mage to
-//   knock a golem into a pillar, not enough for a Newton's cradle (user: "no
-//   friction... looks really messy").
+//   MOTION. What happens after the launch is `dynamics.js`: a rigid body
+//   that rolls (boulders), slides (everything else), flies off edges, lands,
+//   bounces off the ward and collides with whatever is in its way, sharing
+//   momentum by mass and dealing damage from it. A rock that comes down on a
+//   unit crumples it. This file is the rules around that: the force law,
+//   toppling, the ledger, pulls that stop at your feet.
 //
 //   TOPPLING. A tall piece (pillar, tree) pushed hard enough falls over
 //   along the push, and anything under its length is crushed.
@@ -35,17 +33,14 @@ import {
   BURN_TURNS, FIRE_REACH, FIRE_SPREAD, inBounds,
 } from './arena.js';
 import { findProp, findUnit, propsOnBoard, livingUnits, blockingProp, blockingUnit, surfaceAt } from './query.js';
-import { walk, queueFall, resolveFalls, recheckSupport, isUnitBody, CLIMB_RATE } from './move.js';
+import { queueFall, resolveFalls, recheckSupport, isUnitBody } from './move.js';
+import { throwBody } from './dynamics.js';
 import { hurt } from '../rules/combat.js';
 import { fx } from '../rules/ops.js';
 import { bump } from '../rules/ledger.js';
 
-/** How many bodies a single push may set in motion. */
-export const PUSH_DEPTH = 3;
 /** The slide one point of force gives a body of mass 1. */
 export const FORCE_MM = 750;
-/** Mass x remaining travel (mm) per point of impact damage. */
-export const IMPACT_K = 1500;
 /** An impact this hard knocks a unit down: it loses its action this turn. */
 export const KNOCKDOWN_DMG = 2;
 /** Golem units by tier. The mage is 1. */
@@ -59,150 +54,58 @@ export const bodyMass = (state, body) => {
 
 /** The travel budget a force buys a mass. Mass is never below 1. */
 export const travelFor = (force, mass) => idiv(force * FORCE_MM, imax(1, mass));
-/** A 0..100 launch speed for the view: force over mass. */
-const speedOf = (force, mass) => clamp(idiv(force * 25, imax(1, mass)), 5, 100);
 
 /**
  * Shove a body along a bearing with `force`.
  *
- * `mm` overrides the force (the harness measures drift with an exact distance,
- * and a struck body is shoved on with whatever momentum is LEFT rather than a
- * fresh force). `climb: false` throughout, and that is a rule rather than a
- * simplification: being shoved does not make you scramble up a wall, it slams
- * you into it -- unless the push carries [Levitate].
+ * The motion itself is `dynamics.js`: a thrown rigid body that rolls, slides,
+ * flies off edges, lands and hits things. This is the rules wrapper round it:
+ * a tall piece pushed hard enough topples instead; the ledger is credited;
+ * the nominal distance is noted beside the realised one.
+ *
+ *   mm        exact flat travel instead of the force (the drift harness)
+ *   cap       shorten the travel (a pull stops at your feet)
+ *   levitate  the body hops as it goes, clearing low obstacles
+ *   lift      launched upward this much (Skyfall)
+ *   air       it is already off the ground
  */
 export function push(state, body, dir, force, {
-  depth = 0, byP = null, crush = false, levitate = false, chain = null, mm = null, speed = null, settle = true, cap = null,
+  byP = null, crush = false, levitate = false, chain = null, mm = null, cap = null, lift = 0, air = false,
 } = {}) {
   const log = chain || [];
-  if (!body || body.dead) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
-  // Whatever stands on a prop rides with it, and weighs on it: a rock with a
-  // golem on top is a heavier thing to shove. Collected BEFORE the move,
-  // since the move is what changes who is standing where.
-  const riders = isUnitBody(body) ? [] : ridersOf(state, body);
-  const mass = bodyMass(state, body) + riders.reduce((m, u) => m + bodyMass(state, u), 0);
+  if (!body || body.dead || body.destroyed) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
   const spec = isUnitBody(body) ? null : propSpec(body.kind);
+  if (spec && !spec.pushable) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
   // A tall piece pushed hard enough TOPPLES rather than slides.
-  if (depth === 0 && mm === null && spec?.tippable && force >= spec.tipForce) {
+  if (mm === null && spec?.tippable && force >= spec.tipForce) {
     topple(state, body, dir, { byP });
     return { mm: 0, shortfall: 0, blockedBy: null, chain: log, toppled: true };
   }
-  // `cap` shortens the force's travel without replacing it: a pull "to you"
-  // stops at your feet instead of bowling you over.
-  const budget = mm !== null ? mm : cap !== null ? imin(travelFor(force, mass), imax(0, cap)) : travelFor(force, mass);
-  const v = speed !== null ? speed : speedOf(force, mass);
-  if (budget < STEP) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
+  const mass = bodyMass(state, body);
+  let budget = mm !== null ? mm : travelFor(force, mass);
+  if (cap !== null) budget = imin(budget, imax(0, cap));
+  if (budget < STEP && lift <= 0) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
 
-  const x0 = body.x, y0 = body.y, z0 = body.z;
-  let remaining = budget, total = 0, blockedBy = null;
-
-  // ONE slide, and the body stops where it is stopped. It used to follow
-  // whatever it had knocked loose, segment after segment, and a line of
-  // bodies clacked along like a Newton's cradle; now the impact is where the
-  // mover ends and only the struck thing moves on (nested through `impact`,
-  // bounded by PUSH_DEPTH).
-  {
-    const r = walk(state, body, dir, remaining, { allowFall: true, climb: levitate, riders: riders.map((u) => u.id) });
-    total += r.mm;
-    remaining = r.shortfall;
-    blockedBy = r.blockedBy;
-    // THE IMPACT. What is left of the slide is energy, and energy hurts.
-    if (r.blockedBy && remaining >= STEP) impact(state, body, mass, remaining, r.blockedBy, dir, v, { byP, crush, depth, chain: log });
-  }
-
+  const r = throwBody(state, body, dir, force, { byP, crush, mm, cap, lift: lift || (levitate ? 700 : 0), air: air || body.support === null });
+  const total = r.mm;
   if (total > 0) {
     log.push({ id: body.id, kind: body.body, mm: total, dir });
-    // THE RIDERS COME ALONG. A unit standing on a shoved rock moves with the
-    // rock (user: "it should move with it if the thing on the bottom moves"),
-    // keeping its place on top. Only if its new spot is off the board or
-    // already taken -- it would be scraped off against a wall or another
-    // body -- does it lose its footing and fall where it was.
-    const dx = body.x - x0, dy = body.y - y0;
-    for (const u of riders) {
-      const nx = u.x + dx, ny = u.y + dy;
-      // The rider's new spot must still have THIS prop's top as its footing:
-      // a rider near the rock's edge can end up over a cliff top higher than
-      // the rock (it would be standing inside the ground), or over nothing.
-      const s = inBounds(state.arena, nx, ny) ? surfaceAt(state, nx, ny) : null;
-      const onIt = s && s.support.kind === 'prop' && s.support.id === body.id;
-      const clear = onIt
-        && !blockingProp(state, nx, ny, s.z, { ignore: body.id })
-        && !blockingUnit(state, nx, ny, s.z, { ignore: u.id, ignoreIds: riders.map((q) => q.id) });
-      if (!clear) { queueFall(state, u); fx(state, 'scraped', { id: u.id, off: body.id }); continue; }
-      const from = { x: u.x, y: u.y, z: u.z };
-      u.x = nx; u.y = ny; u.z = s.z; u.support = s.support;
-      fx(state, 'carry', { id: u.id, on: body.id, mm: total, dir, from, to: { x: u.x, y: u.y, z: u.z }, speed: v });
-    }
     if (isUnitBody(body) && byP !== null) {
       bump(state.players[byP].ledger, 'unitsPushed');
       bump(state.players[byP].ledger, 'pushMm', total);
     } else if (!isUnitBody(body) && byP !== null) {
-      // Terrain you shoved, by distance: the Spellbook's "shove terrain 12m".
       bump(state.players[byP].ledger, 'terrainPushMm', total);
     }
-    fx(state, 'push', {
-      id: body.id, body: body.body, mm: total, dir, from: { x: x0, y: y0 },
-      to: { x: body.x, y: body.y, z: body.z }, force: force || 0, speed: v,
-    });
-    // The nominal distance beside the realised one, recorded only for the body
-    // the card actually named. A printed force becomes a slide against real
-    // terrain, and selfplay.js reports how much of it is realised.
-    if (depth === 0) fx(state, 'pushResult', { id: body.id, want: budget, got: total, body: body.body });
-  }
-
-  // `settle: false` leaves the falls QUEUED for the caller to resolve: a
-  // Skyfall throws a unit through the air and wants to credit its landing.
-  if (depth === 0 && settle) {
-    recheckSupport(state);
-    const landed = resolveFalls(state, hurt);
-    for (const l of landed) {
-      if (l.drop > FALL_SAFE && byP !== null) bump(state.players[byP].ledger, 'fallsCaused');
+    // Units a thrown piece of terrain struck: the Spellbook's "hit a unit with
+    // a thrown terrain piece".
+    if (!isUnitBody(body) && byP !== null) {
+      const struck = r.events.filter((e) => e.key === `p${body.id}` && e.kind === 'hit' && e.into[0] === 'u').length;
+      if (struck) bump(state.players[byP].ledger, 'terrainImpacts', struck);
     }
-    if (landed.length) fx(state, 'falls', { landed });
+    // The nominal distance beside the realised one, for selfplay's instrument.
+    fx(state, 'pushResult', { id: body.id, want: budget, got: total, body: body.body });
   }
-  return { mm: total, shortfall: remaining, blockedBy, chain: log };
-}
-
-/**
- * A moving body has been stopped with `remaining` travel still in it.
- *
- * Energy = mass x remaining. Both bodies take `energy / IMPACT_K` damage
- * ([Crush] doubles it); a wall, a cliff or the edge of the ward hurts only the
- * body that hit it. Whatever was struck is then knocked on with HALF the
- * leftover travel (scaled by its mass), if it is something that can move at
- * all -- a tall piece that takes enough energy topples instead.
- */
-function impact(state, body, mass, remaining, blockedBy, dir, v, { byP, crush, depth, chain }) {
-  const energy = mass * remaining;
-  let dmg = idiv(energy, IMPACT_K);
-  if (crush) dmg *= 2;
-  let other = null;
-  if (blockedBy.kind === 'unit') other = findUnit(state, blockedBy.id);
-  else if (blockedBy.kind === 'prop' && blockedBy.id) other = findProp(state, blockedBy.id);
-  fx(state, 'impact', {
-    id: body.id, body: body.body, into: { kind: blockedBy.kind, id: blockedBy.id ?? null },
-    dmg, at: { x: body.x, y: body.y, z: body.z }, dir, speed: v,
-  });
-  // A thrown rock that lands on somebody: the Spellbook's "hit a unit with a
-  // thrown terrain piece", counted before the damage so a kill still counts.
-  if (!isUnitBody(body) && other && isUnitBody(other) && byP !== null && byP !== undefined) {
-    bump(state.players[byP].ledger, 'terrainImpacts');
-  }
-  if (dmg > 0) {
-    if (isUnitBody(body)) { hurt(state, body, dmg, { cause: 'impact', byP }); knockdown(state, body, dmg, dir, byP); }
-    else smashProp(state, body, dmg, { byP, cause: 'impact' });
-    if (other) {
-      if (isUnitBody(other)) { hurt(state, other, dmg, { cause: 'impact', byP }); knockdown(state, other, dmg, dir, byP); }
-      else smashProp(state, other, dmg, { byP, cause: 'impact' });
-    }
-  }
-  if (!other || depth >= PUSH_DEPTH) return { moved: false };
-  if (isUnitBody(other) ? other.dead : (other.destroyed || !propSpec(other.kind).pushable)) return { moved: false };
-  const ospec = isUnitBody(other) ? null : propSpec(other.kind);
-  if (ospec?.tippable && energy >= ospec.tipEnergy) { topple(state, other, dir, { byP }); return { moved: true }; }
-  const om = bodyMass(state, other);
-  const sub = push(state, other, dir, 0, { depth: depth + 1, byP, crush, chain, mm: idiv(energy, om * 2), speed: v });
-  return { moved: sub.mm >= STEP };
+  return { mm: total, shortfall: imax(0, budget - total), blockedBy: r.blockedBy, chain: log };
 }
 
 /** Slammed hard enough and a unit is winded: it loses its action this turn. */

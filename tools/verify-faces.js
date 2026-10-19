@@ -407,6 +407,29 @@ const POSITIVE = new Set([
   'knocks', 'burns', 'ignites', 'propDamage', 'shatters', 'falls', 'spawnsBoulder', 'direction',
 ]);
 
+/** Damage causes that are the battlefield's doing, not the face's own targeting. */
+const PHYSICS = new Set(['impact', 'topple', 'fall']);
+
+/**
+ * Bodies whose motion in this run was not their own: struck by another body
+ * (`into` of a hit), or deflected off a wall, the ward or another body. Their
+ * distance and direction are the collision's, not the face's. Keys as the
+ * dyn notes write them (u5, pb0), and the bare ids too.
+ */
+function deflected(state, fxAt) {
+  const out = new Set();
+  for (const f of (state.fx || []).slice(fxAt)) {
+    if (f.kind !== 'dyn') continue;
+    for (const e of f.events || []) {
+      if (e.kind === 'hit') { out.add(e.into); out.add(e.key); }
+      // Over an edge: it flew, and nothing slows a body in the air.
+      if (e.kind === 'wall' || e.kind === 'ward' || e.kind === 'edge') out.add(e.key);
+    }
+  }
+  for (const k of [...out]) out.add(k[0] === 'u' ? Number(k.slice(1)) : k.slice(1));
+  return out;
+}
+
 function judge(st, run, claim) {
   const { state, card, friend, foeCard, wardCard, outside, ally, mine } = st;
   const { before, after, offered } = run;
@@ -427,7 +450,11 @@ function judge(st, run, claim) {
       // props record instead of on a unit; that is a targeting too.
       if (!offered.length && !touchedUnits.length && !movedUnits.length && before.props === after.props) return [UNCHECKED, 'nothing was targeted'];
       if (allOptions.includes(outside.id)) return [FAIL, `offered the unit ${claim.mm + 2500}mm away as a target for a ${claim.mm}mm range`];
-      if (touchedUnits.includes(outside.id) || movedUnits.includes(outside.id)) return [FAIL, 'reached a unit outside its range'];
+      // Reached DIRECTLY. A rock the face threw rolling into the far unit, or
+      // a thrown body sliding into it, is physics the card set in motion, not
+      // the face choosing a target out of its range.
+      const direct = (state.fx || []).slice(before.fxAt).some((f) => f.kind === 'damage' && f.id === outside.id && !PHYSICS.has(f.cause));
+      if (direct) return [FAIL, 'reached a unit outside its range'];
       return [PASS, ''];
     }
     case 'damage': {
@@ -448,17 +475,25 @@ function judge(st, run, claim) {
         const [bx, by] = pb[id].split(',').map(Number);
         const [ax, ay] = pa[id].split(',').map(Number);
         const d = Math.round(Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2));
-        if (d > claim.mm + 150) return [FAIL, `prints ${claim.mm}mm of travel but moved terrain ${id} ${d}mm`];
+        // The force buys SLIDING travel. A boulder ROLLS on the same launch
+        // (rolling resistance is a fifth of sliding friction) and a floating
+        // rock glides, so those may go further -- but never without limit.
+        const pr = state.field.props.find((p) => p.id === id);
+        const loose = pr && pr.kind === 'boulder' ? 8 : pr && pr.kind === 'floater' ? 3 : 1;
+        if (d > claim.mm * loose + 150) return [FAIL, `prints ${claim.mm}mm of travel but moved terrain ${id} ${d}mm${loose > 1 ? ` (a ${pr.kind} may roll ${loose}x)` : ''}`];
       }
       if (!movedUnits.length) return movedProps.length ? [PASS, ''] : [UNCHECKED, 'nothing moved'];
       // Realised travel may be SHORT -- terrain -- but never long. A printed
       // "push 2m" that moved somebody 3m is a bug; one that moved them 1.2m is
       // the whole point of leaving the grid.
+      const struck = deflected(state, before.fxAt);
       for (const id of movedUnits) {
+        if (struck.has(id)) continue;                  // knocked on by another body: not the force's travel
         const [bx, by] = before.pos[id].split(',').map(Number);
         const [ax, ay] = after.pos[id].split(',').map(Number);
         const d = Math.round(Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2));
-        if (d > claim.mm + 150) return [FAIL, `prints ${claim.mm}mm of travel but moved unit ${id} ${d}mm`];
+        // A tenth over: the launch speed rounds up and the ground is not flat.
+        if (d > claim.mm + Math.round(claim.mm / 10) + 150) return [FAIL, `prints ${claim.mm}mm of travel but moved unit ${id} ${d}mm`];
       }
       return [PASS, ''];
     }
@@ -471,11 +506,38 @@ function judge(st, run, claim) {
       const propPos = (snap) => Object.fromEntries(snap.props.split('|').filter(Boolean).map((e) => { const [id, xyz] = e.split(':'); return [id, xyz.split(',').map(Number)]; }));
       const pb = propPos(before), pa = propPos(after);
       const moved = [];
-      for (const id of movedUnits) if (id !== mine.id) moved.push({ id, b: before.pos[id].split(',').map(Number), a: after.pos[id].split(',').map(Number) });
-      for (const id of Object.keys(pa)) if (pb[id] && (pb[id][0] !== pa[id][0] || pb[id][1] !== pa[id][1])) moved.push({ id, b: pb[id], a: pa[id] });
+      // A unit RIDING a piece of terrain went where the terrain went (and a
+      // floater that bounced off a tree carried its rider the wrong way): not
+      // the face's direction.
+      const ridden = new Set((state.fx || []).slice(before.fxAt).filter((f) => f.kind === 'carry').map((f) => f.id));
+      // Judged on the body's FIRST movement: where it was when it had first
+      // gone 40 mm (a weak pull up a slope reverses within 100), before
+      // anything deflected it. A pulled rock that bounces
+      // off a tree, or rolls back down the hill it was pulled up, ends up
+      // further away, and that is the hill's doing, not the face's. Read off
+      // the dyn trajectories; a body that never went 40 mm clear is a nudge
+      // and is not judged.
+      const dyns = (state.fx || []).slice(before.fxAt).filter((f) => f.kind === 'dyn');
+      const firstClear = (key) => {
+        for (const d of dyns) {
+          if (!d.bodies.some((b) => b.key === key)) continue;
+          const stop = Math.min(...d.events.filter((e) => e.t > 0 && (e.key === key || e.into === key) && (e.kind === 'hit' || e.kind === 'wall' || e.kind === 'ward')).map((e) => e.t), Infinity);
+          const p0 = d.frames[0].p[key];
+          if (!p0) continue;
+          for (const fr of d.frames) {
+            if (fr.t > stop) break;
+            const p = fr.p[key]; if (!p) break;
+            if (Math.hypot(p[0] - p0[0], p[1] - p0[1]) >= 40) return { b: p0, a: p };
+          }
+        }
+        return null;
+      };
+      for (const id of movedUnits) { if (id === mine.id || ridden.has(id)) continue; const m = firstClear(`u${id}`); if (m) moved.push({ id, ...m }); }
+      for (const id of Object.keys(pa)) { if (!pb[id] || (pb[id][0] === pa[id][0] && pb[id][1] === pa[id][1])) continue; const m = firstClear(`p${id}`); if (m) moved.push({ id, ...m }); }
+      if (process.env.WG_DEBUG) console.error('DIR DEBUG', st.def.id, 'mage', [bmx, bmy], 'moved', JSON.stringify(moved), 'dyns', JSON.stringify(dyns.map((d) => ({ bodies: d.bodies.map((b) => b.key), events: d.events.map((e) => `${e.t}:${e.kind}:${e.key}${e.into ? '>' + e.into : ''}`), f: d.frames.slice(0, 6).map((fr) => [fr.t, fr.p]) }))));
       if (!moved.length) return [UNCHECKED, 'nothing moved'];
       for (const m of moved) {
-        const was = Math.hypot(m.b[0] - bmx, m.b[1] - bmy), now = Math.hypot(m.a[0] - mx, m.a[1] - my);
+        const was = Math.hypot(m.b[0] - bmx, m.b[1] - bmy), now = Math.hypot(m.a[0] - bmx, m.a[1] - bmy);
         if (claim.way === 'in' && now >= was) return [FAIL, `prints "toward you" but ${m.id} went from ${Math.round(was)}mm to ${Math.round(now)}mm from your mage`];
         if (claim.way === 'out' && now <= was) return [FAIL, `prints "away from you" but ${m.id} went from ${Math.round(was)}mm to ${Math.round(now)}mm from your mage`];
       }
@@ -692,7 +754,9 @@ function judge(st, run, claim) {
     case 'falls': {
       // A hurl or a skyfall must end in a landing note with a real drop.
       const notes = (state.fx || []).slice(before.fxAt);
-      const fell = notes.some((f) => f.kind === 'hurl' && f.mm > 0) || notes.some((f) => f.kind === 'falls' && (f.landed || []).some((l) => l.drop > 0));
+      const fell = notes.some((f) => f.kind === 'hurl' && f.mm > 0) || notes.some((f) => f.kind === 'falls' && (f.landed || []).some((l) => l.drop > 0))
+        || notes.some((f) => f.kind === 'dyn' && (f.events || []).some((e) => e.kind === 'land' && e.drop > 0))
+        || notes.some((f) => f.kind === 'damage' && f.cause === 'fall');
       if (fell) return [PASS, ''];
       return offered.length ? [FAIL, 'prints a fall but nothing fell'] : [UNCHECKED, 'no unit was in reach to drop'];
     }
@@ -725,7 +789,7 @@ const FAULTS = [
       *effect(ctx) {
         // Printed "to you"; shoved away instead.
         const ids = ctx.propsInRange(4000, { pushableOnly: true });
-        if (ids.length) ctx.shoveAway(ids[0], 3);
+        if (ids.length) ctx.shoveAway(ids[0], 2);          // 2: below every tipping force, so it slides rather than topples
       },
     })),
   },

@@ -30,6 +30,7 @@
 <script type="module">
 import { createGame } from '../../js/engine.js';
 import { heightAt } from '../../js/field/arena.js';
+import { push } from '../../js/field/push.js';
 import { createArena } from '../../js/view/arena3d.js';
 
 const Q = new URLSearchParams(location.search);
@@ -123,13 +124,13 @@ const STEPS = {
   burnOut() { foe.burn = 0; arena.sync(S); },
   /** Skyfall: the golem is lifted 2 m, thrown 3 m east, and comes down. */
   skyfall() {
-    const from = { x: golem.x, y: golem.y };
     arena.cues.lift(golem.id, 2000);
     setTimeout(() => {
       // Thrown north-west (bearing 40), across the frame and over the enemy mage.
-      put(golem, golem.x - 2121, golem.y - 2121);
+      // Through the real engine now: a Skyfall-style throw is a dyn note.
+      push(S, golem, 40, 4, { byP: 0, lift: 2000 });
       arena.sync(S);
-      arena.cues.push(golem.id, 'unit', 3000, from, 40, 4, 100, { x: golem.x, y: golem.y, z: golem.z });
+      for (const f of S.fx.splice(0)) if (f.kind === 'dyn') { arena.cues.dynHold(f); arena.cues.dyn(f); }
     }, 500);
     setTimeout(() => { arena.cues.fall(golem.id, 2000); setTimeout(() => arena.cues.hit(golem.id, 2, 'fall'), 500); }, 1250);
   },

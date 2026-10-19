@@ -93,7 +93,10 @@ const ok = (cond, msg) => { if (cond) pass++; else { fail++; console.log(`  FAIL
         pr.x = home.x; pr.y = home.y; pr.z = home.z;
         const a = push(state, pr, out, 0, { mm: 1000, byP: 0 });
         const b = push(state, pr, back, 0, { mm: 1000, byP: 0 });
-        if (a.mm < 1000 || b.mm < 1000) { blocked++; continue; }
+        // Physics now: a leg that rolled on downhill, or stopped short on a
+        // rise, is not a round trip. Only legs that went the nominal distance
+        // both ways (within half a step) measure the arithmetic.
+        if (a.mm < 900 || b.mm < 900 || iabs(a.mm - b.mm) > 5) { blocked++; continue; }
         clean++;
         const dx = iabs(pr.x - home.x), dy = iabs(pr.y - home.y);
         const res = dx + dy;
