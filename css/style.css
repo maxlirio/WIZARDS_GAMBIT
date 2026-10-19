@@ -133,6 +133,9 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .big { font: 900 86px Cinzel, serif; }
 .ctr { font: 600 58px 'Cormorant Garamond', serif; fill: #f4ead2; }
 .ctr.dim { fill: #b9ad94; font-size: 48px; }
+.ctr.now { font-size: 52px; }
+.ctr.nxt { fill: #c4b89f; font-size: 44px; font-weight: 500; }
+.nxl { font: 700 30px Inter, sans-serif; letter-spacing: .08em; text-transform: uppercase; opacity: .85; }
 .ckw { font: 600 42px Inter, sans-serif; fill: #d9b2ff; }
 .active-edge { filter: drop-shadow(0 0 12px currentColor); }
 
@@ -236,6 +239,8 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .face .fr { display: none; }
 .face.on { color: #fff6df; }
 .face.on .fn { color: var(--gold); }
+.face.next .fn::after { content: ' ↶'; font-size: 11px; color: var(--ink-dim); }
+.face.next { color: #cfc3aa; }
 .fn { font: 700 12px Cinzel, serif; padding-top: 3px; }
 .rune-i { width: 16px; height: 16px; margin-top: 1px; }
 .kwline { margin-top: 5px; font-size: 12px; clear: both; }

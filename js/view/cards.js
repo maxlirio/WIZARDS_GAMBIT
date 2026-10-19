@@ -206,15 +206,30 @@ function centreMarkup(def, rot, kws, ink) {
       centre += `<text x="500" y="${640 + i * 50}" text-anchor="middle" class="ctr dim">${esc(l)}</text>`;
     });
   } else {
-    centre += `<text x="500" y="374" text-anchor="middle" class="big" fill="${ink}">${active.numeral}</text>`;
-    const lines = wrap(active.text, 20, 5);
-    const y0 = lines.length > 4 ? 446 : 470;
+    centre += `<text x="500" y="360" text-anchor="middle" class="big" fill="${ink}">${active.numeral}</text>`;
+    // The face showing now, then what ONE LEFT TURN brings up. A match or a
+    // rotate always turns left, so the next face is the one strategy hangs on
+    // (user: "an arrow that shows their NEXT SIDE'S text so it isn't a pain to
+    // figure out strategy").
+    const lines = wrap(active.text, 22, 4);
+    const y0 = 418, step = 54;
     lines.forEach((l, i) => {
-      centre += `<text x="500" y="${y0 + i * 62}" text-anchor="middle" class="ctr">${esc(l)}</text>`;
+      centre += `<text x="500" y="${y0 + i * step}" text-anchor="middle" class="ctr now">${esc(l)}</text>`;
     });
+    const next = def.faces[(rot + 1) & 3];
+    if (next) {
+      const yh = y0 + lines.length * step + 14;
+      const nl = wrap(next.text, 29, kws.length ? 2 : 3);
+      centre += `<g class="nxh" fill="none" stroke="${ink}" stroke-width="7" stroke-linecap="round" opacity=".85">
+        <path d="M ${330} ${yh - 6} a 22 22 0 1 1 22 20"/><path d="M ${330 - 14} ${yh - 18} L ${330} ${yh - 6} L ${330 + 10} ${yh - 22}"/></g>
+        <text x="372" y="${yh + 6}" class="nxl" fill="${ink}">next · ${next.numeral}</text>`;
+      nl.forEach((l, i) => {
+        centre += `<text x="500" y="${yh + 50 + i * 46}" text-anchor="middle" class="ctr nxt">${esc(l)}</text>`;
+      });
+    }
   }
   if (kws.length) {
-    centre += `<text x="500" y="${def.kind === 'golem' ? 760 : 758}" text-anchor="middle" class="ckw">${esc(kws.map((k) => `[${k}]`).join(' '))}</text>`;
+    centre += `<text x="500" y="${def.kind === 'golem' ? 760 : 776}" text-anchor="middle" class="ckw">${esc(kws.map((k) => `[${k}]`).join(' '))}</text>`;
   }
 
   return centre;
@@ -223,7 +238,7 @@ function centreMarkup(def, rot, kws, ink) {
 /** A face list for the inspector: all four, the active one lit. */
 export function faceListHTML(def, rot = 0) {
   if (def.kind === 'golem') return `<p>${esc(def.text)}</p>`;
-  return def.faces.map((f) => `<div class="face${f.index === (rot & 3) ? ' on' : ''}">
+  return def.faces.map((f) => `<div class="face${f.index === (rot & 3) ? ' on' : f.index === ((rot + 1) & 3) ? ' next' : ''}">
     <span class="fn">${f.numeral}</span><span class="fr">${runeGlyphInline(def.runes[f.index], SCHOOL_INK[def.school])}</span>
     <span class="ft">${esc(f.text)}${f.reach ? ` <em class="fr-m">${(f.reach / 1000).toFixed(1)}m</em>` : ''}${f.cost?.length ? ' <em class="fr-c">cost</em>' : ''}${f.element ? ` <em class="fr-e ${f.element}">${f.element}</em>` : ''}</span></div>`).join('');
 }
