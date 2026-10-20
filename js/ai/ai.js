@@ -19,7 +19,11 @@
 import { legalActions, apply, cloneState } from '../engine.js';
 import { evaluate } from './eval.js';
 import { settle, chooseAnswer, quickAnswer } from './answer.js';
-import { seedRng, int } from '../rules/rng.js';
+import { seedRng, int, shuffle } from '../rules/rng.js';
+import { bindActions } from '../rules/sigils.js';
+
+/** How many sigils the bot walks in knowing. A player learns theirs across duels; the bot is handed a few. */
+export const AI_KNOWN_SIGILS = 10;
 
 export const POLICIES = Object.freeze(['oneply', 'greedy', 'random']);
 
@@ -35,9 +39,27 @@ export function aiRng(state) {
  * which is the specific mistake worth having a baseline for: if 'oneply' does
  * not beat it, the chain terms in the evaluator are not earning their keep.
  */
+/**
+ * The sigils this seat KNOWS: a fixed handful dealt from the match's seed,
+ * never the whole book. A bot that bound every sigil it could afford would be
+ * reading the Spellbook's answers; a human finds them one duel at a time.
+ */
+export function knownSigils(state, p) {
+  const ids = (state.findable || []).filter((f) => f.sigil).map((f) => f.id).sort();
+  const rng = seedRng(((state.seed | 0) * 2654435761 + (p + 1) * 40503) | 0);
+  return new Set(shuffle(rng, ids).slice(0, AI_KNOWN_SIGILS));
+}
+
 export function chooseAction(state, { policy = 'oneply', budget = 64 } = {}) {
   const p = state.active;
   const rng = aiRng(state);
+  // A bind is free and never costs the turn anything, so a known sigil the
+  // pouch can pay for is simply made, before the real decision.
+  if (!state.bindUsed) {
+    const known = knownSigils(state, p);
+    const b = bindActions(state, p).find((a) => known.has(a.id));
+    if (b) return b;
+  }
   const la = legalActions(state);
   if (!la.length) return null;
   if (policy === 'random') return la[int(rng, la.length)];

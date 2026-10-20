@@ -18,6 +18,7 @@
 import { createGame, legalActions, apply, choose, hashState, cloneState } from '../js/engine.js';
 import { allCards, STANDARD_DECK, randomDeck } from '../js/rules/spells/index.js';
 import { seedRng, int, pick } from '../js/rules/rng.js';
+import { bindError, BOARD_CELLS } from '../js/rules/sigils.js';
 import { chooseAction, answerFor } from '../js/ai/ai.js';
 import { invariants, monotonic } from './invariants.js';
 import { NUMERALS } from '../js/rules/orient.js';
@@ -53,6 +54,24 @@ const AI = flag('ai');
 const POLICY = process.argv.includes('--policy') ? process.argv[process.argv.indexOf('--policy') + 1] : 'greedy';
 
 /** Answer a request at random, but only with answers the request allows. */
+/** A random legal bind from the pouch, or null when it holds nothing. */
+function randomBind(state, rng) {
+  const pouch = state.players[state.active].runes;
+  const have = Object.keys(pouch).sort().flatMap((r) => Array(pouch[r]).fill(r));
+  if (!have.length) return null;
+  const n = 1 + int(rng, Math.min(have.length, 5));
+  const cells = [];
+  const taken = new Set();
+  for (let i = 0; i < n; i++) {
+    const r = have.splice(int(rng, have.length), 1)[0];
+    let idx; do { idx = int(rng, BOARD_CELLS); } while (taken.has(idx));
+    taken.add(idx);
+    cells.push({ idx, r });
+  }
+  const a = { type: 'bind', cells };
+  return bindError(state, state.active, cells) === null ? a : null;
+}
+
 function answerForRandom(r, rng) {
   if (r.type === 'confirm') return int(rng, 2) === 1;
   if (r.type === 'some') {
@@ -133,7 +152,10 @@ for (let g = 0; g < GAMES; g++) {
           failures++;
           break;
         }
-        const a = AI ? chooseAction(state, { policy: POLICY }) : la[int(rng, la.length)];
+        // A random player lays random runes and binds now and then: binds are
+        // not in legalActions (their space is every layout the pouch allows),
+        // so the harness has to make its own, misses and all.
+        const a = AI ? chooseAction(state, { policy: POLICY }) : (!state.bindUsed && int(rng, 4) === 0 && randomBind(state, rng)) || la[int(rng, la.length)];
         if (!a) { console.log(`  FAIL seed ${seed}: the AI returned no action`); failures++; break; }
         // Coverage is read off the fx stream rather than guessed at: the notes
         // say which face actually resolved, including ones a chain reached that

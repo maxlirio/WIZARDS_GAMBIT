@@ -12,7 +12,6 @@
 import { cloneState, choose, legalActions } from '../engine.js';
 import { evaluate } from './eval.js';
 import { int } from '../rules/rng.js';
-import { bestPlacement } from '../rules/sigils.js';
 
 /** Every answer worth trying for a request. Bounded, and in a fixed order. */
 export function candidates(request, limit = 10) {
@@ -43,7 +42,6 @@ export function quickAnswer(state, request, rng) {
   if (request.type === 'some') return request.options.slice(0, request.count);
   if (!request.options || !request.options.length) return null;
   if (request.kind === 'dir') return request.preferred?.[0] ?? request.options[0];
-  if (request.kind === 'sigil') return bestPlacement(state, request.player ?? state.active, rng);
   // The first option, not a random one. A rollout whose answers were random
   // would make the same candidate action score differently on every call, and
   // a one-ply search over a noisy evaluation picks noise.
@@ -67,10 +65,6 @@ export function settle(state, rng, limit = 200) {
 /** One-ply over the outstanding question. */
 export function chooseAnswer(state, p, rng) {
   const request = state.pending.request;
-  // The sigil board is its own small puzzle, answered by its own heuristic
-  // rather than a rollout: sixteen cells x a one-ply search would be the
-  // most expensive question in the game for the least at stake.
-  if (request.kind === 'sigil') return bestPlacement(state, request.player ?? p, rng);
   const opts = candidates(request);
   if (opts.length <= 1) return opts[0] ?? null;
 

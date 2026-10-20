@@ -24,7 +24,7 @@ card({
 card({
   id: 'RESONIS_ORB', name: 'Resonis Orb', school: 'grey', kind: 'artifact',
   runes: [SPIRAL, SPIRAL, SHARD, SPIRAL],
-  sigil: ['S.', 'SH', '.S', '.H'],
+  sigil: ['SH', 'S.'],
   I:   { text: 'The corners of this Artifact count as any corner.', ...M.passiveWildCorners() },
   II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   III: { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
@@ -34,7 +34,7 @@ card({
 card({
   id: 'DEFRINOL_ORB', name: 'Defrinol Orb', school: 'grey', kind: 'artifact',
   runes: [SPIRAL, SPIRAL, SPIRAL, SHARD],
-  sigil: ['SSS', 'SH.'],
+  sigil: ['S.', 'SH'],
   I:   { text: 'After this Artifact is rotated, rotate a Spell you control left.', ...M.onRotatedRotate() },
   II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   III: { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
@@ -44,7 +44,7 @@ card({
 card({
   id: 'WARD_LANTERN', name: 'Ward Lantern', school: 'grey', kind: 'artifact',
   runes: [LATTICE, LATTICE, LATTICE, SHARD],
-  sigil: ['L..', 'LL.', '.LH'],
+  sigil: ['..H', 'LLL'],
   I:   { text: 'Your opponent may not choose your Spells.', ...M.passiveWard() },
   II:  { text: 'Your mage has +2 life.', ...M.passiveMageLife({ n: 2 }) },
   III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
@@ -54,7 +54,7 @@ card({
 card({
   id: 'ECHO_BELL', name: 'Echo Bell', school: 'grey', kind: 'artifact',
   runes: [SHARD, LATTICE, SPIRAL, SPIRAL],
-  sigil: ['LL', 'SS', 'S.'],
+  sigil: ['HLS'],
   I:   { text: 'After a match on your table, deal 1 damage within 3m.', ...M.onMatchDamage({ amount: 1, range: 3000 }) },
   II:  { text: 'After you kill a unit, draw a card.', ...M.onKillDraw({ n: 1 }) },
   III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
@@ -64,7 +64,7 @@ card({
 card({
   id: 'KEYSTONE', name: 'Keystone', school: 'grey', kind: 'artifact',
   runes: [SPIRAL, LATTICE, SPIRAL, SPIRAL],
-  sigil: ['.SS', 'SLS'],
+  sigil: ['L.', 'SS'],
   // Side I makes every corner of this card read the same, so the junctions it
   // touches match whatever is beside them and KEEP matching through a rotation.
   // That is the one-rune-card pathology, printed on purpose: the chain's vertex
@@ -79,7 +79,7 @@ card({
 card({
   id: 'SEALSTONE', name: 'Sealstone', school: 'grey', kind: 'artifact',
   runes: [LATTICE, SPIRAL, SHARD, SPIRAL],
-  sigil: ['..S', '..S', 'LSH'],
+  sigil: ['LSH'],
   I:   { text: 'Your opponent may not choose your Spells.', ...M.passiveWard() },
   II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   III: { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
@@ -99,7 +99,7 @@ card({
 card({
   id: 'TITHE_BELL', name: 'Tithe Bell', school: 'grey', kind: 'artifact',
   runes: [LATTICE, LATTICE, SPIRAL, WHEEL],
-  sigil: ['LLL', 'SS.'],
+  sigil: ['L', 'S', 'W'],
   I:   { text: 'Grant a Spell [Unstable].', ...M.grantKeyword({ kw: 'Unstable' }) },
   II:  { text: 'If you have 3 units on the battlefield, your damage is increased by 1.',
          gate: { id: 'unitsAtLeast', n: 3 }, ...M.passiveDamage({ n: 1 }) },
@@ -110,7 +110,7 @@ card({
 card({
   id: 'AEGIS_SIGIL', name: 'Aegis Sigil', school: 'grey', kind: 'artifact',
   runes: [LATTICE, LATTICE, SPIRAL, WHEEL],
-  sigil: ['LS.', '.W.', '.LL'],
+  sigil: ['.S', 'LW'],
   // The only REPLACEMENT effect in the corpus. It intercepts damage before it
   // lands rather than reacting to it afterwards, which is why it has to be a
   // pure function: it runs inside `hurt`, where the board is mid-mutation.

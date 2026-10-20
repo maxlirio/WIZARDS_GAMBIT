@@ -164,13 +164,17 @@ export function invariants(state, where = '') {
       stamps.add(k);
     }
   }
-  // The sigil boards: sixteen cells of runes or nothing, a waiting rune only
-  // while its question is open, and a card found once at most.
+  // The rune pouches: four whole, non-negative counts that never exceed what
+  // resolved faces paid in; and a card found once at most.
+  if (typeof state.bindUsed !== 'boolean') say('bindUsed is not a boolean');
   for (let p = 0; p < 2; p++) {
-    const b = state.players[p].sigils;
-    if (!b || !Array.isArray(b.cells) || b.cells.length !== 16) { say(`player ${p} has no 4x4 sigil board`); continue; }
-    for (const c of b.cells) if (c !== null && !['SPIRAL', 'SHARD', 'WHEEL', 'LATTICE'].includes(c)) say(`sigil board ${p} holds '${c}'`);
-    if (b.piece !== null && !state.pending && !state.queue.some((w) => w.kind === 'sigil' && w.p === p)) say(`player ${p} holds a rune with no placement pending`);
+    const pouch = state.players[p].runes;
+    if (!pouch) { say(`player ${p} has no rune pouch`); continue; }
+    const keys = Object.keys(pouch).sort();
+    if (keys.join() !== 'LATTICE,SHARD,SPIRAL,WHEEL') say(`pouch ${p} has keys ${keys.join()}`);
+    let held = 0;
+    for (const k of keys) { if (!Number.isInteger(pouch[k]) || pouch[k] < 0) say(`pouch ${p}.${k} is ${pouch[k]}`); else held += pouch[k]; }
+    if (held > state.players[p].ledger.runesEarned) say(`pouch ${p} holds ${held} runes but only ${state.players[p].ledger.runesEarned} were earned`);
     const f = state.players[p].foundThisMatch;
     if (new Set(f).size !== f.length) say(`player ${p} found a card twice: ${f.join(',')}`);
   }

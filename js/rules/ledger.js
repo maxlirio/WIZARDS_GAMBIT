@@ -35,6 +35,7 @@ export function emptyLedger() {
     cardsDrawn: 0,
     cardsDiscarded: 0,
     cardsFound: 0,
+    runesEarned: 0,           // paid into the pouch by resolved faces (sigils.js)
     reshuffles: 0,
 
     /* chains */
@@ -95,7 +96,7 @@ export const HIGH_WATER = Object.freeze(['longestChain']);
  * the reader has to be a tool, not a card.
  */
 export const DIAGNOSTIC = Object.freeze([
-  'reshuffles', 'cardsFound', 'inertResolutions', 'fallDamage',
+  'reshuffles', 'cardsFound', 'runesEarned', 'inertResolutions', 'fallDamage',
   'golemCardsLost', 'objectivesScored', 'vpFromObjectives', 'vpFromKills',
   'unitsLost', 'mageDeaths', 'forcedRotations', 'artifactsPlayed', 'golemsPlayed',
   'spellsPlayed',

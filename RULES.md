@@ -527,42 +527,47 @@ vocabulary is finite even though the world is not.
 
 ---
 
-## 10. The Spellbook and the sigil board
+## 10. The Spellbook, the rune pouch and the sigil board
 
 The Spellbook is **a record of the sigils you have made** — your accumulating knowledge
 of the game, not an inventory and not a deck list.
 
 - **You always start a match with your standard 10-spell deck.**
-- Every findable card has a **sigil**: a small shape of five runes (Spiral, Shard,
-  Wheel, Lattice), the same shape every match, made of the runes on the card's own
-  corners. Golems and gold cards have six-rune sigils.
-- **Every turn you are handed one rune at random** (from the match's dice, so both
-  players of an online match agree on it) and you **set it on your own 4 × 4 sigil
-  board** — on any cell, over whatever is there. That is one question a turn, before
-  anything else happens.
-- **The moment the rune you set completes a sigil**, in any of its four orientations,
-  the runes of that sigil are **spent** (their cells empty) and the card is **found**:
-  you are asked whether it joins this duel, and if so it goes into your **discard pile**
-  for the rest of the match. A card is found **once per match**. If one placement
-  completes two sigils, the **larger** wins (ties by card name).
+- **Every face you resolve earns you one rune**, the rune of its kind of work: a
+  **Spiral** for turning, a **Shard** for breaking, a **Wheel** for moving, a **Lattice**
+  for drawing (the verb taxonomy of §3). A face that resolves inert — gate unmet, cost
+  unpaid — earns nothing; a passive face earns nothing, its worth is ongoing. Runes go
+  into your **pouch** and stay there, across turns, until you spend them.
+- Every findable card has a **sigil**: a small shape of **three runes** (four for a gold
+  card or a golem), the same shape every match, made of the runes on the card's own
+  corners.
+- **Once a turn, free**, in either phase of your own turn, you may **lay runes from your
+  pouch on your 4 × 4 sigil board and bind**. Every sigil the board holds, in any of its
+  four orientations, is **found**: its runes are **spent** and you are asked whether the
+  card joins this duel — if so it goes into your **discard pile** for the rest of the
+  match. Every other rune you laid goes back into your pouch. A card is found **once per
+  match**. Where two sigils overlap, the **larger** wins (ties by card name).
+- **Nothing stays on the board between turns.** The board is a scratch surface; the only
+  thing the match remembers is your pouch. You are never made to lay a rune.
 - No sigil contains another and no two are alike in any orientation; `tools/checkcorpus.js`
   refuses a corpus that breaks either. A sigil is one connected shape with at least two
   different runes.
-- **The Spellbook shows the shape of every sigil you have completed**, and for the ones
-  you have not, only which runes it needs and how many. It persists between matches;
-  your starting deck does not change.
+- **The Spellbook shows the shape of every sigil you have made**, and for the ones you
+  have not, only which runes it needs and how many. It persists between matches; your
+  starting deck does not change.
+- The computer opponent is dealt **ten** sigils it knows at the start of a match (from
+  the match's seed) and binds one whenever its pouch can pay for it. It never binds a
+  shape it has not been dealt.
 
-Measured on the board alone over 60 turns: a player setting runes at random
-completes about 2 sigils, one who merely keeps runes clustered about 6, and the AI,
-which knows every shape, about 9. Four-rune sigils were tried first and the AI found
-a card every third turn, which bloated every deck.
-
-The point is that spells are **found, not earned**. The earlier Spellbook was a list of
-conditions ("deal 25 damage in one duel", "let your mage be wounded to half"); that
-made a find a quest to seek, and a quest that wins games becomes the one thing every
-match does. The board fills on its own, you discover shapes by making them, and the
-intricate part is choosing where each rune goes so that the shape you want closes
-before a smaller one eats its runes.
+This replaced two earlier Spellbooks. The first was a list of **earned conditions**
+("deal 25 damage in one duel", "let your mage be wounded to half"); that made a find a
+quest to seek, and a quest that wins games becomes the one thing every match does. The
+second handed you **one random rune a turn** to set on a board that persisted all match;
+with five- and six-rune sigils there were too many arrangements to ever close one on
+purpose, and the board could not be cleared. Now the runes come from what you actually
+do, you keep them until you choose to use them, and the puzzle is the **shape**: the
+Spellbook tells you a card takes a Shard, a Shard and a Wheel, and the three-rune
+arrangements of that are yours to try, one bind a turn.
 
 This is the system that took mana's place, so it is a first-class subsystem rather
 than a late addition.

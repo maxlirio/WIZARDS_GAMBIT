@@ -99,7 +99,7 @@ for (const d of allCards()) {
   }
 }
 // The Spellbook used to read counters too (its finds were conditions); it
-// is a sigil board now and reads none.
+// is sigils bound from a rune pouch now and reads none.
 const findReaders = new Map(LEDGER_KEYS.map((k) => [k, []]));
 
 /* ------------------------------------------------------------- real games */

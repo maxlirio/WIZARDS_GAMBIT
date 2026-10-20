@@ -25,7 +25,7 @@ card({
   unit: { hp: 5, move: 1800, atk: 2, reach: 900 },
   keywords: ['Absorb'],
   text: 'Tier B. [Absorb]. 5 hit points, 1.8m move, 2 damage.',
-  sigil: ['WS..', '.WSL', '...L'],
+  sigil: ['.L', '.H', 'WL'],
 });
 
 card({
@@ -33,7 +33,7 @@ card({
   unit: { hp: 9, move: 1500, atk: 3, reach: 1100 },
   keywords: ['Crush'],
   text: 'Tier A. One only. [Crush]. 9 hit points, 1.5m move, 3 damage.',
-  sigil: ['..SL', 'LWS.', '..H.'],
+  sigil: ['HL', 'HW'],
 });
 
 card({
@@ -41,7 +41,7 @@ card({
   unit: { hp: 2, move: 3000, atk: 1, reach: 800 },
   keywords: ['Channel', 'Swift'],
   text: 'Tier C. [Channel] [Swift]. 2 hit points, 3m move, 1 damage.',
-  sigil: ['SWH', 'LW.', 'S..'],
+  sigil: ['W.', 'LH', 'S.'],
 });
 
 card({
@@ -49,7 +49,7 @@ card({
   unit: { hp: 4, move: 2000, atk: 2, reach: 1000 },
   keywords: ['Channel'],
   text: 'Tier B. [Channel]. 4 hit points, 2m move, 2 damage.',
-  sigil: ['LL', 'HS', 'LW'],
+  sigil: ['.H.', 'LHW'],
 });
 
 card({
@@ -57,5 +57,5 @@ card({
   unit: { hp: 2, move: 2800, atk: 2, reach: 800 },
   keywords: ['Unstable', 'Swift'],
   text: 'Tier C. [Unstable] [Swift]. 2 hit points, 2.8m move, 2 damage.',
-  sigil: ['.W.', 'LH.', 'WHW'],
+  sigil: ['WWL', '.L.'],
 });

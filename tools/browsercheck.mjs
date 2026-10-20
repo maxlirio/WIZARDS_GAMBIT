@@ -93,8 +93,11 @@ try {
 
   // The turn opens with the UNIT PHASE (units move before the spell action):
   // markers should be on the field, the mage walks, then 'Done moving'.
-  // The turn opens with the sigil question: answer it through the board, like a player.
-  if (await ev(`WG.state.pending?.request?.kind === 'sigil'`)) { const okc = await clickSel('#sigils0 .sigcell.askable'); console.log('  answered the sigil question by clicking a board cell:', okc); await waitIdle(); }
+  // The runes column: an empty pouch, a 4 x 4 scratch board, Bind disabled
+  // until something is laid.
+  const cells = await ev(`document.querySelectorAll('#sigils0 .sigboard .sigcell').length`);
+  check('the runes column shows a 4 x 4 scratch board', cells === 16, `${cells} cells`);
+  check('Bind is disabled with an empty pouch and nothing laid', await ev(`!!document.querySelector('#bind0')?.disabled`));
   const phase = await ev('WG.state.phase');
   if (phase === 'unit' && !(await ev('!!WG.state.pending'))) {
     await sleep(600);
@@ -220,6 +223,9 @@ try {
   })()`);
   check('a whole match plays through the page', out && !out.error && (out.winner !== null || out.turn >= turns), JSON.stringify(out));
   await sleep(800);
+  // The pouch chips read what the engine holds (nothing is laid on the scratch).
+  const pouch = await ev(`(()=>{const p=WG.state.players[0].runes; const c={}; for (const el of document.querySelectorAll('#sigils0 .chip')) c[el.dataset.r]=+el.querySelector('b').textContent; return JSON.stringify({ pouch: p, chips: c, same: Object.keys(p).every(r => p[r] === c[r]) })})()`);
+  check('the pouch chips match the engine pouch', JSON.parse(pouch).same, pouch);
   await shot('end');
 } catch (e) {
   check('harness ran', false, e.message);

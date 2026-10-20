@@ -29,7 +29,8 @@ import { gateProgress, counted } from '../rules/gates.js';
 import { keywordsOf, keywordSources, KEYWORDS } from '../rules/keywords.js';
 import { TIER_CAP } from '../rules/golems.js';
 import { spellbookPage } from '../rules/learn.js';
-import { completions, openPatterns, BOARD_W, BOARD_CELLS } from '../rules/sigils.js';
+import { bindError, BOARD_W, BOARD_CELLS } from '../rules/sigils.js';
+import { RUNES } from '../rules/runes.js';
 import { seedRng, pick } from '../rules/rng.js';
 import * as profile from '../profile.js';
 import { makeCtx } from '../rules/resolve.js';
@@ -73,7 +74,7 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   fxSeen = 0; sel = null; someChosen = []; matchOver = false;
   angles.clear();
   pendingTurns.clear();
-  for (const p of [0, 1]) { sigTrack[p] = Array(BOARD_CELLS).fill(null); sigilHold[p] = null; }
+  scratch.fill(null); picked = null;
   for (const p of [0, 1]) for (const el of document.querySelectorAll(`#table${p} .cell`)) el.dataset.uid = '';
   $('#log').innerHTML = '';
   arena?.dispose();
@@ -375,15 +376,10 @@ function flushFx() {
     if (lastDynT !== null && (f.kind === 'kill' || f.kind === 'knockdown' || f.kind === 'propHit' || f.kind === 'shatter' || f.kind === 'absorb' || f.kind === 'damage')) return lastDynT;
     return null;
   };
-  // The engine hands out the turn's rune just before it notes the turn's
-  // start; the log reads better the other way round, so the rune line waits
-  // for the turn line.
   const fresh = S.fx.slice(fxSeen);
-  let heldLine = null;
-  fresh.forEach((f, k) => {
+  fresh.forEach((f) => {
     const line = narrate(f);
-    if (line && f.kind === 'sigilDraw' && fresh[k + 1]?.kind === 'turnStart') heldLine = line;
-    else if (line) { logLine(line, f.kind); if (heldLine) { logLine(heldLine, 'sigilDraw'); heldLine = null; } }
+    if (line) logLine(line, f.kind);
     // Inside a run: the note's own moment, and the cursor is put back after.
     const at = dynTimeOf(f);
     const keep = t;
@@ -494,25 +490,24 @@ function flushFx() {
       case 'shatter': t += 400; break;
       case 'summon': { const id = f.id; later(t + 60, () => cues().summon(id)); t += 500; break; }
       case 'score': { const p = f.p; later(t, () => cues().score(p)); toast(`${pName(f.p)} +${f.amount} VP — ${SOURCE[f.source] || esc(f.source)}`, f.p === HUMAN ? 'good' : HUMAN === null ? 'good' : 'bad'); t += 500; break; }
-      case 'sigilDraw': t += 120; break;
-      case 'sigilPlace': {
-        sigTrack[f.p][f.idx] = f.rune;
-        sigFlash.set(`${f.p}:${f.idx}`, 'place');
-        t += 250; break;
+      // A rune earned: its chip in the owner's pouch flares.
+      case 'rune': { const { p, rune } = f; later(t, () => flashChip(p, rune)); t += 120; break; }
+      // A BIND: the engine has already spent the hit runes and queued the
+      // finds. On your board the hit cells flash gold with their runes still
+      // showing, then the whole scratch empties (what was not hit never left
+      // the pouch); a bind that hit nothing shakes the board instead.
+      case 'bind': {
+        const { p, hits } = f;
+        if (p !== HUMAN) break;
+        const cells = hits.flatMap((h) => h.cells);
+        if (cells.length) { later(t, () => flashSigil(cells)); later(t + 1000, clearScratch); t += 1000; }
+        else { later(t, () => { shakeBoard(); toast('Nothing bound — your runes return to the pouch', ''); }); later(t + 500, clearScratch); t += 500; }
+        break;
       }
       case 'sigil': {
-        // The engine has already spent the runes. Hold them on screen, flash
-        // the shape gold at its moment on the timeline, then let the cells
-        // empty -- the way a table cell keeps its card until its cue plays.
-        const { p, cells, defId } = f;
-        const runes = new Map(cells.map((i) => [i, sigTrack[p][i]]));
-        for (const i of cells) sigTrack[p][i] = null;
-        const hold = { cells, runes };
-        sigilHold[p] = hold;
-        later(t, () => flashSigil(p, cells));
-        later(t + 1000, () => { if (sigilHold[p] === hold) { sigilHold[p] = null; renderSigils(p); } });
+        const { p, defId } = f;
         toast(`✶ ${p === HUMAN ? 'Your' : HUMAN === null ? `${pName(p)}'s` : `${FOE()}'s`} sigil completes — <b>${esc(CARDS[defId]?.name || defId)}</b>`, p === HUMAN || HUMAN === null ? 'good' : 'bad');
-        t += 1000; break;
+        t += 300; break;
       }
       case 'found':
         if (f.p === HUMAN) {
@@ -531,19 +526,11 @@ function flushFx() {
     }
     if (at !== null) t = Math.max(keep, t);
   });
-  if (heldLine) logLine(heldLine, 'sigilDraw');
   fxSeen = S.fx.length;
   pendingFlash = flash;
   return t;
 }
 let pendingFlash = new Map();
-/* The sigil boards' cues. sigTrack mirrors each board as the timeline has
-   shown it so far (the state is ahead of it); sigilHold keeps a completed
-   sigil's runes visible until its flash has played; sigFlash is this
-   render's one-shot cell flashes, like pendingFlash for table cells. */
-const sigTrack = [Array(BOARD_CELLS).fill(null), Array(BOARD_CELLS).fill(null)];
-const sigilHold = [null, null];
-let sigFlash = new Map();
 const SOURCE = { objective: 'an objective completed', mage: 'a mage slain', golem: 'a golem slain' };
 
 /** The log lines a rigid-body run deserves: the slams, the crush, a body going over an edge. */
@@ -614,9 +601,12 @@ function narrate(f) {
     case 'move': return null;
     case 'respawn': return `${P(f.p)} mage respawns`;
     case 'swept': return `<span class="red">${P(f.p)} spell table is swept into the discard</span> — ${f.uids.length} card${f.uids.length === 1 ? '' : 's'}`;
-    case 'sigilDraw': return `${P(f.p)} ${f.p === HUMAN ? 'are' : 'is'} handed a ${runeGlyphInline(f.rune, RUNE_INK[f.rune])}<b>${RUNE_NAME[f.rune]}</b> rune`;
-    case 'sigilPlace': return `&nbsp;&nbsp;&nbsp;&nbsp;set${f.p === HUMAN ? '' : 's'} it at row ${Math.floor(f.idx / BOARD_W) + 1}, column ${(f.idx % BOARD_W) + 1}`;
-    case 'sigil': return `<span class="gold">✶ SIGIL</span> — <b>${esc(CARDS[f.defId]?.name || f.defId)}</b>'s sigil completes`;
+    case 'rune': return `&nbsp;&nbsp;&nbsp;&nbsp;${P(f.p)} earn${f.p === HUMAN ? '' : 's'} a ${runeGlyphInline(f.rune, RUNE_INK[f.rune])}<b>${RUNE_NAME[f.rune]}</b> rune${f.def ? ` (${esc(CARDS[f.def]?.name || f.def)}${f.numeral ? ` ${f.numeral}` : ''})` : ''}`;
+    case 'bind': {
+      const n = f.cells.length, s = f.p === HUMAN ? '' : 's';
+      return f.hits.length ? `${P(f.p)} lay${s} ${n} rune${n === 1 ? '' : 's'} and bind${s}` : `${P(f.p)} lay${s} ${n} rune${n === 1 ? '' : 's'} and bind${s} <i>nothing</i> — they return to the pouch`;
+    }
+    case 'sigil': return `<span class="gold">✶ SIGIL</span> — <b>${esc(CARDS[f.defId]?.name || f.defId)}</b>'s sigil is bound`;
     case 'found': return `${P(f.p)} <span class="green">find${f.p === HUMAN ? '' : 's'} ${esc(CARDS[f.defId]?.name || f.defId)}</span>${f.taken === false ? ' <i>(not taken)</i>' : ''}`;
     case 'golemSpent': return `${N(f.uid)} is spent and goes to the discard`;
     case 'terrainRemoved': return `&nbsp;&nbsp;&nbsp;&nbsp;banishes a ${esc(propName(f.id))} until end of turn`;
@@ -945,78 +935,131 @@ function renderTable(p) {
 /* ================================================================ sigil board */
 
 const RUNE_INK = { SPIRAL: '#c98bff', SHARD: '#ff6a52', WHEEL: '#52b6ff', LATTICE: '#5ee68f', WILD: '#e8dcc0' };
-const sigilAsk = () => (humanToAnswer() && S.pending.request.kind === 'sigil' ? S.pending.request : null);
 
-/** The sigil board's markup: a head, the waiting rune, 4 x 4 cells, a hint. Built once a seat. */
+/* Your scratch board: what you have laid out of your pouch and not yet bound.
+   HUD-only -- the engine sees a layout only when you press Bind, and nothing
+   stays on the board between turns. `picked` is the chip you are laying with. */
+const scratch = Array(BOARD_CELLS).fill(null);
+let picked = null;
+
+/** The runes laid on the scratch, as the engine's bind action wants them. */
+const scratchCells = () => scratch.map((r, idx) => (r ? { idx, r } : null)).filter(Boolean);
+/** How many of `r` the pouch still holds beyond what the scratch has laid. */
+function available(r) {
+  if (HUMAN === null || !S) return 0;
+  let laid = 0;
+  for (const x of scratch) if (x === r) laid++;
+  return Math.max(0, (S.players[HUMAN].runes?.[r] || 0) - laid);
+}
+/** Is a bind yours to make right now (whatever is laid)? */
+const canBindNow = () => humanToMove() && !S.bindUsed && (S.phase === 'unit' || (S.phase === 'spell' && !S.spellActionUsed));
+
+/** The runes column's markup: a head, the pouch chips, the 4 x 4 scratch board, Bind/Clear, a hint. Built once a seat. */
 function buildSigils(p) {
   const host = $(`#sigils${p}`);
   if (!host) return;
-  host.innerHTML = `<div class="sighead">Sigil board</div><div class="sigpiece"></div>
+  host.innerHTML = `<div class="sighead">Runes</div>
+    <div class="sigpouch">${RUNES.map((r) => `<button type="button" class="chip" data-r="${r}" title="${RUNE_NAME[r]}">${runeGlyphInline(r, RUNE_INK[r])}<b>0</b></button>`).join('')}</div>
     <div class="sigboard">${Array.from({ length: BOARD_CELLS }, (_, i) => `<div class="sigcell" data-idx="${i}" title="row ${Math.floor(i / BOARD_W) + 1}, column ${(i % BOARD_W) + 1}"></div>`).join('')}</div>
+    <div class="sigbtns"><button type="button" id="bind${p}" class="primary" disabled>Bind</button><button type="button" class="ghost clear">Clear</button></div>
     <div class="sighint"></div>`;
-  host.querySelectorAll('.sigcell').forEach((el, i) => {
-    el.addEventListener('click', () => onSigilClick(p, i));
-    el.addEventListener('mouseenter', () => previewSigil(p, i));
-    el.addEventListener('mouseleave', () => previewSigil(p, null));
-  });
+  host.querySelectorAll('.chip').forEach((el) => el.addEventListener('click', () => onChipClick(p, el.dataset.r)));
+  host.querySelectorAll('.sigcell').forEach((el, i) => el.addEventListener('click', () => onSigilCell(p, i)));
+  host.querySelector(`#bind${p}`).addEventListener('click', () => onBind(p));
+  host.querySelector('.clear').addEventListener('click', () => { if (p !== HUMAN) return; clearScratch(); });
 }
 
 function renderSigils(p) {
   const host = $(`#sigils${p}`);
   if (!host || !S) return;
-  const b = S.players[p].sigils;
-  const hold = sigilHold[p];
-  const ask = p === HUMAN ? sigilAsk() : null;
+  const mine = p === HUMAN;
+  const pouch = S.players[p].runes || {};
+  let total = 0;
+  host.querySelectorAll('.chip').forEach((el) => {
+    const r = el.dataset.r;
+    const n = mine ? available(r) : (pouch[r] || 0);
+    total += pouch[r] || 0;
+    el.querySelector('b').textContent = n;
+    el.classList.toggle('picked', mine && picked === r);
+    el.classList.toggle('empty', n <= 0);
+    el.disabled = !mine || n <= 0;
+  });
   host.querySelectorAll('.sigcell').forEach((el, i) => {
-    const r = hold?.runes.has(i) ? hold.runes.get(i) : b.cells[i];
+    const r = mine ? scratch[i] : null;
     if (el.dataset.r !== (r || '')) { el.innerHTML = r ? runeGlyphInline(r, RUNE_INK[r]) : ''; el.dataset.r = r || ''; }
     el.classList.toggle('set', !!r);
-    el.classList.toggle('askable', !!ask && ask.options.includes(i));
-    el.classList.remove('would');
-    const fl = sigFlash.get(`${p}:${i}`);
-    if (fl) { el.classList.remove('flash-place', 'flash-sigil'); void el.offsetWidth; el.classList.add(`flash-${fl}`); }
+    el.classList.toggle('open', mine && !r && !!picked);
   });
-  const piece = host.querySelector('.sigpiece');
-  const r = b.piece;
-  piece.classList.toggle('has', !!r);
-  piece.classList.toggle('ask', !!ask);
-  piece.classList.remove('would');
-  piece.innerHTML = r ? `${runeGlyphInline(r, RUNE_INK[r])}<span>${ask ? 'Set the' : 'Holds a'} <b>${RUNE_NAME[r]}</b></span>` : '<span>no rune in hand</span>';
-  host.querySelector('.sighint').textContent = ask ? 'Click a cell — over anything. Close a shape to find its spell.' : '';
+  const cells = mine ? scratchCells() : [];
+  const err = mine && cells.length ? bindError(S, p, cells) : null;
+  const legal = mine && cells.length > 0 && !err && canBindNow();
+  host.querySelector(`#bind${p}`).disabled = !legal;
+  host.querySelector('.clear').disabled = !mine || !cells.length;
+  let hint = '';
+  if (!mine) hint = HUMAN === null ? 'Watching' : '';
+  else if (S.winner !== null) hint = 'The duel is over';
+  else if (S.active !== HUMAN) hint = 'Not your turn';
+  else if (S.bindUsed) hint = 'Bound this turn';
+  else if (S.phase === 'spell' && S.spellActionUsed) hint = 'Your action is spent — bind next turn';
+  else if (!total) hint = 'No runes yet — resolving faces earns them';
+  else if (err) hint = err.charAt(0).toUpperCase() + err.slice(1);
+  else hint = 'Lay runes from your pouch, then Bind — once a turn';
+  host.querySelector('.sighint').textContent = hint;
 }
 
-/** The gold flash of a completed sigil; the held runes stay visible under it. */
-function flashSigil(p, cells) {
+/** Pick a chip to lay with; the picked chip again puts it down. */
+function onChipClick(p, r) {
+  if (p !== HUMAN || !S) return;
+  if (picked === r) picked = null;
+  else if (available(r) > 0) picked = r;
+  else return;
   renderSigils(p);
+}
+
+/** Lay the picked rune, take a laid one back, or swap it for the picked one. */
+function onSigilCell(p, i) {
+  if (p !== HUMAN || !S) return;
+  const cur = scratch[i];
+  if (cur && (!picked || picked === cur)) scratch[i] = null;
+  else if (picked && available(picked) > 0) { scratch[i] = picked; if (available(picked) <= 0) picked = null; }
+  else return;
+  renderSigils(p);
+}
+
+function onBind(p) {
+  if (p !== HUMAN || !S) return;
+  const cells = scratchCells();
+  if (!cells.length || !canBindNow() || bindError(S, p, cells)) return;
+  // The scratch stays laid: the bind's cue flashes the hits and then empties it.
+  act({ type: 'bind', cells });
+}
+
+function clearScratch() {
+  scratch.fill(null); picked = null;
+  if (HUMAN !== null) renderSigils(HUMAN);
+}
+
+/** The gold flash of bound cells; the runes stay visible under it. */
+function flashSigil(cells) {
+  if (HUMAN === null) return;
   for (const i of cells) {
-    const el = document.querySelector(`#sigils${p} .sigcell[data-idx="${i}"]`);
+    const el = document.querySelector(`#sigils${HUMAN} .sigcell[data-idx="${i}"]`);
     if (!el) continue;
-    el.classList.remove('flash-place', 'flash-sigil'); void el.offsetWidth; el.classList.add('flash-sigil');
+    el.classList.remove('flash-sigil'); void el.offsetWidth; el.classList.add('flash-sigil');
   }
 }
 
-function onSigilClick(p, idx) {
-  const ask = sigilAsk();
-  if (!ask || p !== HUMAN || !ask.options.includes(idx)) return;
-  promptPick(idx);
+function shakeBoard() {
+  const el = HUMAN === null ? null : document.querySelector(`#sigils${HUMAN} .sigboard`);
+  if (!el) return;
+  el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
 }
 
-/** Hovering a cell during the question: would setting the rune there close a sigil? */
-function previewSigil(p, idx) {
-  const host = $(`#sigils${p}`);
-  if (!host) return;
-  host.querySelectorAll('.sigcell.would').forEach((el) => el.classList.remove('would'));
-  const piece = host.querySelector('.sigpiece');
-  const ask = sigilAsk();
-  if (idx === null || !ask || p !== HUMAN) { if (piece?.classList.contains('would')) renderSigils(p); return; }
-  const b = S.players[p].sigils;
-  if (b.piece === null) return;
-  const trial = { cells: b.cells.slice() }; trial.cells[idx] = b.piece;
-  const done = completions(trial, openPatterns(S, p), idx);
-  if (!done.length) { if (piece.classList.contains('would')) renderSigils(p); return; }
-  for (const i of done[0].cells) host.querySelector(`.sigcell[data-idx="${i}"]`)?.classList.add('would');
-  piece.classList.add('would');
-  piece.innerHTML = `${runeGlyphInline(b.piece, RUNE_INK[b.piece])}<span>completes <b>${esc(CARDS[done[0].id]?.name || done[0].id)}</b></span>`;
+/** A rune earned: its chip flares once. */
+function flashChip(p, rune) {
+  const el = document.querySelector(`#sigils${p} .chip[data-r="${rune}"]`);
+  if (!el) return;
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
 }
 
 /* ================================================================ hand */
@@ -1150,7 +1193,7 @@ function inspectDef(def, rot = 0, kws = null, card = null) {
     const depth = stackAt(S, card.owner, card.cell).length - 1;
     if (depth > 0) extra += `<div class="dim">${depth} card${depth > 1 ? 's' : ''} buried beneath.</div>`;
   }
-  if (def.sigil) extra += `<div class="dim">Found by completing its sigil on your sigil board.</div>`;
+  if (def.sigil) extra += `<div class="dim">Found by binding its sigil — lay its runes on your board.</div>`;
   $('#inspector').innerHTML = `
     <div class="ibig">${cardSVG(def, { rot, keywords: keys })}</div>
     <div class="ihead" style="color:${SCHOOL_INK[school]}">${esc(def.name)} <small>${def.kind === 'golem' ? `golem · tier ${def.tier}` : def.kind === 'artifact' ? 'artifact · grey corners' : def.kind === 'trap' ? 'trap · face down on a grey corner' : `${def.school} spell`}</small></div>
@@ -1344,11 +1387,10 @@ function renderPrompt() {
       : r.kind === 'hand' ? `Click ${r.count > 1 ? `${r.count} cards` : 'a card'} in your hand, or pick below.`
       : r.kind === 'prop' ? 'Click a marked terrain piece, or pick below.'
       : r.kind === 'body' ? 'Click a glowing unit or a marked terrain piece, or pick below.'
-      : r.kind === 'sigil' ? 'Click a cell of your sigil board — any cell, over anything. Completing a shape finds its spell.'
       : r.show?.[0] && r.show[0].x !== undefined ? 'Click a marker on the field, or pick below.' : '';
     if (hint) html += `<div class="phint">${hint}</div>`;
     html += '<div class="pbtns">';
-    if (r.kind !== 'sigil') r.options.forEach((o, i) => {   // the board is the picker
+    r.options.forEach((o, i) => {
       html += `<button data-i="${i}" class="${someChosen.includes(o) ? 'chosen' : ''}">${esc(optionLabel(r, o, i))}</button>`;
     });
     if (r.allowNone) html += `<button data-v="none" class="ghost">Decline</button>`;
@@ -1715,7 +1757,6 @@ function render() {
   renderHighlights();
   renderPopover();
   pendingFlash = new Map();
-  sigFlash = new Map();
   window.WG.state = S;
 }
 
@@ -1731,7 +1772,7 @@ function endMatch() {
   const title = S.winner === -1 ? 'A draw' : HUMAN === null ? `Player ${S.winner + 1} wins` : won ? 'Victory' : 'Defeat';
   setTimeout(() => modal(`<h2 class="${won ? 'gold' : ''}">${title}</h2>
     <p class="big">${S.vp[0]} – ${S.vp[1]} <small>after ${S.turn} turns · ${esc(S.reason || '')}</small></p>
-    ${HUMAN !== null ? `<p>${learned ? `<b class="green">${learned} new sigil${learned > 1 ? 's' : ''}</b> written into your Spellbook.` : 'Nothing new for the Spellbook this time.'}<br>
+    ${HUMAN !== null ? `<p>${learned ? `<b class="green">${learned} new sigil${learned > 1 ? 's' : ''}</b> written into your Spellbook.` : 'Nothing new for the Spellbook this time — binding runes on your board is how spells are found.'}<br>
       Spellbook: ${Object.keys(prof.learned).length}/${spellbookPage(Object.values(CARDS), prof.learned).length} sigils known · ${prof.matches} duel${prof.matches === 1 ? '' : 's'} · ${prof.wins} won</p>` : ''}
     ${ledgerTable()}
     <div class="mbtns"><button id="again" class="primary">New duel</button><button id="sb">Open Spellbook</button><button id="close" class="ghost">Look at the battlefield</button></div>`), FAST ? 0 : 1800);
@@ -1791,7 +1832,7 @@ function openSpellbook() {
   const known = page.filter((x) => x.known).length;
   const runeList = (x) => x.runes.map((r) => RUNE_NAME[r]).join(', ');
   modal(`<h2>The Spellbook</h2>
-    <p class="dim">Spells are <b>found</b>, not earned. Every turn you are handed one rune and set it anywhere on your sigil board, over anything; the moment it closes a card's <b>sigil</b> — a small shape of runes, in any of its four turns — those runes are spent and the card goes to your discard for that duel. The Spellbook remembers every shape you have made; for the rest it knows only which runes they take.</p>
+    <p class="dim">Spells are <b>found</b>, not earned. Every face you resolve earns a rune of its kind of work — Spiral for turning, Shard for breaking, Wheel for moving, Lattice for drawing — into your pouch. Once a turn, lay runes on your board and <b>Bind</b>: any card whose <b>sigil</b> you have laid, in any of its four turns, is found and its runes are spent; the rest go back to your pouch. The Spellbook remembers every shape you have made; for the rest it knows only which runes they take.</p>
     <p><b>${known}</b> of ${page.length} sigils known · ${prof.matches} duels · ${prof.wins} won</p>
     <div class="book sig">${page.map((x) => {
       if (!x.known) return `<div class="bk sg unknown"><span class="q">?</span><div><span class="bc">undiscovered</span><span class="bh">${x.size} runes: ${esc(runeList(x))}</span></div></div>`;
@@ -1839,8 +1880,8 @@ function openRules() {
     <p><b>Units:</b> click a unit, then anywhere inside its blue circle to walk there; click a red-ringed enemy to strike; the mage can summon a golem beside itself. Mages have 5 life unless a passive raises it. Golem tiers cap how many are out at once: C three, B two, A one. A golem card that has deployed and then lost every unit is spent.</p>
     <p><b>Traps</b> are grey cards set <b>face down</b> into an empty grey corner. They have one side, no runes, never match and never turn. The first time its trigger is met on your <i>opponent's</i> turn — a spell about to hit your unit, an enemy walking up to your mage — the trap springs on its own: it is revealed, its reaction happens at once (an Earth Wall heaves up and takes the fireball instead of you), and it goes to your discard. Your opponent can see a trap is set, not which; their "destroy an enemy Spell" effects can clear it.</p>
     <p><b>Everything on the field can be affected.</b> Every rock, stone, crystal, wall and tree has weight and hit points: force spells throw them and crack them, fire lights the trees — and a burning tree bites everyone beside it each turn, then spreads. Climb walls, fall off ledges, shove rocks out from under people.</p>
-    <p><b>The sigil board:</b> every turn you are handed one rune and <b>set it on your 4 × 4 board</b> — any cell, over anything. Every findable card has a <b>sigil</b>, a small shape of three or four runes; the moment the rune you set completes one, in any of its four turns, those runes are spent and the spell is <b>found</b> — it goes to your discard for the rest of the duel. Choose where each rune goes so the shape you want closes before a smaller one eats its runes.</p>
-    <p><b>The Spellbook</b> remembers every sigil you have ever completed, across all your duels, and hints at which runes the rest take.</p>
+    <p><b>Runes and sigils:</b> every face you resolve earns a rune of its kind of work into your <b>pouch</b> — Spiral for turning, Shard for breaking, Wheel for moving, Lattice for drawing. Once a turn, free, lay runes on your 4 × 4 board and <b>Bind</b>: every findable card has a <b>sigil</b>, a small shape of runes, and any sigil you have laid, in any of its four turns, is <b>found</b> — its runes are spent and the card goes to your discard for the rest of the duel. Whatever is not bound goes back to the pouch; nothing stays on the board.</p>
+    <p><b>The Spellbook</b> remembers every sigil you have ever bound, across all your duels, and hints at which runes the rest take — the shape is yours to figure out.</p>
     <p class="dim">Camera: drag to orbit, wheel to zoom, right-drag to pan, <b>H</b> to go home. <b>Right-click</b> a table card to see it big. <b>Tab</b> hides the panels. <b>Esc</b> cancels.</p>
     </div>
     <div class="mbtns"><button id="close" class="primary">Got it</button></div>`);

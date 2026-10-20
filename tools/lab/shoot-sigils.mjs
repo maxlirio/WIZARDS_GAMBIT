@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Photograph the sigil board (empty, asking, completing, the enemy's) and the
-// Spellbook of sigils, through headless Chrome over the DevTools protocol.
-// Prints the PNG path.
+// Photograph the runes column (an empty pouch, a half-laid board with a chip
+// picked, a bind mid-flash, the enemy's pouch) and the Spellbook of sigils,
+// through headless Chrome over the DevTools protocol. Prints the PNG path.
 //
 //   python3 tools/serve.py 8321 &
 //   node tools/lab/shoot-sigils.mjs [--port 8321] [--shots DIR] [--known FIREBRAND,CINDER_RAIN] [--n 24]
@@ -59,8 +59,8 @@ try {
   await send('Page.navigate', { url: `http://localhost:${port}/tools/lab/sigils.html?${known ? `known=${known}&` : ''}${n ? `n=${n}` : ''}` });
   for (let k = 0; k < 100; k++) { if (await ev('!!(window.LAB && LAB.ready)')) break; await sleep(200); }
   await sleep(600);
-  const would = await ev('JSON.stringify(LAB.would)');
-  console.log('  asking board previews', would);
+  const info = await ev('JSON.stringify({ hits: LAB.hits, known: LAB.known, chips: document.querySelectorAll(".sigils .chip").length, cells: document.querySelectorAll(".sigils .sigcell").length })');
+  console.log('  drawn', info);
   await shot('sigils');
 } catch (e) { ok = false; console.error(e.message); }
 if (errors.length) { ok = false; for (const e of errors) console.error(e); }

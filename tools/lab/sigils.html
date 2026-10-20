@@ -3,23 +3,22 @@
 <head>
 <meta charset="utf-8">
 <title>Sigils lab</title>
-<!-- The sigil board and the Spellbook of sigils at arm's length, with the
-     HUD's own stylesheet: the board empty, half full with a rune waiting to be
-     set (one cell previewing the shape it would close), and a completed sigil
-     frozen mid-flash; then the Spellbook with a few known entries among the
-     unknown. The markup mirrors buildSigils/renderSigils/sigilMiniHTML in
-     js/view/main.js, which cannot be imported without booting the game.
-     window.LAB.ready when drawn. -->
+<!-- The runes column and the Spellbook of sigils at arm's length, with the
+     HUD's own stylesheet: an empty pouch and board at the start of a duel; a
+     pouch with runes, the board half laid with a chip picked; a bind frozen
+     mid-flash on the cells it hit; the enemy's small pouch; then the
+     Spellbook with a few known entries among the unknown. The markup mirrors
+     buildSigils/renderSigils/sigilMiniHTML in js/view/main.js, which cannot
+     be imported without booting the game. window.LAB.ready when drawn. -->
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../../css/style.css">
 <style>
   html, body { overflow: auto; height: auto; }
   body { margin: 0; background: #1a1612; display: flex; gap: 18px; padding: 16px; align-items: flex-start; }
   .col { display: flex; flex-direction: column; gap: 14px; }
-  .stage { position: static; width: auto; }
-  .stage .shead { margin-bottom: 8px; }
-  .boards { display: flex; gap: 14px; }
-  .boards .sigils { padding: 10px 12px; }
+  .boards { display: flex; gap: 14px; align-items: flex-start; }
+  .boards .sigils { padding: 10px 12px; width: calc(var(--sig-w) + 24px); }
+  .boards .sigils.small { width: auto; }
   .lbl { font: 11px ui-monospace, monospace; color: #9fd8ff; }
   .mbox { width: 640px; max-height: none; }
 </style>
@@ -29,34 +28,44 @@
 import { runeGlyphInline, SCHOOL_INK } from '../../js/view/cards.js';
 import { CARDS } from '../../js/rules/spells/index.js';
 import { spellbookPage } from '../../js/rules/learn.js';
-import { BOARD_W, BOARD_CELLS, completions, openPatterns } from '../../js/rules/sigils.js';
+import { BOARD_W, BOARD_CELLS } from '../../js/rules/sigils.js';
+import { RUNES } from '../../js/rules/runes.js';
 
 const RUNE_INK = { SPIRAL: '#c98bff', SHARD: '#ff6a52', WHEEL: '#52b6ff', LATTICE: '#5ee68f' };
 const RUNE_NAME = { SPIRAL: 'Spiral', SHARD: 'Shard', WHEEL: 'Wheel', LATTICE: 'Lattice' };
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/** A board as the HUD draws it. `opts`: piece, ask, would (cells), flash (cells), small. */
-function board(cells, opts = {}) {
+/**
+ * A runes column as the HUD draws it. `pouch` is the player's pouch counts,
+ * `cells` the scratch board (rune|null x 16). `opts`: picked (a rune), flash
+ * (cells mid-bind), hint, bind (the button enabled), small (the enemy's).
+ */
+function column(pouch, cells, opts = {}) {
   const host = document.createElement('div');
   host.className = `sigils panel${opts.small ? ' small' : ''}`;
-  host.innerHTML = `<div class="sighead">Sigil board</div><div class="sigpiece"></div>
+  host.innerHTML = `<div class="sighead">Runes</div>
+    <div class="sigpouch">${RUNES.map((r) => `<button type="button" class="chip" data-r="${r}" title="${RUNE_NAME[r]}">${runeGlyphInline(r, RUNE_INK[r])}<b>0</b></button>`).join('')}</div>
     <div class="sigboard">${Array.from({ length: BOARD_CELLS }, (_, i) => `<div class="sigcell" data-idx="${i}"></div>`).join('')}</div>
+    <div class="sigbtns"><button type="button" class="primary" ${opts.bind ? '' : 'disabled'}>Bind</button><button type="button" class="ghost clear" ${cells.some(Boolean) ? '' : 'disabled'}>Clear</button></div>
     <div class="sighint"></div>`;
+  const laid = {};
+  for (const r of RUNES) laid[r] = cells.filter((x) => x === r).length;
+  host.querySelectorAll('.chip').forEach((el) => {
+    const r = el.dataset.r;
+    const n = opts.small ? pouch[r] : Math.max(0, pouch[r] - laid[r]);
+    el.querySelector('b').textContent = n;
+    el.classList.toggle('picked', opts.picked === r);
+    el.classList.toggle('empty', n <= 0);
+    el.disabled = !!opts.small || n <= 0;
+  });
   host.querySelectorAll('.sigcell').forEach((el, i) => {
     const r = cells[i];
     el.innerHTML = r ? runeGlyphInline(r, RUNE_INK[r]) : '';
     el.classList.toggle('set', !!r);
-    el.classList.toggle('askable', !!opts.ask);
-    if (opts.would?.includes(i)) el.classList.add('would');
+    el.classList.toggle('open', !r && !!opts.picked);
     if (opts.flash?.includes(i)) { el.classList.add('flash-sigil'); el.style.animation = 'flashSigil 1s ease-out -0.12s paused'; }
   });
-  const piece = host.querySelector('.sigpiece');
-  const r = opts.piece;
-  piece.classList.toggle('has', !!r);
-  piece.classList.toggle('ask', !!opts.ask);
-  if (opts.wouldName) { piece.classList.add('would'); piece.innerHTML = `${runeGlyphInline(r, RUNE_INK[r])}<span>completes <b>${esc(opts.wouldName)}</b></span>`; }
-  else piece.innerHTML = r ? `${runeGlyphInline(r, RUNE_INK[r])}<span>${opts.ask ? 'Set the' : 'Holds a'} <b>${RUNE_NAME[r]}</b></span>` : '<span>no rune in hand</span>';
-  host.querySelector('.sighint').textContent = opts.ask ? 'Click a cell — over anything. Close a shape to find its spell.' : '';
+  host.querySelector('.sighint').textContent = opts.hint || '';
   return host;
 }
 
@@ -75,27 +84,27 @@ await document.fonts.ready;
 const q = new URLSearchParams(location.search);
 const idx = (x, y) => y * BOARD_W + x;
 
-// A half-full board whose waiting Shard, set at (1,1), closes Firebrand's sigil (a Spiral over two Shards).
+const empty = { SPIRAL: 0, SHARD: 0, WHEEL: 0, LATTICE: 0 };
+const pouch = { SPIRAL: 2, SHARD: 3, WHEEL: 1, LATTICE: 4 };
+// Half laid: a Spiral over two Shards down the second column (Firebrand's
+// shape in the printed deck), a Lattice pair along the bottom; the Shard chip
+// is picked with one Shard still free.
 const half = Array(BOARD_CELLS).fill(null);
-half[idx(1, 0)] = 'SPIRAL'; half[idx(1, 2)] = 'SHARD'; half[idx(3, 0)] = 'WHEEL'; half[idx(0, 3)] = 'LATTICE';
-half[idx(2, 3)] = 'WHEEL'; half[idx(3, 3)] = 'LATTICE'; half[idx(0, 1)] = 'SHARD';
-const findable = Object.values(CARDS).filter((d) => d.sigil).map((d) => ({ id: d.id, sigil: d.sigil }));
-const fakeState = { findable, players: [{ foundThisMatch: [] }] };
-const trial = { cells: half.slice() }; trial.cells[idx(1, 1)] = 'SHARD';
-const done = completions(trial, openPatterns(fakeState, 0), idx(1, 1));
-const would = done[0] || { cells: [idx(1, 0), idx(1, 1), idx(1, 2)], id: 'FIREBRAND' };
+half[idx(1, 0)] = 'SPIRAL'; half[idx(1, 1)] = 'SHARD'; half[idx(1, 2)] = 'SHARD';
+half[idx(0, 3)] = 'LATTICE'; half[idx(1, 3)] = 'LATTICE'; half[idx(3, 0)] = 'WHEEL';
+const hits = [idx(1, 0), idx(1, 1), idx(1, 2)];
 
 const col = document.createElement('div'); col.className = 'col';
 const row = document.createElement('div'); row.className = 'boards';
 row.append(
-  board(Array(BOARD_CELLS).fill(null), {}),
-  board(half, { piece: 'SHARD', ask: true, would: would.cells, wouldName: CARDS[would.id]?.name || would.id }),
-  board(trial.cells, { flash: would.cells }),
-  board(half, { small: true }),
+  column(empty, Array(BOARD_CELLS).fill(null), { hint: 'No runes yet — resolving faces earns them' }),
+  column(pouch, half, { picked: 'SHARD', bind: true, hint: 'Lay runes from your pouch, then Bind — once a turn' }),
+  column(pouch, half, { flash: hits, hint: 'Bound this turn' }),
+  column({ SPIRAL: 1, SHARD: 0, WHEEL: 3, LATTICE: 2 }, Array(BOARD_CELLS).fill(null), { small: true }),
 );
 col.appendChild(row);
 const lbl = document.createElement('div'); lbl.className = 'lbl';
-lbl.textContent = `empty · asking (hover previews ${would.id}) · completing, mid-flash · the enemy's`;
+lbl.textContent = 'empty pouch · half laid, Shard picked, Bind live · bound, the hit cells mid-flash · the enemy\'s pouch';
 col.appendChild(lbl);
 document.body.appendChild(col);
 
@@ -107,7 +116,7 @@ const known = page.filter((x) => x.known).length;
 const runeList = (x) => x.runes.map((r) => RUNE_NAME[r]).join(', ');
 const book = document.createElement('div'); book.className = 'mbox';
 book.innerHTML = `<h2>The Spellbook</h2>
-  <p class="dim">Spells are <b>found</b>, not earned. Every turn you are handed one rune and set it anywhere on your sigil board, over anything; the moment it closes a card's <b>sigil</b> — a small shape of runes, in any of its four turns — those runes are spent and the card goes to your discard for that duel. The Spellbook remembers every shape you have made; for the rest it knows only which runes they take.</p>
+  <p class="dim">Spells are <b>found</b>, not earned. Every face you resolve earns a rune of its kind of work — Spiral for turning, Shard for breaking, Wheel for moving, Lattice for drawing — into your pouch. Once a turn, lay runes on your board and <b>Bind</b>: any card whose <b>sigil</b> you have laid, in any of its four turns, is found and its runes are spent; the rest go back to your pouch. The Spellbook remembers every shape you have made; for the rest it knows only which runes they take.</p>
   <p><b>${known}</b> of ${page.length} sigils known · 12 duels · 7 won</p>
   <div class="book sig">${page.slice(0, +(q.get('n') || 24)).map((x) => {
     if (!x.known) return `<div class="bk sg unknown"><span class="q">?</span><div><span class="bc">undiscovered</span><span class="bh">${x.size} runes: ${esc(runeList(x))}</span></div></div>`;
@@ -117,7 +126,7 @@ book.innerHTML = `<h2>The Spellbook</h2>
   }).join('')}</div>
   <div class="mbtns"><button class="primary">Close</button></div>`;
 document.body.appendChild(book);
-window.LAB = { ready: true, would };
+window.LAB = { ready: true, hits, known };
 </script>
 </body>
 </html>

@@ -178,34 +178,48 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .piles b { color: var(--ink); }
 .piles .discard { cursor: pointer; text-decoration: underline dotted; }
 
-/* ------------------------------------------------------------ the sigil board */
-/* A 4 x 4 of small cells. The rune waiting to be set sits above it; while the
-   engine asks where, the cells beckon like a table cell being asked about. */
+/* ------------------------------------------------------------ the rune pouch and scratch board */
+/* Your runes column: the pouch's four chips (glyph and how many are still
+   free to lay), the 4 x 4 scratch board, Bind and Clear, a hint. A bound
+   sigil flashes gold on its cells; a bind that hit nothing shakes the board.
+   The enemy's column is only the head and the chips. */
 .sigils { display: flex; flex-direction: column; gap: 6px; align-self: start; }
 .sighead { font: 700 10px Cinzel, serif; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); white-space: nowrap; }
+.sigpouch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.chip {
+  display: flex; align-items: center; justify-content: center; gap: 4px; padding: 3px 4px; min-width: 0;
+  border-radius: 6px; background: #0c0b09aa; border: 1px solid #3a3122; box-shadow: none;
+  font: 700 12px Inter, sans-serif; color: var(--ink); transition: border-color .15s, background .15s, box-shadow .15s, transform .1s;
+}
+.chip .rune-i { width: 18px; height: 18px; margin: 0; flex-shrink: 0; }
+.chip b { font-weight: 700; min-width: 1em; text-align: left; }
+.chip:hover { background: #241d12; border-color: #7a6232; }
+.chip.empty b { color: #6d604a; }
+.chip:disabled { opacity: .45; cursor: default; background: #0c0b09aa; border-color: #3a3122; }
+.chip.picked { border-color: var(--gold); background: #3a2e14; box-shadow: 0 0 0 1px var(--gold), 0 0 12px #ffcf5a66; color: #fff3d6; }
+.chip.flash { animation: chipFlash .9s ease-out; }
+@keyframes chipFlash { 0% { box-shadow: 0 0 0 2px #fff, 0 0 20px var(--gold); filter: brightness(2); transform: scale(1.15); } 100% { } }
 .sigboard { display: grid; grid-template-columns: repeat(4, var(--sig-cell)); grid-template-rows: repeat(4, var(--sig-cell)); gap: 3px; }
+.sigboard.shake { animation: sigShake .5s ease; }
+@keyframes sigShake { 0%, 100% { transform: none; } 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(3px); } }
 .sigcell { position: relative; border-radius: 5px; background: #0b0b10d8; border: 1px solid #3a3122; display: flex; align-items: center; justify-content: center; transition: box-shadow .2s, border-color .2s, background .2s; }
 .sigcell .rune-i { width: 76%; height: 76%; margin: 0; }
-.sigcell.set { border-color: #5a4a2c; background: radial-gradient(circle at 50% 45%, #1c1811, #0b0b10); box-shadow: inset 0 0 10px #000a; }
-.sigcell.askable { cursor: pointer; border-color: #ffe066; box-shadow: 0 0 0 1px #ffe066, 0 0 12px #ffe066aa; animation: beckon 1.1s ease-in-out infinite; }
-.sigcell.askable:hover { background: #3a3020; animation: none; filter: brightness(1.4); }
-.sigcell.would { border-color: #fff; box-shadow: 0 0 0 2px #fff, 0 0 18px var(--gold); animation: none; filter: brightness(1.5); }
-.sigcell.flash-place { animation: flashPlace .7s ease-out; }
+.sigcell.set { cursor: pointer; border-color: #5a4a2c; background: radial-gradient(circle at 50% 45%, #1c1811, #0b0b10); box-shadow: inset 0 0 10px #000a; }
+.sigcell.set:hover { border-color: #a08a5a; }
+.sigcell.open { cursor: pointer; border-color: #6a5a38; }
+.sigcell.open:hover { background: #2a2416; border-color: var(--gold); box-shadow: 0 0 10px #ffcf5a44; }
 .sigcell.flash-sigil { animation: flashSigil 1s ease-out; z-index: 2; }
-@keyframes flashPlace { 0% { box-shadow: 0 0 0 2px #fff, 0 0 18px #fff; filter: brightness(1.8); } 100% { } }
 @keyframes flashSigil { 0% { box-shadow: 0 0 0 3px #fff, 0 0 40px var(--gold); background: #ffcf5a; filter: brightness(2.2); } 55% { box-shadow: 0 0 0 2px var(--gold), 0 0 30px var(--gold); background: #6a4f12; filter: brightness(1.3); } 100% { } }
-.sigpiece { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 3px 7px; border: 1px dashed #4a3d28; border-radius: 6px; background: #0c0b09aa; font: 500 11px Inter, sans-serif; color: #6d604a; line-height: 1.2; }
-.sigpiece .rune-i { width: 20px; height: 20px; margin: 0; flex-shrink: 0; }
-.sigpiece b { color: var(--gold); font-weight: 700; }
-.sigpiece.has { border-style: solid; border-color: #7a6232; color: var(--ink); }
-.sigpiece.ask { border-color: #d9ab45; color: #fff3d6; box-shadow: 0 0 16px #ffcf5a33; }
-.sigpiece.would { border-color: #fff; color: #fff; box-shadow: 0 0 18px #ffcf5a66; }
+.sigbtns { display: flex; gap: 4px; }
+.sigbtns button { flex: 1; padding: 5px 4px; font-size: 11px; border-radius: 6px; min-width: 0; }
 .sighint { font-size: 10px; line-height: 1.3; color: var(--ink-dim); }
 .sigils.small { --sig-cell: 14px; gap: 3px; }
-.sigils.small .sigboard { gap: 2px; }
-.sigils.small .sigcell { border-radius: 3px; }
 .sigils.small .sighead { font-size: 8px; letter-spacing: .08em; }
-.sigils.small .sigpiece, .sigils.small .sighint { display: none; }
+.sigils.small .sigpouch { gap: 3px; }
+.sigils.small .chip { padding: 2px 3px; gap: 2px; font-size: 10px; border-radius: 4px; }
+.sigils.small .chip .rune-i { width: 13px; height: 13px; }
+.sigils.small .chip:disabled { opacity: 1; }
+.sigils.small .sigboard, .sigils.small .sigbtns, .sigils.small .sighint { display: none; }
 #log .rune-i { width: 12px; height: 12px; vertical-align: -2px; margin: 0 1px; }
 
 /* ------------------------------------------------------------ labels in the world */
@@ -226,7 +240,8 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .float3d.heal { color: #5ee68f; }
 .rlabel { position: absolute; left: 0; top: 0; font: 600 10.5px Inter; color: #ffe7a6; background: #2a1e05d8; border: 1px solid #ffcf5a77; padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
 
-.banner { position: absolute; left: 50%; top: 24%; transform: translate(-50%, -50%) scale(.9); font: 900 44px Cinzel, serif; letter-spacing: .12em; opacity: 0; pointer-events: none; text-shadow: 0 0 30px currentColor, 0 2px 4px #000; text-transform: uppercase; }
+/* #banner.banner, not .banner: `#hud > *` turns pointer events back on, and an invisible banner must never eat the click under it. */
+#banner.banner { position: absolute; left: 50%; top: 24%; transform: translate(-50%, -50%) scale(.9); font: 900 44px Cinzel, serif; letter-spacing: .12em; opacity: 0; pointer-events: none; text-shadow: 0 0 30px currentColor, 0 2px 4px #000; text-transform: uppercase; }
 .banner.p0 { color: var(--p0); } .banner.p1 { color: var(--p1); }
 .banner.show { animation: banner 1.6s ease-out; }
 @keyframes banner { 0% { opacity: 0; transform: translate(-50%, -50%) scale(1.25); } 15% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 70% { opacity: 1; } 100% { opacity: 0; } }

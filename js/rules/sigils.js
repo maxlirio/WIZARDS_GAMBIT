@@ -1,27 +1,33 @@
-// THE SIGIL BOARD -- how spells are FOUND.
+// SIGILS -- how spells are FOUND.
 //
-// Every turn you are handed one rune at random and you set it on your own
-// 4 x 4 sigil board, anywhere, over anything. Every findable card has a
-// SIGIL: a small shape of runes printed in the Spellbook once you have found
-// it. The moment the rune you set completes a sigil, in any of its four
-// turns, the runes of the sigil are spent and the card is yours for the rest
-// of the duel.
+// Every face you RESOLVE earns you one rune of its kind of work: a Spiral for
+// turning, a Shard for breaking, a Wheel for moving, a Lattice for drawing
+// (the verb taxonomy in runes.js). Runes bank up in your POUCH across turns.
+// Every findable card has a SIGIL: a small shape of three runes (four for a
+// gold card or a golem), printed in the Spellbook once you have made it.
+// Once a turn, free, you may lay runes from your pouch on a 4 x 4 board and
+// BIND: whatever sigils the board completes, in any of their four turns, are
+// found -- their runes are spent and the card goes to your discard for the
+// rest of the duel -- and every other rune goes back to the pouch. Nothing
+// stays on the board between turns; the board is a scratch surface the HUD
+// draws, and the engine sees only the bind.
 //
-// That replaces the old Spellbook of earned conditions ("let your mage be
-// wounded to half"), which the user rejected: a condition is a quest you
-// must SEEK, and a quest that wins games is a rut every match falls into.
-// A sigil is something you FIGURE OUT -- the board fills on its own, you
-// discover patterns by making them, and the Spellbook remembers the ones
-// you have made (user: "think minecraft table, but more intricate").
+// That replaced two earlier Spellbooks. The first was EARNED conditions ("let
+// your mage be wounded to half"): a quest you must SEEK, and a quest that
+// wins games is a rut every match falls into. The second handed you one random
+// rune a turn to set on a persistent board, which the user found too wide to
+// ever close ("too many combinations to find out a spell for sure") and
+// impossible to clear. Now the runes come from what you actually do, you keep
+// them until you choose to use them, and a sigil is something you FIGURE OUT
+// -- the Spellbook hints at which runes a card takes, the shape is yours to
+// find (user: "think minecraft table, but more intricate").
 //
-// Everything here is pure over plain data so it replays and hashes: the rune
-// handed out comes from the match's rng at turn start, the placement is a
-// question through the driver like any other, and the board lives on the
-// player.
+// Everything here is pure over plain data so it replays and hashes: the pouch
+// lives on the player, a bind is an action like any other.
 
 import { RUNES } from './runes.js';
 import { fx } from './ops.js';
-import { pick as rngPick, int as rngInt } from './rng.js';
+import { bump } from './ledger.js';
 
 export const BOARD_W = 4;
 export const BOARD_H = 4;
@@ -31,7 +37,8 @@ export const BOARD_CELLS = BOARD_W * BOARD_H;
 export const LETTER = Object.freeze({ S: 'SPIRAL', H: 'SHARD', W: 'WHEEL', L: 'LATTICE' });
 export const LETTER_OF = Object.freeze({ SPIRAL: 'S', SHARD: 'H', WHEEL: 'W', LATTICE: 'L' });
 
-export const emptyBoard = () => ({ cells: Array(BOARD_CELLS).fill(null), piece: null });
+/** The pouch: how many of each rune a player holds. */
+export const emptyPouch = () => ({ SPIRAL: 0, SHARD: 0, WHEEL: 0, LATTICE: 0 });
 
 /* ------------------------------------------------------------ patterns */
 
@@ -99,36 +106,6 @@ export function contains(big, small) {
 /** The rune multiset of a sigil, for the Spellbook's hint about an unfound card. */
 export const sigilRunes = (cells) => cells.map((c) => c.r).sort();
 
-/* ------------------------------------------------------------ the board */
-
-/** Every placement of every orientation of `cells` that covers board cell `idx`. */
-function* placementsOver(cells, idx) {
-  const px = idx % BOARD_W, py = Math.floor(idx / BOARD_W);
-  for (const o of orientations(cells)) {
-    const ow = Math.max(...o.map((c) => c.x)), oh = Math.max(...o.map((c) => c.y));
-    for (const anchor of o) {
-      const dx = px - anchor.x, dy = py - anchor.y;
-      if (dx < 0 || dy < 0 || dx + ow >= BOARD_W || dy + oh >= BOARD_H) continue;
-      yield o.map((c) => ({ idx: (c.y + dy) * BOARD_W + c.x + dx, r: c.r }));
-    }
-  }
-}
-
-/**
- * The sigils this board completes through cell `idx`, largest first, ties by
- * id. `patterns` is [{id, cells}] in a fixed order, so the answer never
- * depends on anything the state could vary.
- */
-export function completions(board, patterns, idx) {
-  const out = [];
-  for (const { id, cells } of patterns) {
-    for (const pl of placementsOver(cells, idx)) {
-      if (pl.every((c) => board.cells[c.idx] === c.r)) { out.push({ id, cells: pl.map((c) => c.idx).sort((a, b) => a - b) }); break; }
-    }
-  }
-  return out.sort((a, b) => b.cells.length - a.cells.length || a.id.localeCompare(b.id));
-}
-
 /** The findable sigils still open to `p` this match, in id order. */
 export function openPatterns(state, p) {
   const done = state.players[p].foundThisMatch;
@@ -138,66 +115,103 @@ export function openPatterns(state, p) {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-/** Turn start: one rune from the match's dice, waiting to be set. */
-export function drawPiece(state, p) {
-  const b = state.players[p].sigils;
-  b.piece = rngPick(state.rng, RUNES);
-  fx(state, 'sigilDraw', { p, rune: b.piece });
-  return b.piece;
-}
+/* ------------------------------------------------------------ the pouch */
 
-/**
- * Set the waiting rune on cell `idx` (over whatever was there) and resolve
- * what it completes. Returns the completed sigil's card id, or null.
- */
-export function placePiece(state, p, idx) {
+/** A resolved face pays its rune into the owner's pouch. */
+export function earnRune(state, p, rune, why = {}) {
+  if (!RUNES.includes(rune)) return;
   const pl = state.players[p];
-  const b = pl.sigils;
-  if (b.piece === null || idx < 0 || idx >= BOARD_CELLS) return null;
-  const rune = b.piece;
-  b.cells[idx] = rune;
-  b.piece = null;
-  fx(state, 'sigilPlace', { p, idx, rune });
-  const done = completions(b, openPatterns(state, p), idx);
-  if (!done.length) return null;
-  const hit = done[0];
-  for (const i of hit.cells) b.cells[i] = null;        // the runes are spent
-  pl.foundThisMatch.push(hit.id);
-  fx(state, 'sigil', { p, defId: hit.id, cells: hit.cells });
-  state.queue.push({ kind: 'find', p, defId: hit.id, why: 'sigil', seq: ++state.actionSeq });
-  return hit.id;
+  pl.runes[rune]++;
+  bump(pl.ledger, 'runesEarned');
+  fx(state, 'rune', { p, rune, ...why });
+}
+
+/** The runes `cells` would take, as a pouch-shaped count. */
+export function runesNeeded(cells) {
+  const need = emptyPouch();
+  for (const c of cells) need[c.r]++;
+  return need;
+}
+
+export const canAfford = (pouch, cells) => {
+  const need = runesNeeded(cells);
+  return RUNES.every((r) => need[r] <= (pouch[r] || 0));
+};
+
+/**
+ * Why `cells` is not a bind `p` may make now, or null when it is. The cells
+ * are [{idx, r}] on the 4 x 4 board; the whole layout must come out of the
+ * pouch. Structural, so a human's arbitrary layout can be checked without
+ * enumerating every layout there is.
+ */
+export function bindError(state, p, cells) {
+  if (!Array.isArray(cells) || !cells.length) return 'nothing is laid on the board';
+  if (cells.length > BOARD_CELLS) return 'more runes than the board has cells';
+  const seen = new Set();
+  for (const c of cells) {
+    if (!c || !Number.isInteger(c.idx) || c.idx < 0 || c.idx >= BOARD_CELLS) return 'a rune is off the board';
+    if (!RUNES.includes(c.r)) return `'${c?.r}' is not a rune`;
+    if (seen.has(c.idx)) return 'two runes on one cell';
+    seen.add(c.idx);
+  }
+  if (!canAfford(state.players[p].runes, cells)) return 'the pouch does not hold those runes';
+  return null;
 }
 
 /**
- * The AI's placement: complete a sigil if one can be completed; otherwise
- * the cell that brings some open sigil nearest to completion, keeping what
- * is already set; ties broken by the AI's own dice, never the match's.
+ * The sigils a layout completes: every open pattern, in every orientation at
+ * every offset, largest first and ties by id, each rune spent by at most one
+ * sigil. Pure, so the HUD can ask it about a layout it has not sent.
  */
-export function bestPlacement(state, p, rng) {
-  const b = state.players[p].sigils;
-  const rune = b.piece;
-  const patterns = openPatterns(state, p);
-  let best = [], bestScore = -Infinity;
-  for (let idx = 0; idx < BOARD_CELLS; idx++) {
-    let score = b.cells[idx] === null ? 0 : -0.6;
-    const trial = { cells: b.cells.slice() }; trial.cells[idx] = rune;
-    const done = completions(trial, patterns, idx);
-    if (done.length) score += 100 + done[0].cells.length * 10;
-    else {
-      let progress = 0;
-      for (const { cells } of patterns) {
-        for (const pl of placementsOver(cells, idx)) {
-          if (pl.some((c) => c.idx === idx && c.r !== rune)) continue;
-          let ok = 0, clash = false;
-          for (const c of pl) { const have = trial.cells[c.idx]; if (have === c.r) ok++; else if (have !== null) { clash = true; break; } }
-          if (clash) continue;
-          progress = Math.max(progress, ok / pl.length + (ok === pl.length - 1 ? 0.5 : 0));
-        }
+export function bindHits(patterns, cells) {
+  const at = new Map(cells.map((c) => [c.idx, c.r]));
+  const used = new Set();
+  const hits = [];
+  const sorted = [...patterns].sort((a, b) => b.cells.length - a.cells.length || a.id.localeCompare(b.id));
+  for (const { id, cells: shape } of sorted) {
+    let hit = null;
+    for (const o of orientations(shape)) {
+      const ow = Math.max(...o.map((c) => c.x)), oh = Math.max(...o.map((c) => c.y));
+      for (let dy = 0; dy + oh < BOARD_H && !hit; dy++) for (let dx = 0; dx + ow < BOARD_W && !hit; dx++) {
+        const idxs = o.map((c) => (c.y + dy) * BOARD_W + c.x + dx);
+        if (o.every((c, i) => at.get(idxs[i]) === c.r && !used.has(idxs[i]))) hit = idxs.sort((a, b) => a - b);
       }
-      score += progress * 10;
+      if (hit) break;
     }
-    if (score > bestScore + 1e-9) { bestScore = score; best = [idx]; }
-    else if (Math.abs(score - bestScore) < 1e-9) best.push(idx);
+    if (hit) { for (const i of hit) used.add(i); hits.push({ id, cells: hit }); }
   }
-  return best.length ? best[rngInt(rng, best.length)] : 0;
+  return hits;
+}
+
+/**
+ * BIND: lay `cells` from `p`'s pouch, find what they complete, spend those
+ * runes, return the rest. Each find is queued as a question to the finder.
+ * Returns the hits.
+ */
+export function bind(state, p, cells) {
+  const pl = state.players[p];
+  const hits = bindHits(openPatterns(state, p), cells);
+  const at = new Map(cells.map((c) => [c.idx, c.r]));
+  for (const hit of hits) {
+    for (const i of hit.cells) pl.runes[at.get(i)]--;
+    pl.foundThisMatch.push(hit.id);
+  }
+  fx(state, 'bind', { p, cells: cells.map((c) => ({ idx: c.idx, r: c.r })), hits: hits.map((h) => ({ id: h.id, cells: [...h.cells] })) });
+  for (const hit of hits) {
+    fx(state, 'sigil', { p, defId: hit.id, cells: hit.cells });
+    state.queue.push({ kind: 'find', p, defId: hit.id, why: 'sigil', seq: ++state.actionSeq });
+  }
+  return hits;
+}
+
+/**
+ * One bind action per open sigil the pouch can pay for, laid at the board's
+ * corner, in id order. What the AI and the harnesses enumerate; a player lays
+ * whatever they like and `bindError` judges it.
+ */
+export function bindActions(state, p) {
+  const pouch = state.players[p].runes;
+  return openPatterns(state, p)
+    .filter(({ cells }) => canAfford(pouch, cells))
+    .map(({ id, cells }) => ({ type: 'bind', id, cells: cells.map((c) => ({ idx: c.y * BOARD_W + c.x, r: c.r })) }));
 }

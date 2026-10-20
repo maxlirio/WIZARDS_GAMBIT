@@ -86,7 +86,8 @@ to resign.
 
 With `--human` it also keeps a **Spellbook** at
 `~/.wizards-gambit-spellbook.json` (or `--book <path>`): which cards' sigils you
-have completed, so their shapes can be shown. That file is the only thing that
+have bound, so their shapes can be shown. Type `b SH. .H.` (rows of S/H/W/L
+and `.`) to lay runes from your pouch and bind, once a turn. That file is the only thing that
 persists between matches — your starting deck is the same ten cards in your
 first match and your thousandth. It lives in the tool rather than the engine on
 purpose: if the engine knew about it, a replay could depend on what the player
@@ -153,7 +154,7 @@ js/rules/
   motifs.js            parameterised face behaviours; most faces are one line
   turn.js units.js     the turn structure; the unit phase
   combat.js golems.js  damage and death; the tier table and the attrition rule
-  sigils.js learn.js   the Spellbook: the 4x4 sigil board and the 63 sigils that find cards
+  sigils.js learn.js   the Spellbook: the rune pouch, the bind action and the 63 sigils that find cards
   spells/              the corpus, one file per school (60 cards, 216 faces)
 js/field/
   fixed.js             integer millimetres. THE ONLY FILE ALLOWED Math.*
@@ -176,7 +177,7 @@ card({
   id: 'ASH_VEIL', name: 'Ash Veil', school: 'red',
   keywords: ['Crush'],
   runes: [SHARD, SHARD, WHEEL, LATTICE],   // clockwise from TOP-LEFT
-  sigil: ['HH', 'W.'],                     // the shape of runes that FINDS it (S/H/W/L)
+  sigil: ['HH', 'W.'],                     // the shape of runes that FINDS it (S/H/W/L), 3 for a spell
   I:   { text: 'Deal 2 damage to an enemy unit within 3m.', ...M.damage({ amount: 2, range: 3000 }) },
   II:  { text: 'Push an enemy unit within 3m 2m away.',     ...M.pushAway({ mm: 2000, range: 3000 }) },
   III: { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },

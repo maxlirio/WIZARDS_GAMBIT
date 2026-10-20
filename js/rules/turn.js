@@ -19,12 +19,12 @@ import {
 } from './units.js';
 import { mageOf } from '../field/query.js';
 import { tickFire } from '../field/push.js';
-import { drawPiece } from './sigils.js';
 
 export function beginTurn(state) {
   const p = state.active;
   state.phase = 'unit';
   state.spellActionUsed = false;
+  state.bindUsed = false;
   state.tableDirty = [false, false];
   state.fresh = [[], []];
 
@@ -38,12 +38,6 @@ export function beginTurn(state) {
   // Every turn begins with a draw -- except the very first turn of the duel,
   // which is how going first is paid for.
   if (state.turn > 1) draw(state, p, 1);
-  // And with one rune for the sigil board, set before anything else: a work
-  // item, so the question parks and replays like any other.
-  if (state.findable?.length) {
-    drawPiece(state, p);
-    state.queue.push({ kind: 'sigil', p, seq: ++state.actionSeq });
-  }
   refresh(state);
   tickPoison(state, p);
   // A unit set alight (Immolate) burns at the start of its own turns.

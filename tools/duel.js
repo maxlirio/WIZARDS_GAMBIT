@@ -31,6 +31,7 @@ import { heightAt, propR, propTop, propSpec, propOnBoard, ARENA_W, ARENA_H } fro
 import { livingUnits, mageOf } from '../js/field/query.js';
 import { seedRng, pick } from '../js/rules/rng.js';
 import { spellbookPage } from '../js/rules/learn.js';
+import { LETTER, bindError } from '../js/rules/sigils.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -243,7 +244,9 @@ function narrate(state, f) {
     case 'strike': return `      strikes ${unitName(state, f.to)} for ${f.amount}${f.edge ? ' (+1 high ground)' : ''}`;
     case 'move': return `  ${unitName(state, f.id)} moves ${f.mm}mm`;
     case 'respawn': return `  p${f.p}'s mage ${paint('respawns', C.bold)}`;
-    case 'sigil': return `  ${paint('SIGIL', C.green)}: p${f.p} completes ${CARDS[f.defId]?.name || f.defId}'s sigil`;
+    case 'rune': return `      p${f.p} earns a ${RUNE_CH[f.rune] || f.rune} ${f.rune.toLowerCase()} rune`;
+    case 'bind': return f.hits.length ? null : `  p${f.p} binds ${f.cells.length} rune${f.cells.length === 1 ? '' : 's'} and nothing closes`;
+    case 'sigil': return `  ${paint('SIGIL', C.green)}: p${f.p} binds ${CARDS[f.defId]?.name || f.defId}'s sigil`;
     case 'found': return `  p${f.p} ${paint('learns', C.green)} ${CARDS[f.defId]?.name || f.defId}${f.taken === false ? ' (not taken)' : ''}`;
     case 'golemSpent': return `  ${name(state, f.uid)} is spent and goes to p${f.p}'s discard`;
     case 'terrainRemoved': return `      removes terrain ${f.id} until end of turn`;
@@ -334,10 +337,21 @@ async function humanAction(state) {
   showHand(state, state.active);
   console.log(paint(`\n  your ${state.phase === 'spell' ? 'SPELL ACTION (one only)' : 'UNIT PHASE'}:`, C.bold));
   la.forEach((a, i) => console.log(`   ${String(i).padStart(3)}) ${describeAction(state, a)}`));
+  const pouch = state.players[state.active].runes;
+  const held = Object.keys(pouch).sort().filter((r) => pouch[r]).map((r) => `${pouch[r]} ${r.toLowerCase()}`).join(', ');
+  if (!state.bindUsed && held) console.log(paint(`  pouch: ${held} -- "b ROWS" binds a layout, e.g. b SH. .H. (rows of S/H/W/L and '.', up to 4 x 4)`, C.dim));
   for (;;) {
     const line = (await ask1('  > ')).trim();
     if (line === 'q') { console.log('resigning.'); process.exit(0); }
     if (line === '?') { showHand(state, state.active); continue; }
+    if (line.startsWith('b ')) {
+      const cells = [];
+      line.slice(2).trim().split(/\s+/).slice(0, 4).forEach((row, y) => [...row].slice(0, 4).forEach((ch, x) => { if (LETTER[ch]) cells.push({ idx: y * 4 + x, r: LETTER[ch] }); }));
+      const a = { type: 'bind', cells };
+      const why = state.bindUsed ? 'you have bound this turn already' : bindError(state, state.active, cells);
+      if (why) { console.log(paint(`  cannot bind: ${why}`, C.dim)); continue; }
+      return a;
+    }
     const i = Number(line);
     if (Number.isInteger(i) && i >= 0 && i < la.length) return la[i];
     console.log(paint(`  pick a number from 0 to ${la.length - 1}, or ? for your hand, or q to quit`, C.dim));

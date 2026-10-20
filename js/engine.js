@@ -45,7 +45,7 @@ import { beginTurn, endTurn } from './rules/turn.js';
 import { makeMage, unitActions, doUnitAction, pendingUnits, canMoveTo, settleMageLife } from './rules/units.js';
 import { seedRng, save as saveRng, shuffle } from './rules/rng.js';
 import { CARDS, STANDARD_DECK, FINDABLE } from './rules/spells/index.js';
-import { drawPiece, placePiece, emptyBoard, BOARD_CELLS } from './rules/sigils.js';
+import { emptyPouch, bindError, bind } from './rules/sigils.js';
 import { makeArena, makeProps } from './field/arena.js';
 import { resolveFalls, recheckSupport } from './field/move.js';
 
@@ -98,6 +98,7 @@ export function createGame(opts = {}) {
     active: 0,
     phase: 'spell',
     spellActionUsed: false,
+    bindUsed: false,          // one free bind a turn (sigils.js)
     actionSeq: 0,
 
     vp: [0, 0],
@@ -149,7 +150,7 @@ export function createGame(opts = {}) {
       ledger: emptyLedger(),
       objectives: {},
       foundThisMatch: [],
-      sigils: emptyBoard(),
+      runes: emptyPouch(),
     };
   }
 
@@ -242,6 +243,12 @@ const sameAction = (a, b) => a.type === b.type && a.uid === b.uid && a.cell === 
  * samples that circle (it is what the AI searches), and the circle is the rule.
  */
 function isLegal(state, action) {
+  // A BIND lays any runes the pouch holds in any arrangement, so its space is
+  // not enumerated either: once a turn, in either phase, judged structurally.
+  if (action && action.type === 'bind') {
+    if (state.bindUsed || (state.phase !== 'unit' && !(state.phase === 'spell' && !state.spellActionUsed))) return false;
+    return bindError(state, state.active, action.cells) === null;
+  }
   if (action && action.type === 'unit' && action.act === 'move'
       && Number.isInteger(action.x) && Number.isInteger(action.y)) {
     if (state.phase !== 'unit') return false;
@@ -268,6 +275,15 @@ export function apply(state, action) {
 
   if (action.type === 'unit') {
     state.queue.push({ kind: 'unit', action, seq: ++state.actionSeq });
+    pump(state);
+    return state;
+  }
+  if (action.type === 'bind') {
+    // Free: it spends neither the unit phase nor the spell action, only the
+    // turn's one bind. Whatever it finds is queued as a question.
+    state.bindUsed = true;
+    bind(state, p, action.cells);
+    refresh(state);
     pump(state);
     return state;
   }
@@ -333,7 +349,6 @@ function runWork(state, item) {
   if (item.kind === 'trigger') return runTrigger(state, item);
   if (item.kind === 'onDestroy') return runOnDestroy(state, item);
   if (item.kind === 'sweep') return runSweep(state, item);
-  if (item.kind === 'sigil') return runSigil(state, item);
   if (item.kind === 'played' || item.kind === 'turned' || item.kind === 'shifted') return runChanged(state, item);
   if (item.kind === 'find') return runFind(state, item);
   throw new Error(`unknown work item '${item.kind}'`);
@@ -366,20 +381,6 @@ function* runOnDestroy(state, item) {
 /** A dead mage's spell table goes to the discard, once the board is whole again. */
 function* runSweep(state, item) {
   ops.sweepTable(state, item.p);
-  return true;
-}
-
-/**
- * The turn's rune is set on the sigil board: one question -- which cell --
- * then whatever it completes is found (sigils.js). The rune was drawn at
- * turn start; it waits on the player until this runs.
- */
-function* runSigil(state, item) {
-  const b = state.players[item.p].sigils;
-  if (b.piece === null) return true;
-  const cells = Array.from({ length: BOARD_CELLS }, (_, i) => i);
-  const idx = yield ask.by(item.p, ask.pick(cells, { prompt: `Set the ${b.piece.toLowerCase()} rune on your sigil board`, kind: 'sigil', labels: cells.map((i) => `row ${Math.floor(i / 4) + 1}, column ${(i % 4) + 1}`) }));
-  placePiece(state, item.p, idx === null ? 0 : idx);
   return true;
 }
 
@@ -539,7 +540,7 @@ const fnv = (s) => {
  * depends on insertion history.
  */
 export function hashState(state) {
-  const parts = [`t${state.turn}a${state.active}p${state.phase}s${state.spellActionUsed ? 1 : 0}`];
+  const parts = [`t${state.turn}a${state.active}p${state.phase}s${state.spellActionUsed ? 1 : 0}b${state.bindUsed ? 1 : 0}`];
   parts.push(`vp${state.vp[0]}/${state.vp[1]}`, `log${state.scoreLog.length}`);
   parts.push(`w${state.winner}`, `rng${saveRng(state.rng).join('.')}`);
   parts.push(`chain${state.chain ? state.chain.spent.join('-') + ':' + state.chain.resolutions : 'x'}`);
@@ -559,7 +560,7 @@ export function hashState(state) {
     parts.push(`${p}x[${pl.discard.map((c) => c.def).join(',')}]`);
     parts.push(`${p}L[${Object.keys(pl.ledger).sort().map((k) => pl.ledger[k]).join(',')}]`);
     parts.push(`${p}O[${Object.keys(pl.objectives).sort().join(',')}]`);
-    parts.push(`${p}S[${pl.sigils.cells.map((c) => (c ? c[0] : '.')).join('')}:${pl.sigils.piece ?? '-'}]`);
+    parts.push(`${p}R[${Object.keys(pl.runes).sort().map((k) => pl.runes[k]).join(',')}]`);
   }
   parts.push(hashField(state));
   return fnv(parts.join(';'));

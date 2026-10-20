@@ -26,6 +26,8 @@ import { payAll, costPayable, costText } from './costs.js';
 import { keywordsOf, apply as applyKw, fire as fireKw, KEYWORD_NAMES } from './keywords.js';
 import { scoreObjective } from './objectives.js';
 import { bump } from './ledger.js';
+import { earnRune } from './sigils.js';
+import { suggestedRune } from './runes.js';
 import { emit } from './triggers.js';
 import { hurt } from './combat.js';
 import { int, pick, next } from './rng.js';
@@ -730,5 +732,9 @@ export function* resolveSide(state, spell, index, opts = {}) {
     }
   }
   emit(state, 'afterResolve', { uid: spell.uid, def: def.id, numeral: face.numeral, p: spell.owner });
+  // A face that DID something pays its rune: the rune of its kind of work
+  // (runes.js), banked in the pouch for the sigils it will one day make. A
+  // passive face resolves nothing and earns nothing -- its worth is ongoing.
+  if (face.effect || face.objective) earnRune(state, spell.owner, suggestedRune(face) || def.runes[index & 3], { uid: spell.uid, def: def.id, numeral: face.numeral });
   return true;
 }

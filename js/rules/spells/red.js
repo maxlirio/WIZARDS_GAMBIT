@@ -29,7 +29,7 @@ card({
   // card in place, so you cannot cycle straight back round to it.
   keywords: ['Impact'],
   runes: [LATTICE, SHARD, SPIRAL, SHARD],
-  sigil: ['.H', 'SL', 'LS'],
+  sigil: ['S', 'H', 'H'],
   I:   { text: 'Your damage is increased by 1.', ...M.passiveDamage({ n: 1 }) },
   II:  { text: 'Destroy a Spell you control. Deal 3 damage to an enemy unit within 3m.',
          cost: [{ id: 'destroyFriendly', n: 1 }], ...M.damage({ amount: 3, range: 3000, element: 'fire' }) },
@@ -42,7 +42,7 @@ card({
   id: 'CINDER_RAIN', name: 'Cinder Rain', school: 'red',
   // Burning ash over a widening circle.
   runes: [SHARD, SHARD, LATTICE, SHARD],
-  sigil: ['L.', 'H.', 'HH', 'H.'],
+  sigil: ['H', 'L', 'L'],
   I:   { text: 'Deal 1 damage to each enemy unit within 2m.', ...M.damageAll({ amount: 1, range: 2000, element: 'fire' }) },
   II:  { text: 'Discard a card. Deal 1 damage to each enemy unit within 3m.',
          cost: [{ id: 'discard', n: 1 }], ...M.damageAll({ amount: 1, range: 3000, element: 'fire' }) },
@@ -55,7 +55,7 @@ card({
   // Spiked stone that bites whoever comes close, and finally bursts outward.
   keywords: ['Spell Bane'],
   runes: [SHARD, WHEEL, LATTICE, SHARD],
-  sigil: ['.H.', 'LWL', '.H.'],
+  sigil: ['WHH'],
   I:   { text: 'If an enemy is within 3m, deal 1 damage to it.',
          gate: { id: 'enemyInRange', mm: 3000 }, ...M.damage({ amount: 1, range: 3000 }) },
   II:  { text: 'Raise a stone wall within 2m of your mage.', ...M.raiseWall({ mm: 2000 }) },
@@ -68,7 +68,7 @@ card({
   id: 'BLOOD_PACT', name: 'Blood Pact', school: 'red',
   // Pay in your own blood, then drink theirs.
   runes: [LATTICE, SHARD, LATTICE, SHARD],
-  sigil: ['LH', '.L', '.L', '.H'],
+  sigil: ['.L', 'HH'],
   I:   { text: 'Your mage takes 1 damage. Draw 2 cards.',
          cost: [{ id: 'mageWound', n: 1 }], ...M.drawCards({ n: 2 }) },
   II:  { text: 'Your mage takes 1 damage. Deal 3 damage to an enemy unit within 4m.',
@@ -83,7 +83,7 @@ card({
   // Everything is a wall if you hit someone into it hard enough.
   keywords: ['Crush'],
   runes: [WHEEL, LATTICE, WHEEL, WHEEL],
-  sigil: ['WL', 'WW', 'W.'],
+  sigil: ['W', 'L', 'L'],
   I:   { text: 'Push an enemy unit within 2m with force 2.', ...M.push({ force: 2, range: 2000 }) },
   II:  { text: 'Grant a Spell [Crush].', ...M.grantKeyword({ kw: 'Crush' }) },
   III: { text: 'Destroy a Spell you control. Push an enemy unit within 3m away with force 4.',
@@ -97,7 +97,7 @@ card({
   // Small wounds that do not stop hurting.
   keywords: ['Poison'],
   runes: [LATTICE, SHARD, SHARD, SHARD],
-  sigil: ['HL.', '.HH', '.H.'],
+  sigil: ['HL', 'H.', 'H.'],
   I:   { text: 'Grant a Spell [Poison].', ...M.grantKeyword({ kw: 'Poison' }) },
   II:  { text: 'Deal 1 damage to an enemy unit within 4m.', ...M.damage({ amount: 1, range: 4000 }) },
   III: { text: 'Put the top 2 cards of your deck into your discard. Burn an enemy Spell: destroy it.',
@@ -111,7 +111,7 @@ card({
   // A spirit that spends itself. Its last face is a death that takes someone with it.
   keywords: ['Unstable'],
   runes: [SHARD, SHARD, LATTICE, SHARD],
-  sigil: ['LLH', 'H.H'],
+  sigil: ['LH', 'H.'],
   I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
   II:  { text: 'Rotate another Spell you control left. Deal 2 damage to an enemy unit within 3m.',
          cost: [{ id: 'rotateFriendly' }], ...M.damage({ amount: 2, range: 3000, element: 'fire' }) },
@@ -125,7 +125,7 @@ card({
   // Lightning that jumps from body to body. Stand your enemies close together
   // and the last face arcs through all of them.
   runes: [LATTICE, SHARD, SHARD, SHARD],
-  sigil: ['HHLH', '..L.'],
+  sigil: ['.HL', 'LH.'],
   I:   { text: 'Your range is increased by 1m.', ...M.passiveRange({ mm: 1000 }) },
   II:  { text: 'Deal 1 damage to an enemy unit within 4m. It arcs to one more enemy near it.',
          ...M.chainLightning({ amount: 1, jumps: 1, hop: 2500, range: 4000 }) },
@@ -148,7 +148,7 @@ card({
   // Reach up, heat the sky, pull a rock down out of it. The boulder STAYS:
   // every meteor is a new piece of terrain to fight over.
   runes: [SHARD, WHEEL, LATTICE, WHEEL],
-  sigil: ['.W.', '.W.', 'LHW'],
+  sigil: ['HWL'],
   I:   { text: 'Deal 1 damage to an enemy unit within 4m.', ...M.damage({ amount: 1, range: 4000, element: 'fire' }) },
   II:  { text: 'Pull a terrain piece within 4m to you with force 3.', ...M.pullTerrain({ force: 3, range: 4000 }) },
   III: { text: 'Discard a card. Grant a Spell [Crush].',
@@ -161,7 +161,7 @@ card({
   id: 'STONEBURST', name: 'Stoneburst', school: 'red',
   // Crack it, shove it among them, then burst it. The terrain is the bomb.
   runes: [SHARD, LATTICE, WHEEL, SHARD],
-  sigil: ['.W..', 'WHLH'],
+  sigil: ['W', 'W', 'H'],
   I:   { text: 'Crack a terrain piece within 4m for 1.', ...M.crackTerrain({ amount: 1, range: 4000 }) },
   II:  { text: 'Crack a terrain piece within 4m for 2. Draw a card.', ...M.crackTerrain({ amount: 2, range: 4000, then: 'draw' }) },
   III: { text: 'Destroy a Spell you control. Push a terrain piece within 4m with force 5.',
@@ -176,7 +176,7 @@ card({
   // what it buys is a whole turn stolen from everyone it floors.
   keywords: ['Stun'],
   runes: [SHARD, SHARD, LATTICE, SHARD],
-  sigil: ['.H', '.L', 'HL', '.H'],
+  sigil: ['HLH', 'H..'],
   I:   { text: 'Deal 1 damage to each enemy unit within 1.5m.', ...M.damageAll({ amount: 1, range: 1500, element: 'lightning' }) },
   II:  { text: 'Your mage takes 1 damage. Knock down an enemy unit within 2m.',
          cost: [{ id: 'mageWound', n: 1 }], ...M.knockDown({ range: 2000 }) },
@@ -189,7 +189,7 @@ card({
   id: 'BLAZING_CHARGE', name: 'Blazing Charge', school: 'red',
   // The mage is the weapon. Get it moving, get it close, then run them down.
   runes: [WHEEL, SHARD, LATTICE, WHEEL],
-  sigil: ['L...', 'HWLW'],
+  sigil: ['.L', 'WW'],
   I:   { text: 'Your units move 1m further.', ...M.passiveUnitMove({ mm: 1000 }) },
   II:  { text: 'Deal 1 damage to each enemy unit within 1m.', ...M.damageAll({ amount: 1, range: 1000, element: 'fire' }) },
   III: { text: 'Discard a card. Relocate your mage up to 2m.',
@@ -203,7 +203,7 @@ card({
   // Every rock on the field is ammunition. [Levitate] on the shot and the
   // rock flies over whatever is in the way.
   runes: [WHEEL, LATTICE, WHEEL, WHEEL],
-  sigil: ['L.', 'W.', 'LW', 'W.'],
+  sigil: ['.W', 'WL'],
   I:   { text: 'Push a terrain piece within 3m with force 3.', ...M.shoveTerrain({ force: 3, range: 3000 }) },
   II:  { text: 'Grant a Spell [Levitate].', ...M.grantKeyword({ kw: 'Levitate' }) },
   III: { text: 'Destroy a Spell you control. Pull a terrain piece within 4m to you with force 4.',
@@ -217,7 +217,7 @@ card({
   // Fire ON a unit, not beside it: it burns at the start of its own turns,
   // and burning things set other things alight.
   runes: [SHARD, LATTICE, SHARD, SHARD],
-  sigil: ['.HL', 'HLH'],
+  sigil: ['H.', 'LL'],
   I:   { text: 'Deal 1 damage to an enemy unit within 3m and set it burning.', ...M.immolate({ amount: 1, burn: 2, range: 3000 }) },
   II:  { text: 'Discard a card. Each burning enemy unit within 4m takes 2 damage.',
          cost: [{ id: 'discard', n: 1 }], ...M.stokeBurning({ amount: 2, range: 4000 }) },
@@ -232,7 +232,7 @@ card({
   // The grove as a weapon. Light the trees, push a burning one into their
   // line, then set the whole stand going at once.
   runes: [SHARD, LATTICE, WHEEL, SHARD],
-  sigil: ['HLW', 'HH.'],
+  sigil: ['L', 'H', 'H'],
   I:   { text: 'Ignite a burnable terrain piece within 3m.', ...M.igniteTerrain({ range: 3000 }) },
   II:  { text: 'Discard a card. Each enemy within 1m of a burning piece takes 1 damage.',
          cost: [{ id: 'discard', n: 1 }], ...M.fireBite({ amount: 1, radius: 1000 }) },
@@ -249,7 +249,7 @@ card({
   // Gravity, switched off and on again. Lift the ground, drag them in, then
   // throw them over the wall and let the landing do the work.
   runes: [WHEEL, SHARD, LATTICE, WHEEL],
-  sigil: ['H..', 'WWL', 'W..'],
+  sigil: ['LL', '.W'],
   I:   { text: 'Raise a terrain piece within 4m by 1m.', ...M.liftTerrain({ mm: 1000, range: 4000 }) },
   II:  { text: 'Hurl an enemy unit within 3m 2m into the air. It falls.', ...M.hurl({ mm: 2000, range: 3000 }) },
   III: { text: 'Discard a card. Pull an enemy unit within 5m toward you with force 3.',

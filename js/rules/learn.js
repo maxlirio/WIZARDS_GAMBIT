@@ -5,8 +5,8 @@
 // a match with the same ten-card deck; what a long Spellbook buys you is knowing
 // which conditions find which spells, and being able to aim a turn at one.
 //
-// A FIND is a SIGIL (sigils.js): a small shape of runes you make on your
-// sigil board from the rune you are handed each turn. Completing it puts the
+// A FIND is a SIGIL (sigils.js): a small shape of runes you lay from the
+// pouch your resolved faces fill, and bind once a turn. Making it puts the
 // card in your DISCARD for the rest of that match -- not your hand, so you
 // have to earn the draw as well -- and the Spellbook remembers the shape.
 //
