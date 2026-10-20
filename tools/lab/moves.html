@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Moves lab</title>
+<!-- How a body MOVES on the real battlefield, driven by the real engine: a
+     mage walking off a plateau (js/rules/units.js doUnitAction, a `move`), a
+     strike against it (units.js strike), a slam into a wall and a self-cast
+     dash (js/field/push.js push, the `dyn` note, enemy- and self-thrown side
+     by side) and an outright knockdown (push.js knockDown) -- each played
+     through the view's cues the way js/view/main.js's flushFx schedules them
+     (a walk as long as the walk, a run on its own clock). window.LAB drives
+     it from tools/lab/shoot-moves.mjs, which photographs every 100 ms.
+     ?seed=N picks the arena (it needs a plateau: 3 has a 2.5 m one). -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../css/style.css">
+<style>
+  #info { position: fixed; left: 10px; top: 8px; z-index: 5; color: #fff; font: 12px ui-monospace, monospace; text-shadow: 0 1px 2px #000; pointer-events: none; white-space: pre; }
+  #bar { position: fixed; left: 10px; bottom: 8px; z-index: 5; display: flex; gap: 4px; flex-wrap: wrap; }
+  #bar a { color: #9fd8ff; background: #0008; padding: 2px 6px; border-radius: 3px; text-decoration: none; cursor: pointer; font: 12px ui-monospace, monospace; }
+  #sheet { position: fixed; left: 0; top: 0; z-index: 20; display: none; background: #111; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="arena"></div>
+<div id="info">moves lab</div>
+<div id="bar"></div>
+<canvas id="sheet"></canvas>
+<script type="module">
+import { createGame } from '../../js/engine.js';
+import { heightAt } from '../../js/field/arena.js';
+import { push, knockDown } from '../../js/field/push.js';
+import { doUnitAction, strike } from '../../js/rules/units.js';
+import { createArena } from '../../js/view/arena3d.js';
+
+const Q = new URLSearchParams(location.search);
+const S = createGame({ seed: +(Q.get('seed') || 3) });
+const A = S.arena;
+const MM = 1 / 1000;
+
+/* ---- the stage: the plateau's top (its highest level ground) and the
+   flattest open ground for the rest; every prop parked in the far corner */
+let top = 0;
+for (let x = 0; x <= A.w; x += 100) for (let y = 0; y <= A.h; y += 100) top = Math.max(top, heightAt(A, x, y));
+let sx = 0, sy = 0, n = 0;
+for (let x = 0; x <= A.w; x += 100) for (let y = 0; y <= A.h; y += 100) if (heightAt(A, x, y) === top) { sx += x; sy += y; n++; }
+const PX = Math.round(sx / n / 100) * 100, PY = Math.round(sy / n / 100) * 100;
+let CX = Math.round(A.w / 2), CY = Math.round(A.h / 2), bestRange = Infinity;
+for (let x = 2500; x <= A.w - 2500; x += 500) for (let y = 2500; y <= A.h - 2500; y += 500) {
+  let lo = Infinity, hi = -Infinity;
+  for (let dx = -2500; dx <= 2500; dx += 500) for (let dy = -1500; dy <= 1500; dy += 500) { const h = heightAt(A, x + dx, y + dy); lo = Math.min(lo, h); hi = Math.max(hi, h); }
+  if (hi - lo < bestRange) { bestRange = hi - lo; CX = x; CY = y; }
+}
+const put = (b, x, y, up = 0) => { b.x = x; b.y = y; b.z = heightAt(A, x, y) + up; b.support = up > 0 ? null : { kind: 'ground' }; };
+const mage = S.field.units.find((u) => u.owner === 0 && u.kind === 'mage');
+const foe = S.field.units.find((u) => u.owner === 1 && u.kind === 'mage');
+const wall = { id: 'wLAB', kind: 'wall', x: 0, y: 0, z: 0, removedUntil: null, hp: 6, burning: null, litBy: null, destroyed: false };
+S.field.props.push(wall);
+for (const u of [mage, foe]) { u.maxHp = 12; u.hp = 12; }
+// The plateau's way down: the heading the engine will walk the furthest DOWN from the top.
+const DIRS = [...Array(64).keys()];
+function stage() {
+  for (const pr of S.field.props) put(pr, A.w - 900, 600 + 450 * S.field.props.indexOf(pr));
+  wall.destroyed = false; wall.hp = 6;
+  put(mage, CX - 1500, CY); put(foe, CX + 1500, CY);
+  for (const u of [mage, foe]) { u.hp = u.maxHp; u.dead = false; u.acted = false; }
+  S.active = 0; S.phase = 'unit';
+}
+stage();
+
+const arena = createArena(document.querySelector('#arena'), S, { quality: Q.get('q') || 'high', seat: 0, unitLabel: (u) => (u.owner === 0 ? 'Your mage' : 'Enemy mage') });
+await arena.whenReady;
+arena.sync(S);
+const info = document.querySelector('#info');
+
+/* ---- cameras */
+const look = (px, py, pz, tx, ty, tz) => { arena.camera.position.set(px, py, pz); arena.controls.target.set(tx, ty, tz); arena.controls.update(); };
+function view(kind) {
+  const cx = CX * MM, cy = CY * MM;
+  if (kind === 'game') arena.home();
+  else if (kind === 'flat') look(cx, 3.0, cy + 6.5, cx, 0.9, cy);
+  else if (kind === 'pair') look(cx - 0.6, 2.8, cy + 7.5, cx - 0.6, 0.8, cy - 0.2);
+  else if (kind.startsWith('plateau')) {
+    const [, dx, dy, tx, ty, h] = kind.split(':').map(Number);   // the walk from (dx,dy) to (tx,ty) in metres, the top at h
+    const mx = (dx + tx) / 2, my = (dy + ty) / 2;
+    // In profile from the low side: beside the walk, a little ahead of it, level with the top.
+    const ax = tx - dx, ay = ty - dy, L = Math.hypot(ax, ay) || 1;
+    const nx = -ay / L, ny = ax / L;
+    // From beyond the bottom of the walk, a little to one side, looking back
+    // up the face: the body comes down it toward the camera.
+    look(tx + ax / L * 5.5 + nx * 4.0, h * 0.5 + 2.6, ty + ay / L * 5.5 + ny * 4.0, mx + ax / L * 0.3, h * 0.7, my + ay / L * 0.3);
+  }
+}
+view('flat');
+
+/* ---- the view's playback, the way main.js's flushFx schedules it */
+let timers = [];
+let last = null;
+function play(notes, { label = '' } = {}) {
+  for (const t of timers) clearTimeout(t);
+  timers = [];
+  const cues = arena.cues;
+  let t = 0;
+  let dynStart = null, dynNote = null, dynUsed = null, lastDynT = null;
+  const DYN_EVENTS = new Set(['hit', 'crumple', 'wall', 'ward', 'land']);
+  const later = (ms, fn) => timers.push(setTimeout(fn, ms));
+  const timeOf = (f) => {
+    if (dynStart === null) return null;
+    if (f.dynMs !== undefined) return dynStart + f.dynMs;
+    if (f.kind === 'damage' && (f.cause === 'fall' || f.cause === 'impact' || f.cause === 'rock')) {
+      const i = dynNote.events.findIndex((e, j) => e.key === `u${f.id}` && DYN_EVENTS.has(e.kind) && !dynUsed.has(j));
+      if (i >= 0) { dynUsed.add(i); return dynStart + dynNote.events[i].t; }
+    }
+    if (lastDynT !== null && ['kill', 'knockdown', 'propHit', 'shatter', 'damage'].includes(f.kind)) return lastDynT;
+    return null;
+  };
+  const lines = [];
+  for (const f of notes) {
+    const at = timeOf(f);
+    const keep = t;
+    if (at !== null) t = at;
+    lastDynT = at;
+    const t0 = t;
+    switch (f.kind) {
+      case 'move': { const { id, to, mm } = f; cues.moveHold?.(id, to); later(t, () => cues.move?.(id, to)); t += arena.walkMs?.(id, to, mm) ?? 120; break; }
+      case 'damage': { const { id, amount, cause } = f; if (cause === 'strike') { later(t + 320, () => cues.hit(id, amount, cause)); t += 200; } else { later(t, () => cues.hit(id, amount, cause)); t += 160; } break; }
+      case 'strike': { const { from, to } = f; later(t - 200, () => cues.strike(from, to)); t += 300; break; }
+      case 'kill': { const id = f.id; later(t + 150, () => cues.kill(id)); t += 500; break; }
+      case 'dyn': { dynStart = t; dynNote = f; dynUsed = new Set(); cues.dynHold(f); later(t, () => cues.dyn(f)); t += (f.ms || 0) + 150; break; }
+      case 'knockdown': { const { id, dir } = f; later(t, () => cues.knockdown(id, dir)); t += 1200; break; }
+      case 'propHit': { const id = f.id; later(t, () => cues.propHit(id, f.amount)); t += 120; break; }
+      default: break;
+    }
+    lines.push(`${String(Math.round(t0)).padStart(5)}ms ${f.kind}${f.cause ? ' ' + f.cause : ''}${f.amount !== undefined ? ' ' + f.amount : ''}${f.dynMs !== undefined ? ' @' + f.dynMs : ''}`);
+    if (at !== null) t = Math.max(keep, t);
+  }
+  arena.sync(S);
+  last = { ms: Math.round(t), notes: notes.map((f) => f.kind), lines, label };
+  info.textContent = `${label}\n${lines.join('\n')}`;
+  return last;
+}
+const run = (fn, label) => { const i0 = S.fx.length; const r = fn(); const out = play(S.fx.slice(i0), { label }); out.result = r ?? null; return out; };
+
+/* ---- the scenes */
+/* Each scene: `prep` places the bodies (the view walks them there -- give it
+   a moment) and frames the camera, returning the points to keep in shot;
+   the scene itself is the engine call, played through the cues. */
+let walkPlan = null;
+const PREP = {
+  walkDown() {
+    put(mage, PX, PY); put(foe, CX + 1500, CY);
+    let best = null;
+    for (const d of DIRS) {
+      const [ux, uy] = DIR(d);
+      const r = probeWalk(d, ux, uy);
+      if (!best || r.drop > best.drop || (r.drop === best.drop && r.mm > best.mm)) best = { d, ux, uy, ...r };
+    }
+    walkPlan = { ...best, tx: PX + Math.round(best.ux * 3000), ty: PY + Math.round(best.uy * 3000) };
+    arena.sync(S);
+    view(`plateau:${PX * MM}:${PY * MM}:${best.x * MM}:${best.y * MM}:${top * MM}`);
+    return [[PX, PY, top], [best.x, best.y, best.z]];
+  },
+  struck() { put(mage, CX - 300, CY); put(foe, CX + 300, CY); arena.sync(S); view('flat'); return [[mage.x, mage.y, mage.z], [foe.x, foe.y, foe.z]]; },
+  slam() { put(mage, CX - 1200, CY); put(wall, CX + 300, CY); put(foe, CX + 1500, CY + 1500); arena.sync(S); view('flat'); return [[mage.x, mage.y, mage.z], [wall.x, wall.y, wall.z]]; },
+  knockdown() { put(mage, CX, CY); put(foe, CX + 1500, CY + 1500); arena.sync(S); view('flat'); return [[mage.x - 800, mage.y, mage.z], [mage.x + 800, mage.y, mage.z]]; },
+  dash() { put(mage, CX - 2300, CY + 450); put(foe, CX - 600, CY - 450); arena.sync(S); view('pair'); return [[mage.x, mage.y, mage.z], [foe.x, foe.y, foe.z], [mage.x + 2600, mage.y, mage.z], [foe.x + 2600, foe.y, foe.z]]; },
+};
+const STEPS = {
+  /**
+   * OFF THE PLATEAU: the mage on top walks to a point below, along the
+   * heading the engine lets it down furthest. A real `move` action.
+   */
+  walkDown() {
+    const w = walkPlan || (PREP.walkDown(), walkPlan);
+    return run(() => { for (const _ of doUnitAction(S, { type: 'unit', id: mage.id, act: 'move', x: w.tx, y: w.ty })); return { from: [PX, PY, top], to: [mage.x, mage.y, mage.z] }; }, `walk down dir ${w.d}: ${top} -> ${w.z}`);
+  },
+  /** STRUCK: the enemy mage, adjacent, strikes ours. It must stay on its feet. */
+  struck() { return run(() => strike(S, foe, mage), 'struck'); },
+  /** SLAMMED: our mage thrown by the enemy (force 3) into a wall 1.5 m east. A stagger, then the knockdown if the engine says so. */
+  slam() { return run(() => push(S, mage, 0, 3, { byP: 1 }), 'slam by the enemy'); },
+  /** KNOCKED DOWN outright (push.js knockDown, the engine's one funnel): down and up again. */
+  knockdown() { return run(() => knockDown(S, mage, 0, { byP: 1 }), 'knockdown'); },
+  /** SELF vs ENEMY: our mage pushes ITSELF east (a dash) while the enemy mage, beside it, is thrown by us (a stumble). */
+  dash() {
+    const i0 = S.fx.length;
+    const a = push(S, mage, 0, 3, { byP: 0 });
+    const b = push(S, foe, 0, 3, { byP: 0 });
+    const notes = S.fx.slice(i0);
+    // Two runs at once: both held, both played now.
+    const dyns = notes.filter((f) => f.kind === 'dyn');
+    for (const t of timers) clearTimeout(t);
+    timers = [];
+    for (const d of dyns) arena.cues.dynHold(d);
+    arena.sync(S);
+    for (const d of dyns) arena.cues.dyn(d);
+    for (const f of notes) {
+      if (f.kind === 'damage') timers.push(setTimeout(() => arena.cues.hit(f.id, f.amount, f.cause), f.dynMs ?? 0));
+      if (f.kind === 'knockdown') timers.push(setTimeout(() => arena.cues.knockdown(f.id, f.dir), f.dynMs ?? 0));
+    }
+    last = { ms: Math.max(...dyns.map((d) => d.ms || 0)) + 150, notes: notes.map((f) => f.kind), lines: dyns.map((d) => `${d.ms}ms ${d.bodies.map((x) => x.key + (x.self ? '(self)' : '')).join(' ')} byP ${d.byP}: ${d.events.map((e) => `${e.t}ms ${e.kind} ${e.key}${e.into ? '>' + e.into : ''}${e.dmg ? ' dmg' + e.dmg : ''}`).join(', ')}`), label: 'self dash (blue, near) vs enemy shove (red, far)', result: { a: a.mm, b: b.mm } };
+    info.textContent = `${last.label}\n${last.lines.join('\n')}`;
+    return last;
+  },
+  reset() { stage(); arena.sync(S); view('flat'); return null; },
+};
+function DIR(d) { const a = (d / 64) * Math.PI * 2; return [Math.cos(a), Math.sin(a)]; }
+/** Where a 3 m move along heading d from the top would end (a dry run on a copy of the mage). */
+function probeWalk(d, ux, uy) {
+  const save = { x: mage.x, y: mage.y, z: mage.z, support: mage.support, acted: mage.acted };
+  const fx0 = S.fx.length, q0 = S.queue?.length;
+  put(mage, PX, PY);
+  for (const _ of doUnitAction(S, { type: 'unit', id: mage.id, act: 'move', x: PX + Math.round(ux * 3000), y: PY + Math.round(uy * 3000) }));
+  const r = { x: mage.x, y: mage.y, z: mage.z, mm: Math.hypot(mage.x - PX, mage.y - PY), drop: top - mage.z };
+  S.fx.length = fx0;
+  Object.assign(mage, save);
+  return r;
+}
+function step(name) { const r = STEPS[name]?.() ?? null; if (!r) info.textContent = name; return r; }
+/** Place the bodies for a scene and frame it; returns the screen box (x, y, width, height) that keeps them all in shot. */
+function prep(name) {
+  const pts = PREP[name]?.();
+  if (!pts) return null;
+  arena.camera.updateMatrixWorld(true);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y, z] of pts) for (const up of [0, 2200]) { const [sx, sy] = arena.project(x, y, z + up); x0 = Math.min(x0, sx); y0 = Math.min(y0, sy); x1 = Math.max(x1, sx); y1 = Math.max(y1, sy); }
+  const W = innerWidth, H = innerHeight, pad = 90;
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(W, x1 + pad); y1 = Math.min(H, y1 + pad);
+  return { x: Math.round(x0), y: Math.round(y0), width: Math.round(x1 - x0), height: Math.round(y1 - y0) };
+}
+
+const bar = document.querySelector('#bar');
+for (const nm of Object.keys(STEPS)) { const a = document.createElement('a'); a.textContent = nm; a.onclick = () => { prep(nm); setTimeout(() => step(nm), 2500); }; bar.appendChild(a); }
+
+/* ---- a contact sheet of frames (data URLs), for looking at a whole motion at once */
+async function sheet(urls, cols = 6, w = 320, h = 200, labels = []) {
+  const c = document.querySelector('#sheet');
+  const rows = Math.ceil(urls.length / cols);
+  c.width = cols * w; c.height = rows * h; c.style.display = 'block';
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#111'; ctx.fillRect(0, 0, c.width, c.height);
+  for (let i = 0; i < urls.length; i++) {
+    const img = new Image();
+    await new Promise((res) => { img.onload = res; img.src = urls[i]; });
+    const x = (i % cols) * w, y = Math.floor(i / cols) * h;
+    ctx.drawImage(img, x, y, w, h);
+    ctx.fillStyle = '#000a'; ctx.fillRect(x, y, 70, 16);
+    ctx.fillStyle = '#fff'; ctx.font = '12px monospace'; ctx.fillText(labels[i] ?? String(i), x + 4, y + 12);
+  }
+  return [c.width, c.height];
+}
+const unsheet = () => { document.querySelector('#sheet').style.display = 'none'; };
+
+/** True once every body stands where the engine has it (the view has walked them there). */
+function settled() {
+  for (const u of [mage, foe]) {
+    const b = arena.bodyAt(u.id);
+    if (!b || Math.hypot(b.x - u.x * MM, b.z - u.y * MM) > 0.05 || Math.abs(b.y - u.z * MM) > 0.05) return false;
+  }
+  return true;
+}
+/** Where a unit is on screen, for clipping shots. */
+const where = (id) => { const u = S.field.units.find((x) => x.id === id); return u ? arena.project(u.x, u.y, u.z) : null; };
+window.LAB = { arena, state: S, step, prep, view, sheet, unsheet, where, settled, names: Object.keys(STEPS), get last() { return last; }, ids: { mage: mage.id, foe: foe.id }, ready: true };
+</script>
+</body>
+</html>

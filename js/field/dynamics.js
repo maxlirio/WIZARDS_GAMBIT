@@ -541,8 +541,12 @@ export function createSim(state, { byP = null, crush = false } = {}) {
 
     // THE NOTE, ahead of everything it caused.
     if (!state.replaying) {
-      const bodies = list.map((r) => ({ key: r.key, body: r.unit ? 'unit' : 'prop', id: r.id, r: r.r, h: r.h, sphere: r.sphere, mass: r.m }));
-      const dyn = { kind: 'dyn', hz: HZ / FRAME_EVERY, ms: idiv(t * 1000, HZ), bodies, frames, events, carried };
+      // `self` says a unit was thrown by its OWN side: the view plays that as a
+      // magical dash rather than a stumble (user: "when I shove myself my
+      // wizard will fall over. Instead it should be like magic causing him to
+      // go forward faster than normal").
+      const bodies = list.map((r) => ({ key: r.key, body: r.unit ? 'unit' : 'prop', id: r.id, r: r.r, h: r.h, sphere: r.sphere, mass: r.m, self: !!(r.unit && byP !== null && r.b.owner === byP) }));
+      const dyn = { kind: 'dyn', hz: HZ / FRAME_EVERY, ms: idiv(t * 1000, HZ), bodies, frames, events, carried, byP };
       (state.fx ||= []).splice(fxStart, 0, dyn);
     }
     return { mm, blockedBy, steps: t, events };

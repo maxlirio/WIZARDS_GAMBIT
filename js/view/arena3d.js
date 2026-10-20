@@ -19,7 +19,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { heightAt, propSpec, propOnBoard, propBurning } from '../field/arena.js';
+import { heightAt, propSpec, propOnBoard, propBurning, FALL_SAFE } from '../field/arena.js';
 import { DIR64, DIR_SCALE, bearing } from '../field/fixed.js';
 import { loadAll, pickLod } from './assets.js';
 import { buildWorld, menhir } from './world.js';
@@ -115,6 +115,23 @@ export function createArena(host, state, handlers = {}) {
 
   // Ground height anywhere: the engine's inside the ward, the landscape's outside.
   const groundY = (x, y) => (world ? world.heightAt(x * MM, y * MM) : heightAt(a, Math.round(Math.min(a.w, Math.max(0, x))), Math.round(Math.min(a.h, Math.max(0, y)))) * MM);
+  /**
+   * What a body at scene (x, z) is standing on: the ground, or the top of a
+   * standing piece of terrain whose footprint it is inside, if that top is
+   * no higher than `maxY` (a boulder it is climbing onto, not a pillar it is
+   * walking past). Scene metres.
+   */
+  function surfaceY(x, z, maxY) {
+    let y = groundY(x / MM, z / MM);
+    for (const m of propMeshes.values()) {
+      if (!m.visible || m.userData.flying || m.userData.shattered) continue;
+      const r = m.userData.r || 0, top = m.position.y + (m.userData.h || 0);
+      if (top <= y || top > maxY) continue;
+      const dx = x - m.position.x, dz = z - m.position.z;
+      if (dx * dx + dz * dz <= r * r) y = top;
+    }
+    return y;
+  }
 
   /* ---------------------------------------------------------- spawn circles */
   const spawnRings = [];
@@ -162,7 +179,7 @@ export function createArena(host, state, handlers = {}) {
     label.className = `ulabel p${u.owner}`;
     labels.appendChild(label);
     scene.add(actor.root);
-    return { actor, base, label, unit: u, target: new THREE.Vector3(u.x * MM, u.z * MM, u.y * MM), vy: 0, airborne: false, dyn: null, ride: null, crushedAt: -1e9 };
+    return { actor, base, label, unit: u, target: new THREE.Vector3(u.x * MM, u.z * MM, u.y * MM), vy: 0, airborne: false, falling: false, dyn: null, ride: null, crushedAt: -1e9, walk: null, landedAt: -1e9 };
   }
 
   /* ---------------------------------------------------------- sync */
@@ -206,7 +223,10 @@ export function createArena(host, state, handlers = {}) {
         actors.set(u.id, rec);
       }
       rec.unit = u;
-      rec.target.set(u.x * MM, u.z * MM, u.y * MM);
+      // A walk the timeline has not reached yet (cues.moveHold) keeps the
+      // target it was given; the sync would otherwise walk the body to where
+      // the engine left it before the cues ahead of it had played.
+      if (!rec.walk) rec.target.set(u.x * MM, u.z * MM, u.y * MM);
       const name = handlers.unitLabel ? handlers.unitLabel(u) : u.kind === 'mage' ? 'Mage' : (s.defs[u.def]?.name || 'Golem');
       const pips = Array.from({ length: u.maxHp }, (_, i) => `<i class="${i < u.hp ? 'f' : ''}"></i>`).join('');
       const html = `<b>${name}</b><span class="hp">${pips}</span>${u.poison ? `<em class="poi">☠${u.poison}</em>` : ''}${u.burn > 0 ? `<em class="poi" style="color:#ff9a3a">🔥${u.burn}</em>` : ''}${u.acted && s.active === u.owner && s.phase === 'unit' ? '<em>done</em>' : ''}`;
@@ -397,7 +417,9 @@ export function createArena(host, state, handlers = {}) {
       dynOwn(d, hold);
       // A unit keeps its height (a lift cue may still be raising it); a piece
       // of terrain takes the frame's, which is where it rests.
-      if (d.unit) { const pos = d.rec.actor.root.position; pos.x = p[0] * MM; pos.z = p[1] * MM; d.rec.actor.moving = false; }
+      // A unit still owed a walk (the move cue before this run) finishes
+      // it first; the walk ends where the run begins.
+      if (d.unit) { if (!d.rec.walk) { const pos = d.rec.actor.root.position; pos.x = p[0] * MM; pos.z = p[1] * MM; d.rec.actor.moving = false; } }
       else d.m.position.set(p[0] * MM, p[2] * MM, p[1] * MM);
       return;
     }
@@ -418,7 +440,15 @@ export function createArena(host, state, handlers = {}) {
     const land = play.events.find((e) => e.key === d.key && e.kind === 'land' && e.t > fromT);
     const air = ((land ? land.t : play.ms) - fromT) / 1000;
     const a = d.rec.actor;
+    // Thrown by its own side it is a leap, not a fall: it hangs in control and lands on its feet.
+    if (d.self) { if (a.jump) a.jump(Math.max(0.3, air + 0.2)); return; }
     if (a.tumble) a.tumble(Math.max(0.15, air)); else a.hit();
+  }
+  /** The blue-white wake of a self-cast push: the body is carried by its own magic. */
+  function dashTrail(x, y, z, vx, vz, sp) {
+    fx.pools.soft.emit({ x, y: y + 0.8, z, n: 1, spread: 0.12, spreadY: 0.45, vx: -vx * 0.25, vz: -vz * 0.25, vy: 0.2, life: 0.3, lifeSpread: 0.1, size: 0.22, sizeEnd: 0.05, color: PUSH_HEX, colorEnd: 0x2a6a8a, alpha: 0.35, fade: 1.5 });
+    fx.pools.sparks.emit({ x, y: y + 0.7, z, n: 3, spread: 0.22, vspread: 0.9, vx: -vx * 0.7, vz: -vz * 0.7, vy: 0.5, life: 0.45, size: 0.05, sizeEnd: 0.012, color: 0xffffff, colorEnd: PUSH_HEX, gravity: -3, drag: 0.8 });
+    if (sp > 2 && Math.random() < 0.3) fx.dust(x, y, z, { n: 1, size: 0.3, up: 0.4 });
   }
 
   /** Start the replay: every body back to its first frame, then driven by the frame loop. */
@@ -445,8 +475,20 @@ export function createArena(host, state, handlers = {}) {
         rec.ride = null; rec.carry = null; rec.airY = 0; rec.airborne = false; rec.falling = false; rec.vy = 0; rec.airApplied = 0;
         rec.actor.root.position.set(d.x, d.y, d.z);
         rec.actor.moving = false;
-        // Thrown: it leaves along the ground stumbling, or leaves the ground flailing.
-        if (rises) { d.air = true; tumbleUntilLand(play, d, 0); }
+        // Thrown: it leaves along the ground stumbling, or leaves the ground
+        // flailing. Thrown by its OWN side (`self`) it is a magical dash: it
+        // leans into the run and goes, no stumble (user: "when I shove myself
+        // my wizard will like fall over. Instead it should be like magic
+        // causing him to go forward faster than normal").
+        if (d.self && (moves || rises)) {
+          const q = frames[1].p[b.key];
+          const vx = q[0] - p0[0], vz = q[1] - p0[1];
+          if (Math.hypot(vx, vz) > 1e-6) rec.actor.facingTarget = Math.atan2(vx, vz);
+          fx.ring(d.x, d.y, d.z, 0.9, PUSH_HEX, { dur: 0.4, width: 0.1 });
+          fx.motes(d.x, d.y, d.z, PUSH_HEX, { n: 16, up: 1.6, r: 0.3, life: 0.7 });
+          fx.flash(d.x, d.y + 1, d.z, PUSH_HEX, 6, 0.25, 4);
+          if (rises) { d.air = true; tumbleUntilLand(play, d, 0); }
+        } else if (rises) { d.air = true; tumbleUntilLand(play, d, 0); }
         else if (moves) { if (rec.actor.shove) rec.actor.shove(); else rec.actor.hit(); }
       } else {
         d.m.position.set(d.x, d.y, d.z);
@@ -484,7 +526,7 @@ export function createArena(host, state, handlers = {}) {
     };
     for (const d of play.bodies) {
       if (dynOwner(d) !== play) continue;
-      if (d.unit) { d.rec.dyn = null; d.rec.ride = null; d.rec.airY = 0; d.rec.airborne = false; d.rec.falling = false; d.rec.vy = 0; }
+      if (d.unit) { d.rec.dyn = null; d.rec.ride = null; d.rec.airY = 0; d.rec.airborne = false; d.rec.falling = false; d.rec.vy = 0; d.rec.dashing = false; d.rec.actor.moving = false; }
       else d.m.userData.dyn = null;
       rehold(d.key);
     }
@@ -505,7 +547,10 @@ export function createArena(host, state, handlers = {}) {
   function jolt(d, dmg, D, away) {
     if (d.unit) {
       const rec = d.rec;
-      if (dmg >= 2) { rec.actor.hit('crush'); rec.crushedAt = performance.now(); } else rec.actor.hit();
+      // A slam STAGGERS a body on its feet. Only the engine's knockdown note
+      // puts it on the ground (cues.knockdown), and only a rock landing ON it
+      // slams it flat (the crumple event, a topple's hits).
+      if (performance.now() - rec.crushedAt > 1200) rec.actor.hit('blow');
       if (away) rec.actor.lookAt(d.x - D.x * 2, d.z - D.z * 2);
     } else {
       const m = d.m, inner = m.userData.inner;
@@ -552,6 +597,8 @@ export function createArena(host, state, handlers = {}) {
         const hard = Math.min(1, (ev.speed || 0) / 7000);
         const heavy = d ? Math.min(1, (d.mass || 1) / 3) : 0.5;
         if (d) d.air = false;
+        // A dashing body comes down on its feet: a soft landing, a flare of its magic.
+        if (d?.unit && d.self) { d.rec.actor.land?.(false); d.rec.landedAt = performance.now(); fx.ring(P.x, P.y, P.z, 0.8, PUSH_HEX, { dur: 0.35, width: 0.08 }); }
         fx.dust(P.x, P.y, P.z, { n: Math.round(10 + 40 * hard), size: 0.5 + 0.5 * hard, spread: 0.3 + r, up: 0.8 + 1.5 * hard });
         if (hard > 0.2) { fx.ring(P.x, P.y, P.z, 0.8 + 1.4 * hard, 0xd9c9a8, { dur: 0.5 }); fx.shake(0.03 + 0.14 * hard * heavy, 0.35); }
         if (d && !d.unit && hard > 0.4) fx.debris(P.x, P.y, P.z, { n: 4, colour: PROP_COLOUR(d.m.userData.kind), size: 0.08, spread: r, up: 2 });
@@ -601,12 +648,23 @@ export function createArena(host, state, handlers = {}) {
           const rec = d.rec, pos = rec.actor.root.position;
           pos.set(x, y, z);
           rec.airY = 0;
-          // Stumbling backwards: it faces the way it came, shoulders leading the feet.
-          if (!d.air && sp > 0.4) rec.actor.facingTarget = Math.atan2(-vx, -vz);
-          const want = d.air ? 0 : Math.min(0.32, sp * 0.07);
-          d.lean += (want - d.lean) * 0.25;
-          rec.actor.root.rotation.x = -d.lean;
-          if (!d.air && sp > 2 && Math.random() < 0.35) fx.dust(x, y, z, { n: 2, size: 0.35, up: 0.6 });
+          if (d.self) {
+            // A self-cast dash: facing the way it goes, leaning into it, feet
+            // skimming, its magic streaming off behind.
+            if (sp > 0.4) rec.actor.facingTarget = Math.atan2(vx, vz);
+            const want = d.air ? 0.12 : Math.min(0.3, sp * 0.06);
+            d.lean += (want - d.lean) * 0.2;
+            rec.actor.root.rotation.x = d.lean;
+            rec.dashing = !d.air && sp > 0.3;
+            if (sp > 0.5) dashTrail(x, y, z, vx, vz, sp);
+          } else {
+            // Stumbling backwards: it faces the way it came, shoulders leading the feet.
+            if (!d.air && sp > 0.4) rec.actor.facingTarget = Math.atan2(-vx, -vz);
+            const want = d.air ? 0 : Math.min(0.32, sp * 0.07);
+            d.lean += (want - d.lean) * 0.25;
+            rec.actor.root.rotation.x = -d.lean;
+            if (!d.air && sp > 2 && Math.random() < 0.35) fx.dust(x, y, z, { n: 2, size: 0.35, up: 0.6 });
+          }
         } else {
           const m = d.m;
           const dx = x - m.position.x, dz = z - m.position.z;
@@ -678,10 +736,16 @@ export function createArena(host, state, handlers = {}) {
       // stiff spasm, or being slammed flat.
       const crushing = cause === 'crush' || cause === 'rock' || cause === 'impact' || cause === 'topple' || cause === 'shrapnel';
       const fiery = cause === 'fire' || cause === 'burn' || cause === 'charge';
-      const kind = fiery ? 'fire' : cause === 'lightning' || cause === 'thunder' ? 'lightning' : crushing ? 'crush' : 'blow';
-      // A slam's cue (impact, topple) has just thrown the body down; the
-      // damage note that follows it only adds the number, not a second fall.
-      if (performance.now() - rec.crushedAt > 1200) rec.actor.hit(kind);
+      // Every blow STAGGERS the body on its feet; nothing here puts it on the
+      // ground (user: "sometimes when you get attacked you just fall over").
+      // Going down is the engine's call alone: its knockdown note, or a rock
+      // landing on the unit (the crumple/topple cues), and a body those have
+      // just floored, or one still landing from a fall, only takes the number.
+      const kind = fiery ? 'fire' : cause === 'lightning' || cause === 'thunder' ? 'lightning' : 'blow';
+      const now = performance.now();
+      const floored = now - rec.crushedAt < 1200;
+      const landing = cause === 'fall' && (rec.falling || now - rec.landedAt < 900);
+      if (!floored && !landing) rec.actor.hit(kind);
       const p = rec.actor.root.position;
       const col = fiery ? 0xff7a20 : cause === 'lightning' || cause === 'thunder' ? 0xb8ecff : cause === 'poison' ? 0x7fe04a : cause === 'fall' || crushing ? 0xd9c9a8 : 0xff4040;
       fx.pools.sparks.emit({ x: p.x, y: p.y + rec.actor.height * 0.5, z: p.z, n: 14, spread: 0.2, vspread: 3, vy: 1.5, life: 0.5, size: 0.1, sizeEnd: 0.02, color: 0xffffff, colorEnd: col, gravity: -8 });
@@ -762,12 +826,30 @@ export function createArena(host, state, handlers = {}) {
       const rec = actors.get(id);
       if (!rec) return;
       const p = rec.actor.root.position;
-      if (rec.actor.tumble) rec.actor.tumble(0.6); else rec.actor.hit('crush');
-      rec.crushedAt = performance.now();
       const D = dirVec(dir);
+      if (rec.actor.knockdown) rec.actor.knockdown(dir); else if (rec.actor.tumble) rec.actor.tumble(0.6); else rec.actor.hit('crush');
+      rec.crushedAt = performance.now();
       fx.dust(p.x + D.x * 0.4, p.y, p.z + D.z * 0.4, { n: 16, size: 0.5, spread: 0.4 });
       fx.pools.stars.emit({ x: p.x, y: p.y + rec.actor.height * 0.9, z: p.z, n: 5, spread: 0.3, vy: 0.5, vspread: 0.3, life: 1.1, size: 0.2, sizeEnd: 0.05, color: 0xfff1a0, alpha: 1, fade: 2, spinJitter: 2 });
       fx.shake(0.05, 0.3);
+    },
+    /**
+     * A unit's walk is coming (the engine has already moved it): the body
+     * keeps its present target until `move` plays, so the cues ahead of the
+     * walk on the timeline do not find it already gone.
+     */
+    moveHold(id, to) {
+      const rec = actors.get(id);
+      if (!rec) return;
+      rec.walk = { to: new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM) };
+    },
+    /** The walk itself: the body sets off for the engine's point; the frame loop walks it over the ground. */
+    move(id, to) {
+      const rec = actors.get(id);
+      if (!rec) return;
+      const T = rec.walk?.to || new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM);
+      rec.walk = { to: T };
+      rec.target.copy(T);
     },
     fall(id, drop) {
       const rec = actors.get(id);
@@ -1429,10 +1511,12 @@ export function createArena(host, state, handlers = {}) {
       pos.y -= rec.airApplied || 0;
       rec.airApplied = 0;
       const tgt = rec.target;
-      if (rec.dyn) {
+      if (rec.dyn && !(rec.dyn.hold && rec.walk)) {
         // A rigid-body replay owns the ground position and the height (or
-        // its hold does, in which case the body waits where it stands).
-        actor.moving = false; rec.falling = false; rec.vy = 0;
+        // its hold does, in which case the body waits where it stands -- or
+        // finishes the walk it was owed first: the walk ends where the run begins).
+        // A self-cast dash runs on its feet; everything else thrown is not walking.
+        actor.moving = !!rec.dashing; rec.falling = false; rec.vy = 0;
       } else if (rec.carry) {
         // Carried along a straight run (a charge): the run owns the position, height included.
         const c = rec.carry;
@@ -1441,28 +1525,68 @@ export function createArena(host, state, handlers = {}) {
         pos.x = c.from.x + (c.to.x - c.from.x) * k; pos.y = c.from.y + (c.to.y - c.from.y) * k; pos.z = c.from.z + (c.to.z - c.from.z) * k;
         if (c.t >= c.dur) rec.carry = null;
       } else {
-        // Walk toward the engine's point on the ground plane; height follows
-        // the ground or falls.
+        // Walk toward the engine's point on the ground plane. The HEIGHT
+        // follows the ground under the feet, not the target: a body walking
+        // off a plateau stays on top until the edge, steps off there, falls
+        // and lands at the bottom (user: "when I move off of a mountain my
+        // guy falls over ... they play at the wrong times"). Standing still,
+        // the height is the engine's (a prop top, a lifted rock).
         const dx = tgt.x - pos.x, dz = tgt.z - pos.z;
         const dist = Math.hypot(dx, dz);
-        if (dist > 0.02) {
+        const walking = dist > 0.02;
+        if (walking) {
           const step = Math.min(dist, actor.speed * dt);
           pos.x += dx / dist * step; pos.z += dz / dist * step;
           actor.facingTarget = Math.atan2(dx, dz);
           actor.moving = true;
-        } else actor.moving = false;
+        } else { actor.moving = false; if (rec.walk && !rec.falling) rec.walk = null; }
         if (actor.root.rotation.x !== 0) actor.root.rotation.x = Math.abs(actor.root.rotation.x) < 1e-3 ? 0 : actor.root.rotation.x * (1 - Math.min(1, dt * 8));
-        const dy = tgt.y - pos.y;
-        if (dy < -0.35 && !rec.airborne) {
-          // A drop: gravity, then a thump. A body going over a real edge
-          // flails on the way down and picks itself up at the bottom.
-          if (!rec.falling) { rec.falling = true; if (dy < -0.9 && actor.tumble) actor.tumble(Math.sqrt(2 * -dy / 9.8)); }
-          rec.vy -= 9.8 * dt;
-          pos.y = Math.max(tgt.y, pos.y + rec.vy * dt);
-          if (pos.y <= tgt.y + 0.001) { pos.y = tgt.y; if (rec.vy < -3) { fx.dust(pos.x, pos.y, pos.z, { n: 22, size: 0.6 }); fx.shake(0.04, 0.25); } rec.vy = 0; rec.falling = false; }
-        } else if (!rec.airborne) {
+        // The floor under the feet: the ground (or a climbable top no higher
+        // than where this walk is going) on the way, the engine's height on arrival.
+        let floor = walking ? surfaceY(pos.x, pos.z, Math.max(pos.y, tgt.y) + 0.4) : tgt.y;
+        // The last stretch onto a raised target (a boulder's top) is the climb.
+        if (walking && tgt.y > floor && dist < 0.5) floor = Math.max(floor, tgt.y - (tgt.y - floor) * (dist / 0.5));
+        const dy = floor - pos.y;
+        if (rec.airborne) {
+          // A hurl or a Skyfall holds the height: nothing to do.
           rec.vy = 0;
-          pos.y += dy * Math.min(1, dt * 10);
+        } else if (rec.falling) {
+          // In the air: gravity, then the landing. Soft on the feet from a
+          // step down; a roll when the drop was enough to hurt (the engine's
+          // FALL_SAFE, the same rule its fall damage uses).
+          rec.vy -= 9.8 * dt;
+          pos.y += rec.vy * dt;
+          if (pos.y <= floor) {
+            pos.y = floor;
+            // A walked descent (the engine climbs down; it never hurts) is
+            // always on the feet; a drop it did not choose hurts past FALL_SAFE.
+            const hard = !rec.walk && rec.fallFrom - floor > FALL_SAFE * MM;
+            rec.vy = 0; rec.falling = false; rec.landedAt = now;
+            if (actor.land) actor.land(hard); else if (hard && actor.tumble) actor.tumble(0.15);
+            fx.dust(pos.x, pos.y, pos.z, { n: hard ? 26 : 12, size: hard ? 0.6 : 0.45, up: hard ? 1.2 : 0.7 });
+            if (hard) { fx.ring(pos.x, pos.y, pos.z, 1.1, 0xd9c9a8, { dur: 0.45 }); fx.shake(0.05, 0.3); }
+          }
+        } else if (dy < -0.35) {
+          // The ground has gone from under the feet (an edge, a rock shattered
+          // beneath it): a deliberate push-off, held in the air until it lands.
+          rec.falling = true; rec.vy = 0; rec.fallFrom = pos.y;
+          // How far down it is going: the lowest ground within the next metre of the walk.
+          let bottom = floor;
+          if (walking) for (let k = 1; k <= 3; k++) bottom = Math.min(bottom, surfaceY(pos.x + dx / dist * 0.33 * k, pos.z + dz / dist * 0.33 * k, pos.y));
+          const air = Math.sqrt(2 * Math.max(0.01, pos.y - bottom) / 9.8);
+          if (actor.drop) actor.drop(air); else if (air > 0.4 && actor.jump) actor.jump(air);
+          fx.dust(pos.x, pos.y, pos.z, { n: 6, size: 0.35, up: 0.5 });
+        } else if (dy < 0) {
+          // Downhill: the feet keep the ground, but no faster than a walking
+          // descent (~50 degrees). Steeper than that and the ground falls
+          // away under the body on the next frames, which is the edge above.
+          const down = Math.max(1.5, actor.speed * 1.2) * dt;
+          pos.y = walking ? Math.max(floor, pos.y - down) : pos.y + dy * Math.min(1, dt * 10);
+          rec.vy = 0;
+        } else {
+          // Level or uphill: the feet are on the ground.
+          rec.vy = 0;
+          pos.y += dy * Math.min(1, dt * (walking ? 16 : 10));
         }
       }
       actor.airY = rec.airY || 0;
@@ -1557,6 +1681,18 @@ export function createArena(host, state, handlers = {}) {
     setRanges, setMoveCircle, showGhost, insideMove: (x, y) => insideMove(x, y), moveShape, setViewport,
     beginDrag, endDrag, screenAngle,
     camera, controls, renderer, scene, fx, cues,
+    /** Where a unit's body is right now, scene metres (labs wait on it; the engine's point is `S`). */
+    bodyAt(id) { const p = unitPos(id); return p ? { x: p.x, y: p.y, z: p.z } : null; },
+    /** How long the body will take to walk to the engine's point `to` from where it stands now, in ms. */
+    walkMs(id, to, mm = 0) {
+      const rec = actors.get(id);
+      if (!rec) return (mm / 2600) * 1000 + 150;
+      const p = rec.actor.root.position;
+      const dist = Math.hypot(to.x * MM - p.x, to.y * MM - p.z);
+      const dz = to.z * MM - p.y;
+      // A drop on the way is a push-off, the fall and the landing; a climb is slower than a walk.
+      return (dist / Math.max(0.5, rec.actor.speed)) * 1000 + (dz < -0.35 ? 350 + Math.sqrt(2 * -dz / 9.8) * 1000 : dz > 0.35 ? 250 : 0) + 150;
+    },
     get ready() { return ready; }, whenReady: readyPromise,
     project(x, y, z) {
       v.set(x * MM, z * MM, y * MM).project(camera);

@@ -59,12 +59,14 @@ let someChosen = [];     // a multi-select prompt's picks so far
 let matchOver = false;
 let gameId = 0;
 let timers = [];         // scheduled cues, cleared on a new match
+let tlEnd = 0;           // when the cues scheduled so far have all played (performance.now ms)
 let NET = null;          // the connection when playing online; the other seat is a person
 
 function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool = false, policy = 'oneply', seat = 0 } = {}) {
   gameId++;
   for (const t of timers) clearTimeout(t);
   timers = [];
+  tlEnd = 0;
   const rng = seedRng(seed ^ 0xdeed);
   const decks = pool ? [randomDeck(rng, pick), randomDeck(rng, pick)] : null;
   S = createGame({ seed, decks });
@@ -141,11 +143,13 @@ async function drive() {
       if (S.pending) {
         const whose = S.pending.request.player ?? S.active;
         if (whose === HUMAN) break;
-        await sleep(FAST ? 0 : 380);
+        await sleep(FAST ? 0 : Math.max(380, cuesLeft() + 150));
         if (my !== gameId) return;
         choose(S, answerFor(S, { policy: POLICY }));
       } else if (S.active !== HUMAN) {
-        await sleep(FAST ? 0 : 420);
+        // Not before the last action's cues have played out: a walk is as
+        // long as the walk, and the next move must not land on it.
+        await sleep(FAST ? 0 : Math.max(420, cuesLeft() + 150));
         if (my !== gameId) return;
         const a = chooseAction(S, { policy: POLICY });
         if (!a) break;
@@ -458,7 +462,7 @@ function flushFx() {
         t += 1150;
         break;
       }
-      case 'knockdown': { const { id, dir } = f; later(t, () => cues().knockdown(id, dir)); t += 500; break; }
+      case 'knockdown': { const { id, dir } = f; later(t, () => cues().knockdown(id, dir)); t += 1200; break; }
       case 'falls': for (const l of f.landed || []) if (l.key[0] === 'u' && l.drop > 0) { const id = Number(l.key.slice(1)), drop = l.drop; later(t + 250, () => cues().fall(id, drop)); } t += 350; break;
       case 'hurl': { const { id, mm } = f; later(t, () => cues().hurl(id, mm)); holdDamage = 900; t += 1000; break; }
       case 'dropRock': { const { id, from, to, onto } = f; later(t, () => cues().dropRock(id, from, to, onto)); holdDamage = 1050; t += 1200; break; }
@@ -521,15 +525,29 @@ function flushFx() {
       case 'respawn': t += 400; break;
       case 'swept': t += 600; break;
       case 'win': { const p = f.p; later(t + 300, () => cues().cheer(p)); break; }
-      case 'move': t += 120; break;
+      // A WALK takes as long as the body takes to walk it (and to step off a
+      // ledge and land on the way), so what the walk leads to -- a trap, a
+      // strike, the next move -- waits for the arrival instead of landing on
+      // a mage still half way there. The target is parked now and handed to
+      // the body at its turn on the timeline.
+      case 'move': {
+        const { id, to, mm } = f;
+        cues().moveHold?.(id, to);
+        later(t, () => cues().move?.(id, to));
+        t += arena.walkMs?.(id, to, mm) ?? 120;
+        break;
+      }
       default: break;
     }
     if (at !== null) t = Math.max(keep, t);
   });
   fxSeen = S.fx.length;
   pendingFlash = flash;
+  tlEnd = Math.max(tlEnd, performance.now() + (FAST ? 0 : t));
   return t;
 }
+/** Ms until every cue scheduled so far has played: the AI waits that long before its next move. */
+const cuesLeft = () => Math.max(0, tlEnd - performance.now());
 let pendingFlash = new Map();
 const SOURCE = { objective: 'an objective completed', mage: 'a mage slain', golem: 'a golem slain' };
 
