@@ -117,7 +117,12 @@ export function walk(state, body, dir, budget, {
       // down if the drop is within climbing reach and refuses to jump if it is
       // not.
       if (!allowFall) {
-        if (!climb || -rise > CLIMB_RATE) { blockedBy = { kind: 'drop', mm: -rise }; break; }
+        // Off a prop you are standing on, the way down is the way you came up:
+        // any face within PROP_CLIMB. Judged only by terrain's CLIMB_RATE, a
+        // body on a boulder or a wall could never leave it (user: "if you are
+        // on a wall or rock you can't move anywhere").
+        const reach = body.support?.kind === 'prop' ? PROP_CLIMB : CLIMB_RATE;
+        if (!climb || -rise > reach) { blockedBy = { kind: 'drop', mm: -rise }; break; }
       } else {
         airborneFrom = k;
         break;

@@ -430,7 +430,10 @@ safe in its slot.
 A small seeded arena. Distance is **continuous**, not squares, and measured in integer
 millimetres so that replays and lockstep are exact.
 
-- Real elevation: climbable faces, ledges, high ground.
+- Real elevation: climbable faces, ledges, high ground. A unit climbs a terrain face
+  that rises no more than 25 cm a step and scrambles onto a climbable piece up to 1.4 m
+  tall; **the way down is the way you came up** — from the top of a piece it can walk
+  off any face within that same 1.4 m. A taller drop is only ever taken by a push.
 - **Addressable terrain pieces**, because printed `Levitation` I removes one from the
   battlefield until end of turn.
 - Pushable props, including floating rocks, which fall when they lose support.
