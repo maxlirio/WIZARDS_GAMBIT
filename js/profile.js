@@ -5,8 +5,8 @@
 // js/rules or js/field may reach `localStorage`, and that is checked rather
 // than agreed.
 //
-// What persists is the SPELLBOOK: which find conditions you have discovered,
-// and which card each one teaches. It is knowledge, not inventory -- your
+// What persists is the SPELLBOOK: which cards' sigils you have discovered
+// (card id -> how), so their shapes can be shown on the page. It is knowledge, not inventory -- your
 // starting deck is the same ten cards in your first match and your thousandth.
 // So this file can be deleted, corrupted or absent and the game still plays
 // identically; you just stop knowing where the spells come from.
@@ -48,11 +48,11 @@ export function save() {
   catch { return false; }
 }
 
-/** Learn that `cond` finds `cardId`. Idempotent. */
-export function learn(cond, cardId) {
+/** Learn `cardId`'s sigil (`how` is the fx's `why`, 'sigil'). Idempotent. */
+export function learn(cardId, how = 'sigil') {
   const p = load();
-  if (p.learned[cond] === cardId) return false;
-  p.learned[cond] = cardId;
+  if (p.learned[cardId] === how) return false;
+  p.learned[cardId] = how;
   save();
   return true;
 }
@@ -72,7 +72,7 @@ export function recordMatch(state, p) {
   let learned = 0;
   for (const f of state.fx || []) {
     if (f.kind === 'found' && f.p === p && f.why) {
-      if (prof.learned[f.why] !== f.defId) { prof.learned[f.why] = f.defId; learned++; }
+      if (prof.learned[f.defId] !== f.why) { prof.learned[f.defId] = f.why; learned++; }
     }
   }
   save();

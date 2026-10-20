@@ -12,6 +12,7 @@
 // silently does nothing, which is exactly the failure mode GUDNAK shipped.
 
 import { RUNES, isRune, suggestedRune } from './runes.js';
+import { parseSigil } from './sigils.js';
 import { NUMERALS } from './orient.js';
 
 // 'golem' is a pseudo-school: golem cards go into slots, not onto cells, so
@@ -52,9 +53,15 @@ export const FACE_KEYS = Object.freeze([
 ]);
 
 const CARD_KEYS = Object.freeze([
-  'id', 'name', 'school', 'kind', 'keywords', 'runes', 'tier', 'unit', 'found',
+  'id', 'name', 'school', 'kind', 'keywords', 'runes', 'tier', 'unit', 'sigil',
   'faces', 'text', 'flavour',
 ]);
+
+/** A card's sigil (rows of rune letters), parsed to cells, or null when the card is not findable. */
+function sigilOf(id, spec) {
+  if (spec.sigil === null || spec.sigil === undefined) return null;
+  return Object.freeze(parseSigil(spec.sigil, id).map((c) => Object.freeze(c)));
+}
 
 function bad(id, msg) {
   throw new Error(`card ${id}: ${msg}`);
@@ -110,7 +117,7 @@ export function makeDef(spec) {
       unit: Object.freeze({ ...spec.unit }),
       keywords: Object.freeze([...new Set(spec.keywords || [])].sort()),
       text: spec.text, faces: Object.freeze([]), runes: Object.freeze([]),
-      found: spec.found || null, flavour: spec.flavour || null,
+      sigil: sigilOf(id, spec), flavour: spec.flavour || null,
     });
   }
   if (spec.tier || spec.unit) bad(id, 'tier/unit are golems only');
@@ -136,7 +143,7 @@ export function makeDef(spec) {
       keywords: Object.freeze([...new Set(spec.keywords || [])].sort()),
       runes: Object.freeze([]),
       faces: Object.freeze([Object.freeze({ ...f, numeral: 'I', index: 0 })]),
-      found: spec.found || null, flavour: spec.flavour || null,
+      sigil: sigilOf(id, spec), flavour: spec.flavour || null,
     });
   }
 
@@ -175,7 +182,7 @@ export function makeDef(spec) {
     keywords: Object.freeze([...new Set(spec.keywords || [])].sort()),
     runes: Object.freeze([...runes]),
     faces: Object.freeze(faces),
-    found: spec.found || null,
+    sigil: sigilOf(id, spec),
     flavour: spec.flavour || null,
   };
   return Object.freeze(def);

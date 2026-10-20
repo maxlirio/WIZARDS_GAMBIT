@@ -164,6 +164,16 @@ export function invariants(state, where = '') {
       stamps.add(k);
     }
   }
+  // The sigil boards: sixteen cells of runes or nothing, a waiting rune only
+  // while its question is open, and a card found once at most.
+  for (let p = 0; p < 2; p++) {
+    const b = state.players[p].sigils;
+    if (!b || !Array.isArray(b.cells) || b.cells.length !== 16) { say(`player ${p} has no 4x4 sigil board`); continue; }
+    for (const c of b.cells) if (c !== null && !['SPIRAL', 'SHARD', 'WHEEL', 'LATTICE'].includes(c)) say(`sigil board ${p} holds '${c}'`);
+    if (b.piece !== null && !state.pending && !state.queue.some((w) => w.kind === 'sigil' && w.p === p)) say(`player ${p} holds a rune with no placement pending`);
+    const f = state.players[p].foundThisMatch;
+    if (new Set(f).size !== f.length) say(`player ${p} found a card twice: ${f.join(',')}`);
+  }
   const mageEntries = state.scoreLog.filter((e) => e.kind === 'mage').length;
   const mageKills = state.players[0].ledger.magesKilled + state.players[1].ledger.magesKilled;
   if (mageEntries !== mageKills) say(`${mageEntries} mage-kill score entries but ${mageKills} mage kills counted`);

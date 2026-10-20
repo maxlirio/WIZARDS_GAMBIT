@@ -28,7 +28,8 @@ import { SITE } from '../rules/table.js';
 import { gateProgress, counted } from '../rules/gates.js';
 import { keywordsOf, keywordSources, KEYWORDS } from '../rules/keywords.js';
 import { TIER_CAP } from '../rules/golems.js';
-import { FINDS, FIND_IDS, spellbookPage } from '../rules/learn.js';
+import { spellbookPage } from '../rules/learn.js';
+import { completions, openPatterns, BOARD_W, BOARD_CELLS } from '../rules/sigils.js';
 import { seedRng, pick } from '../rules/rng.js';
 import * as profile from '../profile.js';
 import { makeCtx } from '../rules/resolve.js';
@@ -72,6 +73,7 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   fxSeen = 0; sel = null; someChosen = []; matchOver = false;
   angles.clear();
   pendingTurns.clear();
+  for (const p of [0, 1]) { sigTrack[p] = Array(BOARD_CELLS).fill(null); sigilHold[p] = null; }
   for (const p of [0, 1]) for (const el of document.querySelectorAll(`#table${p} .cell`)) el.dataset.uid = '';
   $('#log').innerHTML = '';
   arena?.dispose();
@@ -107,11 +109,11 @@ function seatLayout() {
   // Lift the six boards out first; the headers are rebuilt and would take
   // the boards with them otherwise.
   const parts = {};
-  for (const p of [0, 1]) for (const kind of ['table', 'golems', 'piles']) { const el = $(`#${kind}${p}`); parts[kind + p] = el; el.remove(); }
+  for (const p of [0, 1]) for (const kind of ['table', 'golems', 'piles', 'sigils']) { const el = $(`#${kind}${p}`); parts[kind + p] = el; el.remove(); }
   mine.innerHTML = `<div class="shead p${me}">Your Spell Table <span id="mage${me}"></span></div>`;
   theirs.innerHTML = `<div class="shead p${them}">${FOE()} Spell Table <span id="mage${them}"></span></div>`;
   for (const [host, p, small] of [[mine, me, false], [theirs, them, true]]) {
-    for (const kind of ['table', 'golems', 'piles']) {
+    for (const kind of ['table', 'golems', 'piles', 'sigils']) {
       const el = parts[kind + p];
       el.classList.toggle('small', small && kind !== 'piles');
       host.appendChild(el);
@@ -373,9 +375,15 @@ function flushFx() {
     if (lastDynT !== null && (f.kind === 'kill' || f.kind === 'knockdown' || f.kind === 'propHit' || f.kind === 'shatter' || f.kind === 'absorb' || f.kind === 'damage')) return lastDynT;
     return null;
   };
-  for (const f of S.fx.slice(fxSeen)) {
+  // The engine hands out the turn's rune just before it notes the turn's
+  // start; the log reads better the other way round, so the rune line waits
+  // for the turn line.
+  const fresh = S.fx.slice(fxSeen);
+  let heldLine = null;
+  fresh.forEach((f, k) => {
     const line = narrate(f);
-    if (line) logLine(line, f.kind);
+    if (line && f.kind === 'sigilDraw' && fresh[k + 1]?.kind === 'turnStart') heldLine = line;
+    else if (line) { logLine(line, f.kind); if (heldLine) { logLine(heldLine, 'sigilDraw'); heldLine = null; } }
     // Inside a run: the note's own moment, and the cursor is put back after.
     const at = dynTimeOf(f);
     const keep = t;
@@ -486,11 +494,31 @@ function flushFx() {
       case 'shatter': t += 400; break;
       case 'summon': { const id = f.id; later(t + 60, () => cues().summon(id)); t += 500; break; }
       case 'score': { const p = f.p; later(t, () => cues().score(p)); toast(`${pName(f.p)} +${f.amount} VP — ${SOURCE[f.source] || esc(f.source)}`, f.p === HUMAN ? 'good' : HUMAN === null ? 'good' : 'bad'); t += 500; break; }
+      case 'sigilDraw': t += 120; break;
+      case 'sigilPlace': {
+        sigTrack[f.p][f.idx] = f.rune;
+        sigFlash.set(`${f.p}:${f.idx}`, 'place');
+        t += 250; break;
+      }
+      case 'sigil': {
+        // The engine has already spent the runes. Hold them on screen, flash
+        // the shape gold at its moment on the timeline, then let the cells
+        // empty -- the way a table cell keeps its card until its cue plays.
+        const { p, cells, defId } = f;
+        const runes = new Map(cells.map((i) => [i, sigTrack[p][i]]));
+        for (const i of cells) sigTrack[p][i] = null;
+        const hold = { cells, runes };
+        sigilHold[p] = hold;
+        later(t, () => flashSigil(p, cells));
+        later(t + 1000, () => { if (sigilHold[p] === hold) { sigilHold[p] = null; renderSigils(p); } });
+        toast(`✶ ${p === HUMAN ? 'Your' : HUMAN === null ? `${pName(p)}'s` : `${FOE()}'s`} sigil completes — <b>${esc(CARDS[defId]?.name || defId)}</b>`, p === HUMAN || HUMAN === null ? 'good' : 'bad');
+        t += 1000; break;
+      }
       case 'found':
         if (f.p === HUMAN) {
           // Into the Spellbook NOW, not at the end of the match -- a player
           // who opens the book mid-duel should see what they just learned.
-          profile.learn(f.why, f.defId);
+          profile.learn(f.defId, f.why);
           toast(`Learned <b>${esc(CARDS[f.defId]?.name || f.defId)}</b> — ${f.taken === false ? 'written in your Spellbook, not taken' : 'it goes to your discard'}`, 'learn');
         }
         t += 300; break;
@@ -502,12 +530,20 @@ function flushFx() {
       default: break;
     }
     if (at !== null) t = Math.max(keep, t);
-  }
+  });
+  if (heldLine) logLine(heldLine, 'sigilDraw');
   fxSeen = S.fx.length;
   pendingFlash = flash;
   return t;
 }
 let pendingFlash = new Map();
+/* The sigil boards' cues. sigTrack mirrors each board as the timeline has
+   shown it so far (the state is ahead of it); sigilHold keeps a completed
+   sigil's runes visible until its flash has played; sigFlash is this
+   render's one-shot cell flashes, like pendingFlash for table cells. */
+const sigTrack = [Array(BOARD_CELLS).fill(null), Array(BOARD_CELLS).fill(null)];
+const sigilHold = [null, null];
+let sigFlash = new Map();
 const SOURCE = { objective: 'an objective completed', mage: 'a mage slain', golem: 'a golem slain' };
 
 /** The log lines a rigid-body run deserves: the slams, the crush, a body going over an edge. */
@@ -578,7 +614,10 @@ function narrate(f) {
     case 'move': return null;
     case 'respawn': return `${P(f.p)} mage respawns`;
     case 'swept': return `<span class="red">${P(f.p)} spell table is swept into the discard</span> — ${f.uids.length} card${f.uids.length === 1 ? '' : 's'}`;
-    case 'found': return `${P(f.p)} <span class="green">learn${f.p === HUMAN ? '' : 's'} ${esc(CARDS[f.defId]?.name || f.defId)}</span> — ${esc(FINDS[f.why]?.text || f.why)}${f.taken === false ? ' <i>(not taken)</i>' : ''}`;
+    case 'sigilDraw': return `${P(f.p)} ${f.p === HUMAN ? 'are' : 'is'} handed a ${runeGlyphInline(f.rune, RUNE_INK[f.rune])}<b>${RUNE_NAME[f.rune]}</b> rune`;
+    case 'sigilPlace': return `&nbsp;&nbsp;&nbsp;&nbsp;set${f.p === HUMAN ? '' : 's'} it at row ${Math.floor(f.idx / BOARD_W) + 1}, column ${(f.idx % BOARD_W) + 1}`;
+    case 'sigil': return `<span class="gold">✶ SIGIL</span> — <b>${esc(CARDS[f.defId]?.name || f.defId)}</b>'s sigil completes`;
+    case 'found': return `${P(f.p)} <span class="green">find${f.p === HUMAN ? '' : 's'} ${esc(CARDS[f.defId]?.name || f.defId)}</span>${f.taken === false ? ' <i>(not taken)</i>' : ''}`;
     case 'golemSpent': return `${N(f.uid)} is spent and goes to the discard`;
     case 'terrainRemoved': return `&nbsp;&nbsp;&nbsp;&nbsp;banishes a ${esc(propName(f.id))} until end of turn`;
     case 'levitate': return `&nbsp;&nbsp;&nbsp;&nbsp;lifts a ${esc(propName(f.id))} ${m(f.mm)}`;
@@ -903,6 +942,83 @@ function renderTable(p) {
     ${pl.foundThisMatch.length ? `<span class="green">Learned <b>${pl.foundThisMatch.length}</b></span>` : ''}`;
 }
 
+/* ================================================================ sigil board */
+
+const RUNE_INK = { SPIRAL: '#c98bff', SHARD: '#ff6a52', WHEEL: '#52b6ff', LATTICE: '#5ee68f', WILD: '#e8dcc0' };
+const sigilAsk = () => (humanToAnswer() && S.pending.request.kind === 'sigil' ? S.pending.request : null);
+
+/** The sigil board's markup: a head, the waiting rune, 4 x 4 cells, a hint. Built once a seat. */
+function buildSigils(p) {
+  const host = $(`#sigils${p}`);
+  if (!host) return;
+  host.innerHTML = `<div class="sighead">Sigil board</div><div class="sigpiece"></div>
+    <div class="sigboard">${Array.from({ length: BOARD_CELLS }, (_, i) => `<div class="sigcell" data-idx="${i}" title="row ${Math.floor(i / BOARD_W) + 1}, column ${(i % BOARD_W) + 1}"></div>`).join('')}</div>
+    <div class="sighint"></div>`;
+  host.querySelectorAll('.sigcell').forEach((el, i) => {
+    el.addEventListener('click', () => onSigilClick(p, i));
+    el.addEventListener('mouseenter', () => previewSigil(p, i));
+    el.addEventListener('mouseleave', () => previewSigil(p, null));
+  });
+}
+
+function renderSigils(p) {
+  const host = $(`#sigils${p}`);
+  if (!host || !S) return;
+  const b = S.players[p].sigils;
+  const hold = sigilHold[p];
+  const ask = p === HUMAN ? sigilAsk() : null;
+  host.querySelectorAll('.sigcell').forEach((el, i) => {
+    const r = hold?.runes.has(i) ? hold.runes.get(i) : b.cells[i];
+    if (el.dataset.r !== (r || '')) { el.innerHTML = r ? runeGlyphInline(r, RUNE_INK[r]) : ''; el.dataset.r = r || ''; }
+    el.classList.toggle('set', !!r);
+    el.classList.toggle('askable', !!ask && ask.options.includes(i));
+    el.classList.remove('would');
+    const fl = sigFlash.get(`${p}:${i}`);
+    if (fl) { el.classList.remove('flash-place', 'flash-sigil'); void el.offsetWidth; el.classList.add(`flash-${fl}`); }
+  });
+  const piece = host.querySelector('.sigpiece');
+  const r = b.piece;
+  piece.classList.toggle('has', !!r);
+  piece.classList.toggle('ask', !!ask);
+  piece.classList.remove('would');
+  piece.innerHTML = r ? `${runeGlyphInline(r, RUNE_INK[r])}<span>${ask ? 'Set the' : 'Holds a'} <b>${RUNE_NAME[r]}</b></span>` : '<span>no rune in hand</span>';
+  host.querySelector('.sighint').textContent = ask ? 'Click a cell — over anything. Close a shape to find its spell.' : '';
+}
+
+/** The gold flash of a completed sigil; the held runes stay visible under it. */
+function flashSigil(p, cells) {
+  renderSigils(p);
+  for (const i of cells) {
+    const el = document.querySelector(`#sigils${p} .sigcell[data-idx="${i}"]`);
+    if (!el) continue;
+    el.classList.remove('flash-place', 'flash-sigil'); void el.offsetWidth; el.classList.add('flash-sigil');
+  }
+}
+
+function onSigilClick(p, idx) {
+  const ask = sigilAsk();
+  if (!ask || p !== HUMAN || !ask.options.includes(idx)) return;
+  promptPick(idx);
+}
+
+/** Hovering a cell during the question: would setting the rune there close a sigil? */
+function previewSigil(p, idx) {
+  const host = $(`#sigils${p}`);
+  if (!host) return;
+  host.querySelectorAll('.sigcell.would').forEach((el) => el.classList.remove('would'));
+  const piece = host.querySelector('.sigpiece');
+  const ask = sigilAsk();
+  if (idx === null || !ask || p !== HUMAN) { if (piece?.classList.contains('would')) renderSigils(p); return; }
+  const b = S.players[p].sigils;
+  if (b.piece === null) return;
+  const trial = { cells: b.cells.slice() }; trial.cells[idx] = b.piece;
+  const done = completions(trial, openPatterns(S, p), idx);
+  if (!done.length) { if (piece.classList.contains('would')) renderSigils(p); return; }
+  for (const i of done[0].cells) host.querySelector(`.sigcell[data-idx="${i}"]`)?.classList.add('would');
+  piece.classList.add('would');
+  piece.innerHTML = `${runeGlyphInline(b.piece, RUNE_INK[b.piece])}<span>completes <b>${esc(CARDS[done[0].id]?.name || done[0].id)}</b></span>`;
+}
+
 /* ================================================================ hand */
 
 function renderHand() {
@@ -1034,7 +1150,7 @@ function inspectDef(def, rot = 0, kws = null, card = null) {
     const depth = stackAt(S, card.owner, card.cell).length - 1;
     if (depth > 0) extra += `<div class="dim">${depth} card${depth > 1 ? 's' : ''} buried beneath.</div>`;
   }
-  if (def.found) extra += `<div class="dim">Found by: ${esc(FINDS[def.found]?.text || def.found)}</div>`;
+  if (def.sigil) extra += `<div class="dim">Found by completing its sigil on your sigil board.</div>`;
   $('#inspector').innerHTML = `
     <div class="ibig">${cardSVG(def, { rot, keywords: keys })}</div>
     <div class="ihead" style="color:${SCHOOL_INK[school]}">${esc(def.name)} <small>${def.kind === 'golem' ? `golem · tier ${def.tier}` : def.kind === 'artifact' ? 'artifact · grey corners' : def.kind === 'trap' ? 'trap · face down on a grey corner' : `${def.school} spell`}</small></div>
@@ -1228,10 +1344,11 @@ function renderPrompt() {
       : r.kind === 'hand' ? `Click ${r.count > 1 ? `${r.count} cards` : 'a card'} in your hand, or pick below.`
       : r.kind === 'prop' ? 'Click a marked terrain piece, or pick below.'
       : r.kind === 'body' ? 'Click a glowing unit or a marked terrain piece, or pick below.'
+      : r.kind === 'sigil' ? 'Click a cell of your sigil board — any cell, over anything. Completing a shape finds its spell.'
       : r.show?.[0] && r.show[0].x !== undefined ? 'Click a marker on the field, or pick below.' : '';
     if (hint) html += `<div class="phint">${hint}</div>`;
     html += '<div class="pbtns">';
-    r.options.forEach((o, i) => {
+    if (r.kind !== 'sigil') r.options.forEach((o, i) => {   // the board is the picker
       html += `<button data-i="${i}" class="${someChosen.includes(o) ? 'chosen' : ''}">${esc(optionLabel(r, o, i))}</button>`;
     });
     if (r.allowNone) html += `<button data-v="none" class="ghost">Decline</button>`;
@@ -1590,12 +1707,15 @@ function render() {
   renderBonds(0);
   renderBonds(1);
   renderHand();
+  renderSigils(0);
+  renderSigils(1);
   renderPrompt();
   renderTray();
   arena.sync(S);
   renderHighlights();
   renderPopover();
   pendingFlash = new Map();
+  sigFlash = new Map();
   window.WG.state = S;
 }
 
@@ -1611,8 +1731,8 @@ function endMatch() {
   const title = S.winner === -1 ? 'A draw' : HUMAN === null ? `Player ${S.winner + 1} wins` : won ? 'Victory' : 'Defeat';
   setTimeout(() => modal(`<h2 class="${won ? 'gold' : ''}">${title}</h2>
     <p class="big">${S.vp[0]} – ${S.vp[1]} <small>after ${S.turn} turns · ${esc(S.reason || '')}</small></p>
-    ${HUMAN !== null ? `<p>${learned ? `<b class="green">${learned} new way${learned > 1 ? 's' : ''} to find spells</b> written into your Spellbook.` : 'Nothing new for the Spellbook this time.'}<br>
-      Spellbook: ${Object.keys(prof.learned).length}/${FIND_IDS.length} ways known · ${prof.matches} duel${prof.matches === 1 ? '' : 's'} · ${prof.wins} won</p>` : ''}
+    ${HUMAN !== null ? `<p>${learned ? `<b class="green">${learned} new sigil${learned > 1 ? 's' : ''}</b> written into your Spellbook.` : 'Nothing new for the Spellbook this time.'}<br>
+      Spellbook: ${Object.keys(prof.learned).length}/${spellbookPage(Object.values(CARDS), prof.learned).length} sigils known · ${prof.matches} duel${prof.matches === 1 ? '' : 's'} · ${prof.wins} won</p>` : ''}
     ${ledgerTable()}
     <div class="mbtns"><button id="again" class="primary">New duel</button><button id="sb">Open Spellbook</button><button id="close" class="ghost">Look at the battlefield</button></div>`), FAST ? 0 : 1800);
   const hook = () => {
@@ -1653,17 +1773,31 @@ function modal(html) {
 }
 function closeModal() { $('#modal').hidden = true; }
 
+/** A sigil drawn small: its bounding box of cells, runes in the card's ink. */
+function sigilMiniHTML(cells, ink) {
+  const w = Math.max(...cells.map((c) => c.x)) + 1, h = Math.max(...cells.map((c) => c.y)) + 1;
+  const at = new Map(cells.map((c) => [`${c.x},${c.y}`, c.r]));
+  let out = `<div class="sgrid" style="grid-template-columns:repeat(${w},15px)">`;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const r = at.get(`${x},${y}`);
+    out += r ? `<i>${runeGlyphInline(r, ink)}</i>` : '<i class="e"></i>';
+  }
+  return out + '</div>';
+}
+
 function openSpellbook() {
   const prof = profile.load();
-  const page = spellbookPage(prof.learned);
+  const page = spellbookPage(Object.values(CARDS), prof.learned);
   const known = page.filter((x) => x.known).length;
+  const runeList = (x) => x.runes.map((r) => RUNE_NAME[r]).join(', ');
   modal(`<h2>The Spellbook</h2>
-    <p class="dim">A record of the <b>ways</b> spells are found. Every duel starts from the same ten cards; what you keep is knowing what to do to find the rest. Do one of these things in a duel and the card goes into your discard for that match.</p>
-    <p><b>${known}</b> of ${page.length} ways known · ${prof.matches} duels · ${prof.wins} won</p>
-    <div class="book">${page.map((x) => {
-      if (!x.known) return `<div class="bk unknown"><span>— undiscovered —</span></div>`;
-      const d = CARDS[x.card];
-      return `<div class="bk"><span class="bt">${esc(x.text)}</span><span class="bc" style="color:${SCHOOL_INK[d?.kind === 'golem' ? 'golem' : d?.school] || '#ccc'}">→ ${esc(d?.name || x.card)}</span></div>`;
+    <p class="dim">Spells are <b>found</b>, not earned. Every turn you are handed one rune and set it anywhere on your sigil board, over anything; the moment it closes a card's <b>sigil</b> — a small shape of runes, in any of its four turns — those runes are spent and the card goes to your discard for that duel. The Spellbook remembers every shape you have made; for the rest it knows only which runes they take.</p>
+    <p><b>${known}</b> of ${page.length} sigils known · ${prof.matches} duels · ${prof.wins} won</p>
+    <div class="book sig">${page.map((x) => {
+      if (!x.known) return `<div class="bk sg unknown"><span class="q">?</span><div><span class="bc">undiscovered</span><span class="bh">${x.size} runes: ${esc(runeList(x))}</span></div></div>`;
+      const d = CARDS[x.id];
+      const ink = SCHOOL_INK[d?.kind === 'golem' ? 'golem' : d?.school] || '#ccc';
+      return `<div class="bk sg"><span class="sgbox">${sigilMiniHTML(x.sigil, ink)}</span><div><span class="bc" style="color:${ink}">${esc(x.name)}</span><span class="bh">${x.size} runes · ${d?.kind === 'golem' ? `golem, tier ${d.tier}` : d?.kind === 'artifact' ? 'artifact' : d?.kind === 'trap' ? 'trap' : `${d?.school} spell`}</span></div></div>`;
     }).join('')}</div>
     <div class="mbtns"><button id="close" class="primary">Close</button></div>`);
   $('#close').onclick = closeModal;
@@ -1705,7 +1839,8 @@ function openRules() {
     <p><b>Units:</b> click a unit, then anywhere inside its blue circle to walk there; click a red-ringed enemy to strike; the mage can summon a golem beside itself. Mages have 5 life unless a passive raises it. Golem tiers cap how many are out at once: C three, B two, A one. A golem card that has deployed and then lost every unit is spent.</p>
     <p><b>Traps</b> are grey cards set <b>face down</b> into an empty grey corner. They have one side, no runes, never match and never turn. The first time its trigger is met on your <i>opponent's</i> turn — a spell about to hit your unit, an enemy walking up to your mage — the trap springs on its own: it is revealed, its reaction happens at once (an Earth Wall heaves up and takes the fireball instead of you), and it goes to your discard. Your opponent can see a trap is set, not which; their "destroy an enemy Spell" effects can clear it.</p>
     <p><b>Everything on the field can be affected.</b> Every rock, stone, crystal, wall and tree has weight and hit points: force spells throw them and crack them, fire lights the trees — and a burning tree bites everyone beside it each turn, then spreads. Climb walls, fall off ledges, shove rocks out from under people.</p>
-    <p><b>The Spellbook</b> remembers the ways you've found new spells, across every duel.</p>
+    <p><b>The sigil board:</b> every turn you are handed one rune and <b>set it on your 4 × 4 board</b> — any cell, over anything. Every findable card has a <b>sigil</b>, a small shape of three or four runes; the moment the rune you set completes one, in any of its four turns, those runes are spent and the spell is <b>found</b> — it goes to your discard for the rest of the duel. Choose where each rune goes so the shape you want closes before a smaller one eats its runes.</p>
+    <p><b>The Spellbook</b> remembers every sigil you have ever completed, across all your duels, and hints at which runes the rest take.</p>
     <p class="dim">Camera: drag to orbit, wheel to zoom, right-drag to pan, <b>H</b> to go home. <b>Right-click</b> a table card to see it big. <b>Tab</b> hides the panels. <b>Esc</b> cancels.</p>
     </div>
     <div class="mbtns"><button id="close" class="primary">Got it</button></div>`);
@@ -1743,6 +1878,8 @@ window.WG = {
 function boot() {
   buildTable(0);
   buildTable(1);
+  buildSigils(0);
+  buildSigils(1);
   $('#btn-new').onclick = openNewGame;
   $('#btn-book').onclick = openSpellbook;
   $('#btn-rules').onclick = openRules;

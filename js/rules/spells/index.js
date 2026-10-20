@@ -19,7 +19,7 @@ import './golems.js';
 import { validateGate } from '../gates.js';
 import { validateCost } from '../costs.js';
 import { validateObjective } from '../objectives.js';
-import { validateFinds } from '../learn.js';
+import { validateSigils } from '../learn.js';
 
 /**
  * Validate gates, costs and VP formulas AFTER every card is registered.
@@ -43,7 +43,7 @@ export function validateCorpus() {
       if (f.objective?.gate) validateGate(d.id, f.numeral, f.objective.gate);
     }
   }
-  validateFinds(allCards());
+  validateSigils(allCards());
   return true;
 }
 validateCorpus();
@@ -76,9 +76,9 @@ export const STANDARD_DECK = Object.freeze([
   'CLAY_HAND',
 ]);
 
-/** Everything that can be FOUND mid-match, with the condition that finds it. */
+/** Everything that can be FOUND mid-match, with the sigil that finds it. */
 export const FINDABLE = Object.freeze(
-  allCards().filter((d) => d.found).map((d) => ({ id: d.id, found: d.found })),
+  allCards().filter((d) => d.sigil).map((d) => ({ id: d.id, sigil: d.sigil })),
 );
 
 /**

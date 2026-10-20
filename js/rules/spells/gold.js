@@ -22,7 +22,7 @@ card({
   id: 'TALLY', name: 'Tally', school: 'gold',
   // Counting the cost, and finally collecting.
   runes: [SPIRAL, SHARD, LATTICE, SPIRAL],
-  found: null,
+  sigil: null,
   I:   { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   II:  { text: 'If 5 of your Spells were destroyed since this was played, discard a card and score 1 VP.',
          tag: 'break', cost: [{ id: 'discard', n: 1 }],
@@ -37,7 +37,7 @@ card({
   id: 'RECKONING', name: 'Reckoning', school: 'gold',
   // The bill for a long chain.
   runes: [LATTICE, SHARD, SHARD, SPIRAL],
-  found: null,
+  sigil: null,
   I:   { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
   II:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
   III: { text: 'If you killed 3 golem units since this was played, discard a card and score 2 VP.',
@@ -51,7 +51,7 @@ card({
   id: 'HIGH_SEAT', name: 'High Seat', school: 'gold',
   // Take the heights and hold them.
   runes: [WHEEL, WHEEL, SPIRAL, WHEEL],
-  found: 'climbHigh',
+  sigil: ['.W.', '.W.', '.WS', 'WW.'],
   I:   { text: 'Move a friendly unit to the nearest high ground.', ...M.toHighGround({ mm: 3000 }) },
   II:  { text: 'If your units climbed 4 times since this was played, score 1 VP.',
          tag: 'move', objective: { gate: { id: 'ledgerAtLeast', key: 'climbs', n: 4, since: true }, vp: { k: 'flat', n: 1 } } },
@@ -65,7 +65,7 @@ card({
   id: 'LEDGER_OF_ASH', name: 'Ledger of Ash', school: 'gold',
   // Every spell you burned, written down and paid for.
   runes: [SHARD, LATTICE, SPIRAL, SHARD],
-  found: 'ashes',
+  sigil: ['.LH', 'SLS', 'H..'],
   I:   { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
   II:  { text: 'If your discard holds 8 cards, discard 2 cards and score 1 VP.',
          tag: 'draw', cost: [{ id: 'discard', n: 2 }],
@@ -79,7 +79,7 @@ card({
   id: 'WARDEN_SEAL', name: 'Warden Seal', school: 'gold',
   // An army on the field, sealed into points.
   runes: [LATTICE, WHEEL, WHEEL, LATTICE],
-  found: 'twoGolems',
+  sigil: ['LWW.', '.LWL'],
   I:   { text: 'Your units take 1 less damage, to a minimum of 1.', ...M.passiveShield({ n: 1 }) },
   II:  { text: "If you have 3 units, spend a unit's action and score 1 VP.",
          tag: 'move', cost: [{ id: 'spendUnitAction' }],
@@ -94,7 +94,7 @@ card({
   id: 'BLOOD_TITHE', name: 'Blood Tithe', school: 'gold',
   // Blood owed, blood collected.
   runes: [SHARD, SHARD, WHEEL, SHARD],
-  found: 'bleedThem',
+  sigil: ['.H.', 'HHW', 'HH.'],
   I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
   II:  { text: 'Your mage takes 1 damage. Score 1 VP per 6 damage dealt since this was played, up to 2.',
          tag: 'break', cost: [{ id: 'mageWound', n: 1 }],
@@ -109,7 +109,7 @@ card({
   id: 'LAST_GAMBIT', name: 'Last Gambit', school: 'gold',
   // Everything on one throw, when you are losing.
   runes: [SHARD, SPIRAL, LATTICE, LATTICE],
-  found: 'comeback',
+  sigil: ['L.', 'LH', 'SL', '.H'],
   I:   { text: 'Destroy this Spell. Draw 2 cards.', ...M.destroySelf({ then: 'draw' }) },
   II:  { text: 'If this Spell has 2 Keywords, score 2 VP.',
          tag: 'draw', objective: { gate: { id: 'keywordsAtLeast', n: 2 }, vp: { k: 'flat', n: 2 } } },
@@ -124,7 +124,7 @@ card({
   id: 'ARCHIVE', name: 'Archive', school: 'gold',
   // A full table, catalogued.
   runes: [WHEEL, WHEEL, SPIRAL, LATTICE],
-  found: 'archived',
+  sigil: ['WS.', '.WL', '.LS'],
   I:   { text: 'Move a friendly unit to the nearest elevated position.', ...M.toHighGround({ mm: 3000 }) },
   II:  { text: 'If you have 4 units on the battlefield, discard a card and score 2 VP.',
          tag: 'move', cost: [{ id: 'discard', n: 1 }],
@@ -138,7 +138,7 @@ card({
   id: 'FIRST_LIGHT', name: 'First Light', school: 'gold',
   // Dawn, then a long day of turning.
   runes: [LATTICE, SHARD, WHEEL, SPIRAL],
-  found: 'firstLight',
+  sigil: ['.WL.', 'HLHW'],
   I:   { text: 'After you play a Spell, draw a card.', ...M.onPlayDraw({ n: 1 }) },
   II:  { text: 'At the start of your turn, deal 1 damage to an enemy within 3m.', ...M.onTurnStartDamage({ amount: 1, range: 3000 }) },
   III: { text: 'Push a terrain piece within 4m with force 3.', ...M.shoveTerrain({ force: 3, range: 4000 }) },

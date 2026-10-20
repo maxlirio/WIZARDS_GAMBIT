@@ -34,7 +34,7 @@ import { GATE_IDS, GATES } from '../js/rules/gates.js';
 import { COST_IDS, COSTS } from '../js/rules/costs.js';
 import { VP_FORMULA_IDS } from '../js/rules/objectives.js';
 import { KEYWORD_NAMES, HOOKS, KEYWORDS } from '../js/rules/keywords.js';
-import { FIND_IDS } from '../js/rules/learn.js';
+import { validateSigils } from '../js/rules/learn.js';
 import { EVENTS } from '../js/rules/triggers.js';
 import { SCHOOLS, FACE_KEYS } from '../js/rules/schema.js';
 import * as MOTIFS from '../js/rules/motifs.js';
@@ -90,7 +90,7 @@ const note = (bag, key, where) => {
 
 const cards = allCards();
 for (const d of cards) {
-  if (d.found) note('finds', d.found, d.id);
+  if (d.sigil) note('finds', d.id, `${d.sigil.length} runes`);
   for (const k of d.keywords) note('keywords', k, `${d.id} (printed)`);
   for (const f of d.faces) {
     const where = `${d.id}:${f.numeral}`;
@@ -145,7 +145,8 @@ section('motifs', 'motifs', MOTIF_NAMES, RESERVED.motifs);
 
 // Find conditions are checked the other way round too: learn.js already throws
 // at load if a condition is claimed by two cards or by none.
-ok(used.finds.size === FIND_IDS.length, `${FIND_IDS.length - used.finds.size} find conditions are claimed by no card`);
+ok(used.finds.size >= 40, `only ${used.finds.size} cards carry a sigil -- the Spellbook has little to find`);
+ok(validateSigils(allCards()) === used.finds.size, 'the sigils are not all distinct and containment-free');
 
 /* ------------------------------------------------- the hooks, from both ends */
 // REGISTERED by a keyword on a card, and CALLED by the engine. The second half

@@ -25,7 +25,6 @@ import { allCards, randomDeck } from '../js/rules/spells/index.js';
 import { createGame, apply, choose } from '../js/engine.js';
 import { chooseAction, answerFor } from '../js/ai/ai.js';
 import { seedRng, pick } from '../js/rules/rng.js';
-import { FINDS } from '../js/rules/learn.js';
 
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? Number(process.argv[i + 1]) : d; };
 const GAMES = arg('games', 12);
@@ -99,12 +98,9 @@ for (const d of allCards()) {
     if (f.objective?.vp?.k === 'perLedger' && f.objective.vp.key) cardReaders.get(f.objective.vp.key).push(`${d.id}:${f.numeral}`);
   }
 }
-// So does the Spellbook, and its conditions are pure counter reads.
+// The Spellbook used to read counters too (its finds were conditions); it
+// is a sigil board now and reads none.
 const findReaders = new Map(LEDGER_KEYS.map((k) => [k, []]));
-for (const [cond, f] of Object.entries(FINDS)) {
-  const src = strip(String(f.test));
-  for (const k of LEDGER_KEYS) if (new RegExp(`\\.\\s*${k}\\b`).test(src)) findReaders.get(k).push(cond);
-}
 
 /* ------------------------------------------------------------- real games */
 const moved = new Map(LEDGER_KEYS.map((k) => [k, 0]));

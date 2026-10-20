@@ -93,6 +93,8 @@ try {
 
   // The turn opens with the UNIT PHASE (units move before the spell action):
   // markers should be on the field, the mage walks, then 'Done moving'.
+  // The turn opens with the sigil question: answer it through the board, like a player.
+  if (await ev(`WG.state.pending?.request?.kind === 'sigil'`)) { const okc = await clickSel('#sigils0 .sigcell.askable'); console.log('  answered the sigil question by clicking a board cell:', okc); await waitIdle(); }
   const phase = await ev('WG.state.phase');
   if (phase === 'unit' && !(await ev('!!WG.state.pending'))) {
     await sleep(600);

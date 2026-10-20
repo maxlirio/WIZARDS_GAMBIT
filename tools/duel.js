@@ -30,7 +30,7 @@ import { TIER_CAP } from '../js/rules/golems.js';
 import { heightAt, propR, propTop, propSpec, propOnBoard, ARENA_W, ARENA_H } from '../js/field/arena.js';
 import { livingUnits, mageOf } from '../js/field/query.js';
 import { seedRng, pick } from '../js/rules/rng.js';
-import { FINDS, FIND_IDS, spellbookPage } from '../js/rules/learn.js';
+import { spellbookPage } from '../js/rules/learn.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -243,7 +243,8 @@ function narrate(state, f) {
     case 'strike': return `      strikes ${unitName(state, f.to)} for ${f.amount}${f.edge ? ' (+1 high ground)' : ''}`;
     case 'move': return `  ${unitName(state, f.id)} moves ${f.mm}mm`;
     case 'respawn': return `  p${f.p}'s mage ${paint('respawns', C.bold)}`;
-    case 'found': return `  p${f.p} ${paint('learns', C.green)} ${CARDS[f.defId]?.name || f.defId} -- ${FINDS[f.why]?.text || f.why}`;
+    case 'sigil': return `  ${paint('SIGIL', C.green)}: p${f.p} completes ${CARDS[f.defId]?.name || f.defId}'s sigil`;
+    case 'found': return `  p${f.p} ${paint('learns', C.green)} ${CARDS[f.defId]?.name || f.defId}${f.taken === false ? ' (not taken)' : ''}`;
     case 'golemSpent': return `  ${name(state, f.uid)} is spent and goes to p${f.p}'s discard`;
     case 'terrainRemoved': return `      removes terrain ${f.id} until end of turn`;
     case 'levitate': return `      raises terrain ${f.id} by ${f.mm}mm`;
@@ -392,13 +393,11 @@ console.log(paint(`\n WIZARD'S GAMBIT  seed ${SEED}  ${A} vs ${B}  arena: ${stat
 console.log(paint(` p0 deck: ${state.players[0].deck.concat(state.players[0].hand).map((c) => defOf(state, c).name).sort().join(', ')}`, C.dim));
 if (BOOK) {
   const known = Object.keys(book.learned).length;
-  console.log(paint(` your Spellbook: ${known}/${FIND_IDS.length} ways known, ${book.matches} matches played, ${book.wins} won`, C.green));
-  if (known && known < FIND_IDS.length) {
+  const page = spellbookPage(Object.values(CARDS), book.learned);
+  console.log(paint(` your Spellbook: ${known}/${page.length} sigils known, ${book.matches} matches played, ${book.wins} won`, C.green));
+  for (const x of page.filter((e) => e.known).slice(0, 3)) {
     // Three you already know, as a reminder of what you can aim this match at.
-    // The Spellbook is knowledge, so showing it is the whole point of keeping it.
-    const some = Object.entries(book.learned).slice(0, 3)
-      .map(([cond, id]) => `${FINDS[cond]?.text || cond} -> ${CARDS[id]?.name || id}`);
-    for (const line of some) console.log(paint(`   ${line}`, C.dim));
+    console.log(paint(`   ${x.name}: ${x.sigil.map((c) => `${c.r[0]}@${c.x},${c.y}`).join(' ')}`, C.dim));
   }
 }
 
@@ -476,15 +475,15 @@ if (BOOK) {
   const fresh = [];
   for (const f of state.fx) {
     if (f.kind !== 'found' || f.p !== HUMAN || !f.why) continue;
-    if (book.learned[f.why] === f.defId) continue;
-    book.learned[f.why] = f.defId;
-    fresh.push(`${FINDS[f.why]?.text || f.why} -> ${CARDS[f.defId]?.name || f.defId}`);
+    if (book.learned[f.defId] === f.why) continue;
+    book.learned[f.defId] = f.why;
+    fresh.push(`${CARDS[f.defId]?.name || f.defId} (${f.why})`);
   }
   book.matches++;
   if (state.winner === HUMAN) book.wins++;
   try {
     writeFileSync(BOOK, JSON.stringify(book, null, 1));
-    console.log(paint(`\n your Spellbook (${BOOK}): ${Object.keys(book.learned).length}/${FIND_IDS.length} ways known`, C.green));
+    console.log(paint(`\n your Spellbook (${BOOK}): ${Object.keys(book.learned).length} sigils known`, C.green));
     for (const line of fresh) console.log(paint(`   learned: ${line}`, C.green));
     if (!fresh.length) console.log(paint('   nothing new this match', C.dim));
   } catch (e) {

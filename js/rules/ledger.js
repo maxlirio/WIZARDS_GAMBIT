@@ -99,9 +99,12 @@ export const DIAGNOSTIC = Object.freeze([
   'golemCardsLost', 'objectivesScored', 'vpFromObjectives', 'vpFromKills',
   'unitsLost', 'mageDeaths', 'forcedRotations', 'artifactsPlayed', 'golemsPlayed',
   'spellsPlayed',
-  // propsBroken and firesLit WERE instruments; the red terrain cards'
-  // Spellbook conditions (rubble, wildfire) now read them, so they are game
-  // counters like any other.
+  // These were read by the Spellbook's find conditions until the Spellbook
+  // became a sigil board (2026-10-20). Kept as instruments: selfplay reports
+  // them, and a future gold gate may read any of them again.
+  'shifts', 'enemySpellsDestroyed', 'cardsDiscarded', 'chainLinks', 'summons', 'moves',
+  'attacks', 'unitsPushed', 'pushMm', 'fallsCaused', 'terrainPushMm', 'terrainImpacts',
+  'knockdowns', 'unitsBurned', 'highGroundEnds', 'magesKilled',
 ]);
 
 export const bump = (ledger, key, by = 1) => {

@@ -45,7 +45,7 @@ import { beginTurn, endTurn } from './rules/turn.js';
 import { makeMage, unitActions, doUnitAction, pendingUnits, canMoveTo, settleMageLife } from './rules/units.js';
 import { seedRng, save as saveRng, shuffle } from './rules/rng.js';
 import { CARDS, STANDARD_DECK, FINDABLE } from './rules/spells/index.js';
-import { checkFinds } from './rules/learn.js';
+import { drawPiece, placePiece, emptyBoard, BOARD_CELLS } from './rules/sigils.js';
 import { makeArena, makeProps } from './field/arena.js';
 import { resolveFalls, recheckSupport } from './field/move.js';
 
@@ -127,7 +127,7 @@ export function createGame(opts = {}) {
      * narrow it (or empty it) without touching the corpus -- and so the engine
      * has no opinion about which cards exist.
      */
-    findable: opts.findable || FINDABLE.map((f) => ({ id: f.id, found: f.found })),
+    findable: opts.findable || FINDABLE.map((f) => ({ id: f.id, sigil: f.sigil })),
     arena: makeArena(seed),
     field: null,
   };
@@ -149,6 +149,7 @@ export function createGame(opts = {}) {
       ledger: emptyLedger(),
       objectives: {},
       foundThisMatch: [],
+      sigils: emptyBoard(),
     };
   }
 
@@ -332,6 +333,7 @@ function runWork(state, item) {
   if (item.kind === 'trigger') return runTrigger(state, item);
   if (item.kind === 'onDestroy') return runOnDestroy(state, item);
   if (item.kind === 'sweep') return runSweep(state, item);
+  if (item.kind === 'sigil') return runSigil(state, item);
   if (item.kind === 'played' || item.kind === 'turned' || item.kind === 'shifted') return runChanged(state, item);
   if (item.kind === 'find') return runFind(state, item);
   throw new Error(`unknown work item '${item.kind}'`);
@@ -364,6 +366,20 @@ function* runOnDestroy(state, item) {
 /** A dead mage's spell table goes to the discard, once the board is whole again. */
 function* runSweep(state, item) {
   ops.sweepTable(state, item.p);
+  return true;
+}
+
+/**
+ * The turn's rune is set on the sigil board: one question -- which cell --
+ * then whatever it completes is found (sigils.js). The rune was drawn at
+ * turn start; it waits on the player until this runs.
+ */
+function* runSigil(state, item) {
+  const b = state.players[item.p].sigils;
+  if (b.piece === null) return true;
+  const cells = Array.from({ length: BOARD_CELLS }, (_, i) => i);
+  const idx = yield ask.by(item.p, ask.pick(cells, { prompt: `Set the ${b.piece.toLowerCase()} rune on your sigil board`, kind: 'sigil', labels: cells.map((i) => `row ${Math.floor(i / 4) + 1}, column ${(i % 4) + 1}`) }));
+  placePiece(state, item.p, idx === null ? 0 : idx);
   return true;
 }
 
@@ -457,11 +473,6 @@ export function pump(state) {
     recheckSupport(state);
     if (state.field.pendingFalls.length) { resolveFalls(state, hurt); continue; }
     if (state.winner !== null) return state;
-    // The Spellbook, checked only at rest. A find that fired mid-chain would be
-    // reading a board that does not exist yet and would put a card in the
-    // discard in the middle of a replay.
-    if (checkFinds(state)) continue;
-
     // Units act first; when every unit has acted the spell action opens, and
     // the turn ends once that one action is spent.
     if (state.phase === 'unit' && !pendingUnits(state, state.active).length) { state.phase = 'spell'; continue; }
@@ -548,6 +559,7 @@ export function hashState(state) {
     parts.push(`${p}x[${pl.discard.map((c) => c.def).join(',')}]`);
     parts.push(`${p}L[${Object.keys(pl.ledger).sort().map((k) => pl.ledger[k]).join(',')}]`);
     parts.push(`${p}O[${Object.keys(pl.objectives).sort().join(',')}]`);
+    parts.push(`${p}S[${pl.sigils.cells.map((c) => (c ? c[0] : '.')).join('')}:${pl.sigils.piece ?? '-'}]`);
   }
   parts.push(hashField(state));
   return fnv(parts.join(';'));
