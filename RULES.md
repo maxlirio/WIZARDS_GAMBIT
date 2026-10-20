@@ -450,8 +450,10 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
   happens next is **rigid-body motion**, simulated by the engine in integer
   millimetres at 32 steps a second (so two machines in lockstep see the same
   trajectory). The force sets a launch speed: on the flat, a body of mass *m* that
-  SLIDES comes to rest after `force × 0.75m / m` — a mage (mass 1) the whole way, a
-  wall a sixth. Golem units weigh their tier: A 3, B 2, C 1.
+  SLIDES comes to rest after `force × 1m / m` — a mage (mass 1) the whole way, a
+  wall a sixth. Golem units weigh their tier: A 3, B 2, C 1. The force is an
+  impulse, so a body that does not slide is launched just as hard and goes where its
+  own friction lets it.
 - **Rolling:** a **boulder rolls**. It loses speed only to rolling resistance (a fifth
   of sliding friction), so the same launch carries it several times further; it
   **speeds up downhill** and slows uphill, **flies off a cliff edge** and lands with a

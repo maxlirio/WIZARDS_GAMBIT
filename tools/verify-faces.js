@@ -43,6 +43,7 @@ import { refresh, DERIVED_KEYS } from '../js/rules/derive.js';
 import { HOME, CELL_COLOR, CELLS } from '../js/rules/table.js';
 import { NUMERALS, activeIndex, rotFor } from '../js/rules/orient.js';
 import { keywordsOf, KEYWORD_NAMES } from '../js/rules/keywords.js';
+import { FORCE_MM } from '../js/field/push.js';
 import { TIER_CAP } from '../js/rules/golems.js';
 import { livingUnits, mageOf, findUnit } from '../js/field/query.js';
 import { placeBody } from '../js/field/move.js';
@@ -84,11 +85,11 @@ export function claimsOf(def, face) {
   if (dmg) c.push({ kind: 'damage', n: Number(dmg[1]) });
 
   // "Push a unit within 3m with force 4." -- the distance is the range; the
-  // force buys a mass-1 body force x 750mm of travel, and nothing may travel
+  // force buys a mass-1 body force x FORCE_MM of travel, and nothing may travel
   // further than that. "Relocate ... up to 3m" / "Raise ... by 1m" still
   // print a bare distance.
   const force = t.match(/with force (\d)/);
-  if (force) c.push({ kind: 'travel', mm: Number(force[1]) * 750 });
+  if (force) c.push({ kind: 'travel', mm: Number(force[1]) * FORCE_MM });
   // WHICH WAY. "toward you" / "to you" / "toward your mage" means every body
   // that moved ended nearer the caster's mage; "away from you(r mage)" means
   // farther. A pull that went the other way passed every other claim.
@@ -1150,7 +1151,7 @@ const TRAP_REACTION = {
     const was = Math.hypot(before.theirsX - st.mine.x, before.theirsY - st.mine.y);
     const now = Math.hypot(st.theirs.x - st.mine.x, st.theirs.y - st.mine.y);
     if (now <= was + 300) return [FAIL, `prints "flung away" but the mover is ${Math.round(now)}mm away, was ${Math.round(was)}`];
-    if (now - was > 4 * 750 + 150) return [FAIL, `force 4 buys 3000mm but the mover travelled ${Math.round(now - was)}`];
+    if (now - was > 4 * FORCE_MM + 150) return [FAIL, `force 4 buys ${4 * FORCE_MM}mm but the mover travelled ${Math.round(now - was)}`];
     return [PASS, ''];
   },
 };

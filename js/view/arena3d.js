@@ -458,7 +458,8 @@ export function createArena(host, state, handlers = {}) {
             if (!rock.userData.rest) rock.userData.rest = { q: rock.quaternion.clone(), p: rock.position.clone() };
             rock.userData.roll ||= new THREE.Quaternion();
             d.roll = rock.userData.roll;
-            d.centre = new THREE.Vector3(0, rock.userData.rest.p.y + d.m.userData.h * 0.5, 0);
+            // The stone group's origin IS its centre when props.js says so.
+            d.centre = rock.userData.centre ? rock.userData.centre.clone() : new THREE.Vector3(0, rock.userData.rest.p.y + d.m.userData.h * 0.5, 0);
           }
         }
         if (moves || rises) fx.dust(d.x, d.y, d.z, { n: 8, size: 0.45, spread: d.r * MM, up: 0.8 });

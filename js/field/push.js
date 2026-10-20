@@ -9,7 +9,7 @@
 // What it DOES model, since 2026-10-18:
 //
 //   FORCE, not distance. A push is an impulse `force` (1..8). A body of mass m
-//   slides force x 750 / m millimetres: a mage (mass 1) the whole way, a
+//   slides force x 1000 / m millimetres: a mage (mass 1) the whole way, a
 //   boulder (2) half, a standing stone (4) a quarter, a wall (6) a sixth.
 //
 //   MOTION. What happens after the launch is `dynamics.js`: a rigid body
@@ -39,8 +39,12 @@ import { hurt } from '../rules/combat.js';
 import { fx } from '../rules/ops.js';
 import { bump } from '../rules/ledger.js';
 
-/** The slide one point of force gives a body of mass 1. */
-export const FORCE_MM = 750;
+/**
+ * The slide one point of force gives a body of mass 1. Was 750: pushes
+ * "barely did anything" (user), and a boulder's roll was being launched at
+ * its rolling friction, so it rolled exactly its sliding budget.
+ */
+export const FORCE_MM = 1000;
 /** An impact this hard knocks a unit down: it loses its action this turn. */
 export const KNOCKDOWN_DMG = 2;
 /** Golem units by tier. The mage is 1. */

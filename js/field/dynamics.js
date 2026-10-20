@@ -29,7 +29,7 @@
 //            climb: a rise too tall is a wall, and hitting it hurts.
 //   STATIC   whatever is not pushable (an earth wall). Infinite mass.
 //
-// The force law is the printed one: force f on mass m buys f x 750 / m mm of
+// The force law is the printed one: force f on mass m buys f x 1000 / m mm of
 // SLIDING on the flat (travelFor). Launch speed is derived from that through
 // the sliding friction, so a unit still lands where the card says; a sphere,
 // which only loses speed to rolling resistance, goes several times further
@@ -107,8 +107,15 @@ function decelOf(rec) {
   return DEC_SLIDE;
 }
 
-/** Launch speed that slides `mm` on the flat against this body's friction, rounded up. */
-export const speedForTravel = (rec, mm) => (mm <= 0 ? 0 : isqrt(2 * decelOf(rec) * mm) + 1);
+/**
+ * Launch speed for a travel budget: the speed at which a SLIDING body comes
+ * to rest after `mm` on the flat. The force law is an impulse, so every body
+ * is launched by the sliding law whatever its own friction -- which is what
+ * makes a boulder an event: the same launch rolls five times as far, and a
+ * floating rock glides nearly twice. (Launching at the body's own friction
+ * made a boulder roll exactly its sliding budget: "barely does anything".)
+ */
+export const speedForTravel = (rec, mm) => (mm <= 0 ? 0 : isqrt(2 * DEC_SLIDE * mm) + 1);
 
 /* ------------------------------------------------------------ records */
 

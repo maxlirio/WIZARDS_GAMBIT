@@ -22,7 +22,7 @@
 // burning tree must char without the forest going black with it.
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { propSpec, propR, propH } from '../field/arena.js';
 import { pickLod } from './assets.js';
 import { menhir } from './world.js';
@@ -97,6 +97,73 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     out.computeBoundingBox(); out.computeBoundingSphere();
     cache.set(geo, out);
     return out;
+  }
+
+  /**
+   * A CLOSED rock from a bake's top shell: the shell mirrored across the
+   * plane where it is widest, squashed a little, so the stone has an
+   * underside and can come to rest on any face (user: "they need entire
+   * meshes, not just on the top"). The mirror reads as the same rock
+   * continued, with the same texture; its winding is flipped and the whole
+   * thing is welded and re-lit as one surface.
+   */
+  const closedCache = new WeakMap();
+  function closedRock(geo, { k = 0.85, waist = 0.22 } = {}) {
+    if (closedCache.has(geo)) return closedCache.get(geo);
+    const src = geo.index ? geo : geo.toNonIndexed();
+    const pos = src.attributes.position, uv = src.attributes.uv;
+    const idx = src.index ? Array.from(src.index.array) : Array.from({ length: pos.count }, (_, i) => i);
+    let ymin = Infinity, ymax = -Infinity;
+    for (let i = 0; i < pos.count; i++) { ymin = Math.min(ymin, pos.getY(i)); ymax = Math.max(ymax, pos.getY(i)); }
+    // The mirror plane sits where the rock is widest, not at its base: the
+    // bakes narrow a little in their bottom band (and their texture darkens
+    // there), and mirrored at the base that band became a waist with a dark
+    // crease round it. Everything below the plane is pressed up onto it --
+    // those faces end up inside the closed stone, unseen.
+    const plane = ymin + (ymax - ymin) * waist;
+    const n = pos.count;
+    const P = new Float32Array(n * 6), U = uv ? new Float32Array(n * 4) : null;
+    for (let i = 0; i < n; i++) {
+      const x = pos.getX(i), y = Math.max(plane, pos.getY(i)), z = pos.getZ(i);
+      P.set([x, y, z], i * 3);
+      P.set([x, plane - (y - plane) * k, z], (n + i) * 3);
+      if (U) { U.set([uv.getX(i), uv.getY(i)], i * 2); U.set([uv.getX(i), uv.getY(i)], (n + i) * 2); }
+    }
+    const I = new Uint32Array(idx.length * 2);
+    for (let t = 0; t < idx.length; t += 3) {
+      I.set([idx[t], idx[t + 1], idx[t + 2]], t);
+      I.set([n + idx[t], n + idx[t + 2], n + idx[t + 1]], idx.length + t);   // flipped
+    }
+    let out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(P, 3));
+    if (U) out.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+    out.setIndex(new THREE.BufferAttribute(I, 1));
+    // Welded along the seam (same position, same uv) and re-lit, or the
+    // equator shows as a crease where the shell's normals meet the mirror's.
+    out = mergeVertices(out);
+    out.computeVertexNormals();
+    out.computeBoundingBox(); out.computeBoundingSphere();
+    closedCache.set(geo, out);
+    return out;
+  }
+
+  /**
+   * The whole stone of a boulder, closed and fitted to the engine's sphere:
+   * as wide as the diameter and a little proud of it, centred on the group's
+   * origin so the arena can turn it about its centre when it rolls.
+   */
+  function wholeStone(which, r, tint) {
+    const { g } = rockModel(which, { solo: true });
+    g.traverse((o) => { if (o.isMesh) { o.geometry = closedRock(o.geometry); o.material = o.material.clone(); o.material.color.setHex(tint); } });
+    g.scale.set(1, 1, 1); g.position.set(0, 0, 0);
+    const box = new THREE.Box3().setFromObject(g);
+    const size = box.getSize(new THREE.Vector3());
+    const sxz = (2 * r * 1.18) / Math.max(size.x, size.z);
+    const sy = THREE.MathUtils.clamp((2 * r * 1.1) / size.y, sxz * 0.8, sxz * 1.25);
+    g.scale.set(sxz, sy, sxz);
+    const c = box.getCenter(new THREE.Vector3());
+    g.position.set(-c.x * sxz, -c.y * sy, -c.z * sxz);
+    return g;
   }
 
   /**
@@ -223,28 +290,31 @@ export function createPropFactory({ gltfs, quality = 'high' }) {
     const { r, h, seed, rnd, body } = P;
     const which = ['boulderA', 'boulderB', 'boulderC'][seed % 3];
     const tint = [0xf2efe8, 0xcfdcbd, 0xe3d6b8, 0xc9cfd8][(seed >> 3) % 4];
-    const rock = fittedRock(which, r, h, { tint });
-    rock.rotation.y = (seed % 7) * 0.9;
     // The bake is the stone plus its companions (grass tufts, a pebble),
-    // separate islands of triangles. The STONE goes into a group the arena
-    // turns when the boulder rolls, with the moss that grows on it; the
-    // companions keep the same fit but stay in `body`, on the grass, or
-    // they would orbit the rolling rock.
-    const tufts = rock.clone();
-    rock.traverse((o) => { if (o.isMesh) o.geometry = soloIsland(o.geometry); });
+    // separate islands of triangles. The STONE -- closed, so it has an
+    // underside to come to rest on -- goes into a group the arena turns
+    // about its centre when the boulder rolls, with the moss that grows on
+    // it; the companions keep the bake's fit and stay in `body`, on the
+    // grass, or they would orbit the rolling rock.
+    const rock = wholeStone(which, r, tint);
+    rock.rotation.y = (seed % 7) * 0.9;
+    const tufts = fittedRock(which, r, h, { tint });
+    tufts.rotation.y = rock.rotation.y;
     tufts.traverse((o) => { if (o.isMesh) o.geometry = soloIsland(o.geometry, { rest: true }); });
     const roll = new THREE.Group();
-    roll.position.y = -h * 0.07;              // settled in, not resting on the grass
+    const cy = r * 0.92;                       // the sphere's centre, settled in a little
+    roll.position.y = cy;
     roll.add(rock);
+    roll.userData.centre = roll.position.clone();
     body.add(roll);
-    tufts.position.y += roll.position.y;
+    tufts.position.y -= h * 0.07;
     body.add(tufts);
     P.rock = roll;
     // Moss on the shaded side of a mossy rock; the chips knocked off it
     // (shown one by one as the damage mounts) lie on the ground around.
     if (tint === 0xcfdcbd) {
       const moss = [];
-      for (let i = 0; i < 4; i++) moss.push([MOSS, r * (0.22 + rnd() * 0.12), { x: (rnd() - 0.5) * r * 1.2, y: h * (0.3 + rnd() * 0.5), z: -r * 0.75 - rnd() * 0.15, flat: 0.35 }]);
+      for (let i = 0; i < 4; i++) moss.push([MOSS, r * (0.22 + rnd() * 0.12), { x: (rnd() - 0.5) * r * 1.2, y: h * (0.3 + rnd() * 0.5) - cy, z: -r * 0.75 - rnd() * 0.15, flat: 0.35 }]);
       roll.add(lumps(mats.lump, moss, rnd));
     }
     const chips = [];
