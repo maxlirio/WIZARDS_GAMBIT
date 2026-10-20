@@ -80,7 +80,7 @@ card({
   // An army on the field, sealed into points.
   runes: [LATTICE, WHEEL, WHEEL, LATTICE],
   found: 'twoGolems',
-  I:   { text: 'Your units take 1 less damage.', ...M.passiveShield({ n: 1 }) },
+  I:   { text: 'Your units take 1 less damage, to a minimum of 1.', ...M.passiveShield({ n: 1 }) },
   II:  { text: "If you have 3 units, spend a unit's action and score 1 VP.",
          tag: 'move', cost: [{ id: 'spendUnitAction' }],
          objective: { gate: { id: 'unitsAtLeast', n: 3 }, vp: { k: 'flat', n: 1 } } },

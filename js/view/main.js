@@ -496,6 +496,7 @@ function flushFx() {
         t += 300; break;
       case 'turnStart': banner(f.p); break;
       case 'respawn': t += 400; break;
+      case 'swept': t += 600; break;
       case 'win': { const p = f.p; later(t + 300, () => cues().cheer(p)); break; }
       case 'move': t += 120; break;
       default: break;
@@ -576,6 +577,7 @@ function narrate(f) {
     case 'strike': return `&nbsp;&nbsp;⚔ ${esc(unitName(f.from ?? f.id))} strikes ${esc(unitName(f.to))} for ${f.amount}${f.edge ? ' (high ground)' : ''}`;
     case 'move': return null;
     case 'respawn': return `${P(f.p)} mage respawns`;
+    case 'swept': return `<span class="red">${P(f.p)} spell table is swept into the discard</span> — ${f.uids.length} card${f.uids.length === 1 ? '' : 's'}`;
     case 'found': return `${P(f.p)} <span class="green">learn${f.p === HUMAN ? '' : 's'} ${esc(CARDS[f.defId]?.name || f.defId)}</span> — ${esc(FINDS[f.why]?.text || f.why)}${f.taken === false ? ' <i>(not taken)</i>' : ''}`;
     case 'golemSpent': return `${N(f.uid)} is spent and goes to the discard`;
     case 'terrainRemoved': return `&nbsp;&nbsp;&nbsp;&nbsp;banishes a ${esc(propName(f.id))} until end of turn`;

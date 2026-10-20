@@ -372,11 +372,15 @@ never below 1 — turning a card away cannot kill your own mage. Moves 3m, attac
 adjacent enemies, summons golem units adjacent to itself, and acts as a **range
 origin** for most spells.
 
-When a mage dies the killer scores **2 VP**, and the mage **respawns at its owner's
+When a mage dies the killer scores **2 VP**, **every card on the dead mage's spell
+table goes to its owner's discard** — every stack, buried cards and set traps
+included; golem cards stay in their slots — and the mage **respawns at its owner's
 own starting circle at the start of that owner's next turn**, at full hit points.
+The sweep is not a destruction: `[Inevitable]` does not stop it, no "Spells destroyed"
+counter moves, and no parting Keyword fires.
 
-So dying costs 2 VP, a Unit Phase, all the ground you had taken, and — because the
-mage is a range origin — the reach of much of your spell table. Feeding your mage to
+So dying costs 2 VP, a Unit Phase, all the ground you had taken, and your whole
+spell table. Feeding your mage to
 the enemy is a real strategy and the design treats it as a measurable question:
 `mageVp` and `mageVpDecay` are knobs and `tools/selfplay.js` reports VP from kills
 against VP from objectives.

@@ -7,7 +7,7 @@
 // has no reason to import anything that moves.
 
 import { bump, high } from './ledger.js';
-import { fx, destroy, locate, extract, defOf } from './ops.js';
+import { fx, destroy, locate, extract, defOf, sweepTable } from './ops.js';
 import { emit, replaceEvent } from './triggers.js';
 import { awardKill } from './score.js';
 import { TIER_CAP } from './golems.js';
@@ -40,7 +40,11 @@ export function hurt(state, unit, amount, why = {}, redirects = 0) {
   // which is the only place that can work, because the alternative is every
   // damage site remembering to ask.
   const soak = applyFor(unitKeywords(state, unit), 'incoming', { amount });
-  const shielded = soak.amount - shieldOn(state, unit);
+  // A derived shield (Warden Seal) never takes a hit below ONE: it softens,
+  // it does not nullify (user: "to a minimum of one"). [Absorb] alone may
+  // still soak a single point away.
+  const shield = shieldOn(state, unit);
+  const shielded = shield > 0 && soak.amount > 0 ? Math.max(1, soak.amount - shield) : soak.amount;
   if (shielded <= 0) { fx(state, 'absorb', { id: unit.id, amount }); return 0; }
 
   const after = replaceEvent(state, 'afterDamage', {
@@ -89,6 +93,12 @@ export function kill(state, unit, why = {}) {
 
   if (unit.kind === 'mage') {
     bump(state.players[victim].ledger, 'mageDeaths');
+    // The dead mage's whole spell table goes to the discard (user: "when you
+    // die you lose all your spells into your discard that were on your spell
+    // table"). QUEUED, not done here: a mage can die in the middle of a chain
+    // link resolving a face of that very table, and the board is half-mutated.
+    if (state.queue) state.queue.push({ kind: 'sweep', p: victim, seq: ++state.actionSeq });
+    else sweepTable(state, victim);
     // "the mage respawns at its owner's own starting circle at the start of
     // that owner's next turn." Dying on your OWN turn costs you the turn after
     // next, which is the whole reason walking your mage into a fight is a real

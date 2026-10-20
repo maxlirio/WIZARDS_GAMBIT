@@ -237,6 +237,7 @@ function narrate(state, f) {
     case 'push': return f.body === 'unit' ? `      pushes ${unitName(state, f.id)} ${f.mm}mm` : `      shoves terrain ${f.id} ${f.mm}mm`;
     case 'falls': return `      ${paint('FALLS', C.bold)}: ${f.landed.map((l) => `${l.key} drops ${l.drop}mm`).join(', ')}`;
     case 'kill': return `  ${paint('KILLED', C.bold + C.red)}: p${f.p}'s ${f.victim}${f.by !== null ? ` by p${f.by}` : ''}`;
+    case 'swept': return `  ${paint('SWEPT', C.red)}: p${f.p}'s table (${f.uids.length} cards) goes to the discard`;
     case 'score': return `  ${paint(`+${f.amount} VP`, C.bold + C.gold)} to p${f.p} (${f.source})`;
     case 'summon': return `  p${f.p} summons ${name(state, f.uid)}`;
     case 'strike': return `      strikes ${unitName(state, f.to)} for ${f.amount}${f.edge ? ' (+1 high ground)' : ''}`;

@@ -331,6 +331,7 @@ function runWork(state, item) {
   if (item.kind === 'unit') return doUnitAction(state, item.action);
   if (item.kind === 'trigger') return runTrigger(state, item);
   if (item.kind === 'onDestroy') return runOnDestroy(state, item);
+  if (item.kind === 'sweep') return runSweep(state, item);
   if (item.kind === 'played' || item.kind === 'turned' || item.kind === 'shifted') return runChanged(state, item);
   if (item.kind === 'find') return runFind(state, item);
   throw new Error(`unknown work item '${item.kind}'`);
@@ -357,6 +358,12 @@ function* runOnDestroy(state, item) {
     },
   };
   fireFor(item.keywords, 'onDestroy', ctx, {});
+  return true;
+}
+
+/** A dead mage's spell table goes to the discard, once the board is whole again. */
+function* runSweep(state, item) {
+  ops.sweepTable(state, item.p);
   return true;
 }
 

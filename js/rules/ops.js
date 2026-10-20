@@ -409,6 +409,34 @@ export function destroy(state, uid, { by = null, byP = null } = {}) {
 }
 
 /**
+ * A MAGE HAS DIED: everything on its owner's spell table -- every stack,
+ * buried cards and set traps included -- goes to the discard. Not `destroy`:
+ * nobody destroyed them, [Inevitable] does not apply, no "Spells destroyed"
+ * counter moves and nothing's parting keyword fires. Golem cards sit in
+ * their slots, not on the table, and stay. Returns the uids swept.
+ */
+export function sweepTable(state, p) {
+  const pl = state.players[p];
+  const uids = [];
+  for (let c = 0; c < CELLS; c++) {
+    const stack = pl.table[c] || [];
+    while (stack.length) {
+      const card = stack.shift();
+      card.cell = null; card.rot = 0; card.keywords = []; card.noTurnUntil = null;
+      card.turnsThisAction = 0; card.concealed = false;
+      pl.discard.push(card);
+      uids.push(card.uid);
+    }
+  }
+  if (!uids.length) return uids;
+  state.derivedStale = true;
+  state.tableDirty[p] = false;
+  if (state.fresh) state.fresh[p] = [];
+  fx(state, 'swept', { p, uids });
+  return uids;
+}
+
+/**
  * A TRAP SPRINGS. Its reaction has already run (traps.js); this is the card
  * leaving the table: revealed, then into its owner's discard, its corner
  * freed. Not `destroy`: nobody destroyed it, it did its job, so it counts
