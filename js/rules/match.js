@@ -60,11 +60,11 @@ import { ask } from './driver.js';
 import {
   MATCH_SITES, SITE, VERTEX_CARDS, INTERIOR_SITES, CORNER_OF,
 } from './table.js';
-import { indexAt, activeIndex } from './orient.js';
-import { WILD } from './runes.js';
+import { activeIndex } from './orient.js';
 import { topOf, spellsOn, defOf, findSpell, turn, prohibited, fx, noteCards, REVOLUTION } from './ops.js';
-import { refresh, ensureFresh } from './derive.js';
-import { offerCopy } from './keywords.js';
+import { refresh } from './derive.js';
+import { runeAtCorner, runesMatch } from './corners.js';
+import { resonate, keywordsOf } from './keywords.js';
 import { resolveSide } from './resolve.js';
 import { bump, high } from './ledger.js';
 import { emit } from './triggers.js';
@@ -74,30 +74,7 @@ export const CHAIN_ASSERT = 64;
 
 export { REVOLUTION };
 
-/**
- * THE state-aware rune accessor. Nothing outside this file reads `def.runes`.
- *
- * Printed Resonis Orb -- "the corners of this Artifact count as any corner" --
- * is invisible to any matcher that goes straight to the data, and the failure
- * is silent: the card sits there looking implemented and simply never matches.
- * orient.js says so in its header and verify-faces.js plants exactly this fault.
- */
-export function runeAtCorner(state, spell, pos) {
-  // A trap has NO corners: face down, nothing shows, and even a wildcard
-  // beside it has nothing to agree with. `null` is "no rune here", and
-  // `runesMatch` below refuses it against everything, WILD included.
-  if (defOf(state, spell).kind === 'trap') return null;
-  const d = ensureFresh(state);
-  if (d.wildCorners.has(spell.uid)) return WILD;
-  const runes = d.runeOverride.get(spell.uid) || defOf(state, spell).runes;
-  return runes[indexAt(spell.rot, pos)];
-}
-
-/**
- * Do two touching corners match? A wildcard matches anything, including
- * another wildcard.
- */
-const runesMatch = (a, b) => a !== null && b !== null && (a === WILD || b === WILD || a === b);
+export { runeAtCorner, runesMatch, touching } from './corners.js';
 
 /**
  * Every site that matches right now.
@@ -217,31 +194,34 @@ export function* chainFrom(state, p, uid) {
     if (!s2 || prohibited(state, s2)) { fx(state, 'matchLocked', { vertex: hit.vertex, site: hit.site, uids: hit.uids }); continue; }
     if (s2.turnsThisAction >= REVOLUTION) { fx(state, 'matchExhausted', { vertex: hit.vertex, site: hit.site, uids: hit.uids }); continue; }
 
-    // The corners as they MET, read before the turn changes them: the HUD
-    // rings these on the copy offer so the player can see why it is asked.
-    const met = { uid, why: 'copy', sites: [{ uids: [...hit.uids], corners: cornersOf(state, p, hit) }] };
-
+    // The corners as they MET, read before the turn changes them, so the
+    // HUD can ring the two runes that agreed.
     noteCards(state, hit.uids);
-    fx(state, 'match', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: other, p });
+    fx(state, 'match', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: other, p, corners: cornersOf(state, p, hit) });
 
-    // The keyword copy comes FIRST -- before the neighbour turns, and so
-    // before the effect. Before the effect because putting [Ignore Height]
-    // on a push must change the push about to be made; before the turn
-    // because the offer is made while the two cards still SHOW the corners
-    // that matched (user: "it copies keywords AFTER the spell turns. It
-    // should be before").
-    yield* offerCopy(state, hit.uids, { match: met });
-    refresh(state);
+    // RESONANCE. The Keywords of each matched card are already on the other
+    // -- keywords.js derives that from the corners, nothing is asked and
+    // nothing is written -- so here the link only NOTES what crossed, for
+    // the log and the ledger. Then the neighbour's Keywords, as it stands
+    // matched, are CARRIED through the effect it is about to resolve: the
+    // turn will part the corners that met, and putting [Ignore Height] on a
+    // push must still change the push about to be made. (user: "it copies
+    // keywords AFTER the spell turns. It should be before")
+    resonate(state, hit.uids);
+    state.chain.carry = { uid: other, keywords: keywordsOf(state, s2) };
 
     // Mandatory and unconditional. A COLOUR LOCK DOES NOT STOP THIS -- the lock
     // restrains the player, not the board. Only a printed prohibition does.
-    turn(state, other, { dir: 'left', forced: true, silent: true });
+    // Not silent: the HUD plays every turn the chain makes (user: "sometimes
+    // its hard to catch how fast it moves").
+    turn(state, other, { dir: 'left', forced: true });
     bump(state.players[p].ledger, 'forcedRotations');
     refresh(state);
     emit(state, 'afterMatch', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: other, p });
 
     state.chain.resolutions++;
     yield* resolveSide(state, s2, activeIndex(s2), { chained: true });
+    state.chain.carry = null;
     refresh(state);
     if (state.winner !== null) break;
 

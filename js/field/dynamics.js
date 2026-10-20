@@ -73,6 +73,8 @@ export const DEC_GLIDE = 2500;
 const REST_SPHERE = 45, REST_WARD = 50, REST_WALL = 30, REST_LAND = 25;
 /** Momentum (mass x mm/s) per point of impact damage. */
 export const HIT_K = 2500;
+/** Below this speed a contact is a nudge: no hit, no damage, only the impulse. */
+export const HIT_MIN_SPEED = 300;
 /** Momentum per point when a rock comes DOWN on somebody. Harder than a side-on hit. */
 export const CRUMPLE_K = 3500;
 /** Nothing takes more than this from one impact. */
@@ -197,7 +199,13 @@ export function createSim(state, { byP = null, crush = false } = {}) {
     for (let i = f.length - 1; i >= fxStart; i--) { if (f[i].dynMs !== undefined) break; f[i].dynMs = ms; }
   }
 
-  /** Damage from an impact, through the one funnel. */
+  /**
+   * Damage from an impact, through the one funnel. Every hit that counts
+   * wounds for AT LEAST ONE (user: "make it just be to a minimum of one");
+   * `hitDmg` is the momentum law with that floor, and only a contact slower
+   * than HIT_MIN_SPEED escapes it, as a nudge rather than a hit.
+   */
+  const hitDmg = (m, speed) => imin(HIT_CAP, imax(1, idiv(m * speed, HIT_K)));
   function wound(t, rec, dmg, cause, dir) {
     if (dmg <= 0) return;
     dmg = imin(HIT_CAP, dmg);
@@ -260,7 +268,7 @@ export function createSim(state, { byP = null, crush = false } = {}) {
       const sp = speedOf(rec);
       if (rec.unit) {
         note(t, 'ward', rec, { speed: sp });
-        wound(t, rec, idiv(rec.m * sp, HIT_K), 'impact', bearing(0, 0, rec.vx, rec.vy));
+        if (sp >= HIT_MIN_SPEED) wound(t, rec, hitDmg(rec.m, sp), 'impact', bearing(0, 0, rec.vx, rec.vy));
         rec.vx = rec.vy = 0;
       } else {
         rec.vx = idiv(rec.vx * REST_WARD, 100); rec.vy = idiv(rec.vy * REST_WARD, 100);
@@ -319,7 +327,7 @@ export function createSim(state, { byP = null, crush = false } = {}) {
         else { rec.vx = -idiv(rec.vx * REST_WALL, 100); rec.vy = -idiv(rec.vy * REST_WALL, 100); }
         if (sp > 4500) wound(t, rec, 1, 'impact', dir);
       } else {
-        wound(t, rec, idiv(rec.m * sp, HIT_K), 'impact', dir);
+        if (sp >= HIT_MIN_SPEED) wound(t, rec, hitDmg(rec.m, sp), 'impact', dir);
         rec.vx = rec.vy = 0;
       }
       return;                                            // stays where it was
@@ -411,11 +419,12 @@ export function createSim(state, { byP = null, crush = false } = {}) {
       return;
     }
 
-    if (!recent) {
+    if (!recent && speed >= HIT_MIN_SPEED) {
       // Damage: each side takes the OTHER's momentum, a static thing hits
-      // you with your own. [Crush] doubles what the pushed body deals.
+      // you with your own, and a hit is never for less than one. [Crush]
+      // doubles what the pushed body deals.
       const ma = aStatic ? b.m : a.m, mb = bStatic ? a.m : b.m;
-      let dmgToA = idiv(mb * speed, HIT_K), dmgToB = idiv(ma * speed, HIT_K);
+      let dmgToA = hitDmg(mb, speed), dmgToB = hitDmg(ma, speed);
       if (crush) { if (a.hit) dmgToB *= 2; if (b.hit) dmgToA *= 2; }
       note(t, 'hit', a, { into: b.key, speed, dmg: imin(HIT_CAP, imax(dmgToA, dmgToB)) });
       wound(t, a, dmgToA, 'impact', dir);

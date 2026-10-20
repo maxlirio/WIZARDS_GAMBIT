@@ -26,7 +26,7 @@ import { activeIndex, NUMERALS } from '../rules/orient.js';
 import { runeAtCorner, findMatches } from '../rules/match.js';
 import { SITE } from '../rules/table.js';
 import { gateProgress, counted } from '../rules/gates.js';
-import { keywordsOf, KEYWORDS } from '../rules/keywords.js';
+import { keywordsOf, keywordSources, KEYWORDS } from '../rules/keywords.js';
 import { TIER_CAP } from '../rules/golems.js';
 import { FINDS, FIND_IDS, spellbookPage } from '../rules/learn.js';
 import { seedRng, pick } from '../rules/rng.js';
@@ -71,6 +71,7 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   seatLayout();
   fxSeen = 0; sel = null; someChosen = []; matchOver = false;
   angles.clear();
+  pendingTurns.clear();
   for (const p of [0, 1]) for (const el of document.querySelectorAll(`#table${p} .cell`)) el.dataset.uid = '';
   $('#log').innerHTML = '';
   arena?.dispose();
@@ -149,7 +150,9 @@ async function drive() {
       } else break;
       const ms = flushFx();
       render();
-      await sleep(FAST ? 0 : Math.min(2600, 250 + ms));
+      // Long enough for a chain's turns to play out, one second each, so
+      // the next move does not land on a card still spinning.
+      await sleep(FAST ? 0 : Math.min(6000, 250 + ms));
     }
   } catch (e) {
     console.error(e);
@@ -398,7 +401,12 @@ function flushFx() {
         t += 300;
         break;
       }
-      case 'rotate': t += 120; break;
+      // A TURN IS PLAYED, never snapped: the card lifts, glows in its
+      // school's colour and spins a quarter over a second, the new numeral
+      // pops as the face comes round, and only then does the chain go on
+      // (user: "sometimes its hard to catch how fast it moves. Make it so
+      // that there are cool animations for each spell as they turn").
+      case 'rotate': { const note = f; pendingTurns.set(note.uid, (pendingTurns.get(note.uid) || 0) + 1); later(t, () => playTurn(note)); t += TURN_MS + 120; break; }
       case 'play': case 'golemCard': t += 150; break;
       case 'destroy': t += 150; break;
       case 'damage': {
@@ -538,7 +546,7 @@ function narrate(f) {
     case 'rotate': return `↺ ${N(f.uid)} turns ${f.dir} to <b>${NUMERALS[f.rot]}</b>`;
     case 'shift': return `⇄ ${N(f.uid)} shifts from cell ${f.from} to ${f.to}`;
     case 'destroy': return `✕ ${N(f.uid)} is destroyed`;
-    case 'match': return `<span class="gold">✦ MATCH</span> — ${f.uids.map(N).join(' + ')}${f.chosen ? `; ${N(f.chosen)} turns` : ''}`;
+    case 'match': return `<span class="gold">✦ MATCH</span> — ${f.uids.map(N).join(' + ')}`;
     case 'matchLocked': return `<i>a match is locked — nothing there may turn</i>`;
     case 'matchExhausted': return `<i>a match has nothing left that may turn</i>`;
     case 'resolveStart': {
@@ -548,7 +556,7 @@ function narrate(f) {
     }
     case 'gateUnmet': return `&nbsp;&nbsp;&nbsp;&nbsp;<i>inert — ${esc(f.text || 'its condition is unmet')}</i>`;
     case 'fizzle': return `&nbsp;&nbsp;&nbsp;&nbsp;<i>fizzles — the cost was not paid</i>`;
-    case 'keywordCopy': return `&nbsp;&nbsp;&nbsp;&nbsp;copies <span class="kw">[${esc(f.kw)}]</span> onto ${N(f.to)}`;
+    case 'keywordCopy': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">[${esc(f.kw)}]</span> resonates from ${N(f.from)} onto ${N(f.to)}`;
     case 'keywordGrant': return `&nbsp;&nbsp;&nbsp;&nbsp;grants <span class="kw">[${esc(f.kw)}]</span> to ${N(f.uid)}`;
     case 'damage': return `&nbsp;&nbsp;&nbsp;&nbsp;<span class="red">${f.amount} damage</span> to ${esc(unitName(f.id))}${f.cause && f.cause !== 'spell' ? ` (${esc(f.cause)})` : ''}`;
     case 'carry': return `&nbsp;&nbsp;&nbsp;&nbsp;${esc(unitName(f.id))} rides the ${esc(propName(f.on))} ${m(f.mm)}`;
@@ -658,15 +666,82 @@ function banner(p) {
 
 const angles = new Map();   // uid -> {rot, deg}: so a turn spins the short way
 
+/** Advance a tracked angle to `rot` the short way round. */
+function advanceAngle(a, rot) {
+  if (a.rot === rot) return;
+  const d = (((rot - a.rot) % 4) + 4) % 4;
+  a.deg += d === 3 ? 90 : -90 * d;
+  a.rot = rot;
+}
+/**
+ * The angle a table card is DRAWN at. While a turn cue is still owed for
+ * the card (the engine has already turned it; the timeline has not reached
+ * that moment), the drawn angle waits for the cue, so a chain of three turns
+ * is three turns on screen and not one snap.
+ */
 function bodyAngle(sp) {
   const a = angles.get(sp.uid);
   if (!a) { const deg = -90 * sp.rot; angles.set(sp.uid, { rot: sp.rot, deg }); return deg; }
-  if (a.rot !== sp.rot) {
-    const d = (((sp.rot - a.rot) % 4) + 4) % 4;
-    a.deg += d === 3 ? 90 : -90 * d;
-    a.rot = sp.rot;
-  }
+  if (!pendingTurns.get(sp.uid)) advanceAngle(a, sp.rot);
   return a.deg;
+}
+
+/** How long one quarter-turn takes on screen. flushFx paces the chain by it. */
+const TURN_MS = 1000;
+const pendingTurns = new Map();   // uid -> turn cues not yet played
+
+/**
+ * One quarter-turn of a table card, as a cue. The card lifts and glows,
+ * the body spins over TURN_MS, the centre swaps to the new face as it
+ * comes round and the numeral pops; a ring sweeps the cell meanwhile.
+ */
+function playTurn(f) {
+  const left = (pendingTurns.get(f.uid) || 1) - 1;
+  if (left > 0) pendingTurns.set(f.uid, left); else pendingTurns.delete(f.uid);
+  const sp = findSpell(S, f.uid);
+  const a = angles.get(f.uid) || { rot: f.rot, deg: -90 * f.rot };
+  angles.set(f.uid, a);
+  advanceAngle(a, f.rot);
+  if (!sp || sp.cell === null || sp.cell === undefined) return;
+  const cell = document.querySelector(`#table${sp.owner} .cell[data-cell="${sp.cell}"]`);
+  const card = cell?.querySelector('.card.on-table');
+  const body = card?.querySelector('.cbody');
+  if (!body) return;
+  const def = defOf(S, sp);
+  if (FAST) { body.style.transform = `rotate(${a.deg}deg)`; return; }
+  const my = gameId;
+  cell.classList.add('turning');
+  card.classList.add('turning');
+  card.style.setProperty('--turn-ms', `${TURN_MS}ms`);
+  body.style.transition = `transform ${TURN_MS}ms cubic-bezier(.4,1.25,.45,1)`;
+  body.style.transform = `rotate(${a.deg}deg)`;
+  const ring = document.createElement('div');
+  ring.className = 'turnring';
+  ring.innerHTML = `<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" pathLength="100"/></svg><div class="turnnum">${NUMERALS[f.rot]}</div>`;
+  cell.appendChild(ring);
+  // The face comes round: the centre shows the new side and its numeral pops.
+  timers.push(setTimeout(() => {
+    if (my !== gameId) return;
+    const kws = kwList(sp);
+    const printed = [0, 1, 2, 3].map((pos) => def.runes[(pos + f.rot) & 3]);
+    const runes = a.rot === sp.rot ? [0, 1, 2, 3].map((pos) => runeAtCorner(S, sp, pos)) : printed;
+    const centre = card.querySelector('.ccentre');
+    if (centre) centre.innerHTML = centreSVG(def, f.rot & 3, { keywords: kws, runes, printed, quests: questPips(sp, def) });
+    ring.classList.add('shown');
+  }, TURN_MS * 0.45));
+  timers.push(setTimeout(() => {
+    cell.classList.remove('turning');
+    card.classList.remove('turning');
+    body.style.transition = '';
+    ring.remove();
+  }, TURN_MS + 150));
+}
+
+/** A card's Keywords for drawing: its own in gold, the resonating ones plain. */
+function kwList(sp) {
+  const { own, resonant } = keywordSources(S, sp);
+  return [...own.map((kw) => ({ kw, own: true })), ...resonant.map((r) => ({ kw: r.kw, own: false, from: r.from }))]
+    .sort((x, y) => x.kw.localeCompare(y.kw));
 }
 
 function buildTable(p) {
@@ -792,12 +867,13 @@ function renderTable(p) {
     }
     const body = slot.querySelector('.cbody');
     body.style.transform = `rotate(${bodyAngle(sp)}deg)`;
-    const kws = keywordsOf(S, sp);
+    const kws = kwList(sp);
     const runes = [0, 1, 2, 3].map((pos) => runeAtCorner(S, sp, pos));
     const printed = [0, 1, 2, 3].map((pos) => def.runes[(pos + sp.rot) & 3]);
     const hot = (S.pending?.request?.match?.sites || []).flatMap((site) => site.corners).filter((c) => c.uid === sp.uid).map((c) => c.pos);
     const quests = questPips(sp, def);
-    slot.querySelector('.ccentre').innerHTML = centreSVG(def, activeIndex(sp), { keywords: kws, runes, printed, hot, quests });
+    // Mid-turn the centre belongs to the cue: it swaps the face itself.
+    if (!pendingTurns.get(sp.uid)) slot.querySelector('.ccentre').innerHTML = centreSVG(def, activeIndex(sp), { keywords: kws, runes, printed, hot, quests });
     const depth = stackAt(S, p, c).length - 1;
     const bits = [];
     if (depth > 0) bits.push(`<span title="cards buried beneath">▤${depth}</span>`);
@@ -913,7 +989,7 @@ function peekSpell(sp) {
   const def = defOf(S, sp);
   if (sp.concealed && HUMAN !== null && sp.owner !== HUMAN) { peekMarkup(`<div class="card"><div class="cbody">${cardBackSVG()}</div></div>`); return; }
   if (def.kind === 'trap') { peekMarkup(`<div class="card"><div class="cbody">${cardSVG(def)}</div></div>`); return; }
-  const kws = keywordsOf(S, sp);
+  const kws = kwList(sp);
   const runes = [0, 1, 2, 3].map((pos) => runeAtCorner(S, sp, pos));
   const printed = [0, 1, 2, 3].map((pos) => def.runes[(pos + sp.rot) & 3]);
   const quests = questPips(sp, def);
@@ -938,12 +1014,18 @@ function inspectSpell(sp) {
     showInspector();
     return;
   }
-  inspectDef(def, activeIndex(sp), keywordsOf(S, sp), sp);
+  inspectDef(def, activeIndex(sp), kwList(sp), sp);
 }
 
+/**
+ * `kws` are `{kw, own, from}` for a card on the table (its own Keywords in
+ * gold, the resonating ones plain, with the card they come from), or plain
+ * names for a card in the hand or the discard, which owns all it shows.
+ */
 function inspectDef(def, rot = 0, kws = null, card = null) {
-  const keys = kws || def.keywords || [];
-  const kwHtml = keys.map((k) => `<div class="kwline"><span class="kw">[${esc(k)}]</span> ${esc(KEYWORDS[k]?.text || '')}</div>`).join('');
+  const keys = (kws || def.keywords || []).map((k) => (typeof k === 'string' ? { kw: k, own: true } : k));
+  const kwHtml = keys.map((k) => `<div class="kwline"><span class="kw${k.own ? ' own' : ''}">[${esc(k.kw)}]</span> ${esc(KEYWORDS[k.kw]?.text || '')}${
+    k.own ? '' : ` <i class="dim">— resonating${k.from !== null && k.from !== undefined ? ` from ${esc(cardName(k.from))}` : ' through this chain'}; it stays while the corners match</i>`}</div>`).join('');
   const school = def.kind === 'golem' ? 'golem' : def.school;
   let extra = '';
   if (card && card.cell !== undefined && card.cell !== null && card.owner !== undefined) {
@@ -1218,7 +1300,6 @@ function matchSentence(m) {
     return `${cardName(theirs.uid)} (its ${CORNER_NAME[theirs.pos]} corner against this card's ${CORNER_NAME[mine.pos]}, ${rune === 'WILD' ? 'wild' : RUNE_NAME[rune]})`;
   }).filter(Boolean);
   const names = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
-  if (m.why === 'copy') return `${me} matched ${names}; the neighbour has turned. The match lets a Keyword cross between the two — copy one, or copy nothing.`;
   return `${me} matches ${names}. Each neighbour will turn and resolve in the order you choose; the matched corners are ringed in gold.`;
 }
 
@@ -1618,7 +1699,7 @@ function openRules() {
     <p><b>The top face is active.</b> Cards land showing side I and resolve it as they are played; each left turn brings up the next face and resolves that. <b>Side IV is every card's payoff</b>; sides I–III build toward it, and most make you pay something to get there. Selecting a spell draws the range of the face it would turn to. You can only rotate a spell yourself while it sits on its own colour.</p>
     <p><b>Matches:</b> wherever two of your cards meet at a corner showing the <b>same rune</b>, they match. You must choose one of them; it rotates left and its new top face <b>resolves</b>. That can set off another match, and another — a chain. Each junction resonates once per chain, and a spell turns at most four times per action. A chain is mandatory, so it can hurt you.</p>
     <p class="runes">${R('SPIRAL')} Spiral — turning &amp; shifting &nbsp; ${R('SHARD')} Shard — destruction &amp; damage &nbsp; ${R('WHEEL')} Wheel — pushing &amp; terrain &nbsp; ${R('LATTICE')} Lattice — cards, keywords, scoring</p>
-    <p><b>[Keywords]</b> are copied onto the other card on a match — put [Ignore Height] on a push, [Poison] on a fireball.</p>
+    <p><b>[Keywords]</b> resonate: on a match, each card's Keywords cross onto the other by themselves and stay there <b>as long as those corners match</b> — put [Ignore Height] on a push, [Poison] on a fireball. A card's own Keywords are printed in <span class="kw own">gold</span>; the ones resonating from a neighbour in <span class="kw">purple</span>, and they fade when the corners part.</p>
     <p><b>Units:</b> click a unit, then anywhere inside its blue circle to walk there; click a red-ringed enemy to strike; the mage can summon a golem beside itself. Mages have 5 life unless a passive raises it. Golem tiers cap how many are out at once: C three, B two, A one. A golem card that has deployed and then lost every unit is spent.</p>
     <p><b>Traps</b> are grey cards set <b>face down</b> into an empty grey corner. They have one side, no runes, never match and never turn. The first time its trigger is met on your <i>opponent's</i> turn — a spell about to hit your unit, an enemy walking up to your mage — the trap springs on its own: it is revealed, its reaction happens at once (an Earth Wall heaves up and takes the fireball instead of you), and it goes to your discard. Your opponent can see a trap is set, not which; their "destroy an enemy Spell" effects can clear it.</p>
     <p><b>Everything on the field can be affected.</b> Every rock, stone, crystal, wall and tree has weight and hit points: force spells throw them and crack them, fire lights the trees — and a burning tree bites everyone beside it each turn, then spreads. Climb walls, fall off ledges, shove rocks out from under people.</p>

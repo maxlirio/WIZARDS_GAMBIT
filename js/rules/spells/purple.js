@@ -59,7 +59,7 @@ card({
   runes: [WHEEL, SHARD, LATTICE, SHARD],
   found: 'copyThree',
   I:   { text: 'Grant a Spell [Impact].', ...M.grantKeyword({ kw: 'Impact' }) },
-  II:  { text: '1 damage per Keyword you have copied this duel, up to 3.',
+  II:  { text: '1 damage per Keyword that has resonated onto your Spells this duel, up to 3.',
          ...M.damagePerLedger({ key: 'keywordsCopied', per: 1, cap: 3, range: 3500 }) },
   III: { text: "Discard a card. Resolve a friendly Spell's face, adding adjacent Keywords.",
          cost: [{ id: 'discard', n: 1 }], ...M.spliceResolve() },

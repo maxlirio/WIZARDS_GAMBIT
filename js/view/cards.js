@@ -312,7 +312,15 @@ function centreMarkup(def, rot, kws, ink, { quests = false } = {}) {
     }
   }
   if (kws.length) {
-    centre += `<text x="500" y="${def.kind === 'golem' ? 760 : KW_Y}" text-anchor="middle" class="ckw">${esc(kws.map((k) => `[${k}]`).join(' '))}</text>`;
+    // A Keyword the card OWNS (printed, or granted by an effect) is gold; one
+    // RESONATING from a matched neighbour is the plain purple, and goes when
+    // the corners part. A bare name owns itself.
+    const spans = kws.map((k) => {
+      const name = typeof k === 'string' ? k : k.kw;
+      const own = typeof k === 'string' ? true : k.own;
+      return `<tspan class="${own ? 'own' : 'res'}">[${esc(name)}]</tspan>`;
+    });
+    centre += `<text x="500" y="${def.kind === 'golem' ? 760 : KW_Y}" text-anchor="middle" class="ckw">${spans.join('<tspan> </tspan>')}</text>`;
   }
 
   return centre;

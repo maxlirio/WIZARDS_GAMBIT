@@ -231,7 +231,7 @@ function narrate(state, f) {
     case 'resolveStart': return `    ${paint(`${CARDS[f.def]?.name || f.def} ${f.numeral}`, C.bold)}: ${CARDS[f.def]?.faces?.[NUMERALS.indexOf(f.numeral)]?.text || ''}`;
     case 'gateUnmet': return `      ${paint('inert', C.dim)} -- ${f.text || 'the gate is unmet'} (the rotation stands)`;
     case 'fizzle': return `      ${paint('fizzles', C.dim)} -- ${f.cost} was not paid`;
-    case 'keywordCopy': return `      copies [${paint(f.kw, C.purple)}] from ${name(state, f.from)} to ${name(state, f.to)}`;
+    case 'keywordCopy': return `      [${paint(f.kw, C.purple)}] resonates from ${name(state, f.from)} onto ${name(state, f.to)}`;
     case 'keywordGrant': return `      grants [${paint(f.kw, C.purple)}] to ${name(state, f.uid)}`;
     case 'damage': return `      ${paint(`${f.amount} damage`, C.red)} to ${unitName(state, f.id)}${f.cause !== 'spell' ? ` (${f.cause})` : ''}`;
     case 'push': return f.body === 'unit' ? `      pushes ${unitName(state, f.id)} ${f.mm}mm` : `      shoves terrain ${f.id} ${f.mm}mm`;

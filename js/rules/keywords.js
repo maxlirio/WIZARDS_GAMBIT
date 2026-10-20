@@ -17,7 +17,7 @@
 import { defOf, fx, findSpell } from './ops.js';
 import { grantedOn, lostOn, ensureFresh } from './derive.js';
 import { bump } from './ledger.js';
-import { ask } from './driver.js';
+import { touching } from './corners.js';
 
 /** The most copied keywords one instance may carry. */
 export const MAX_KEYWORDS = 4;
@@ -119,19 +119,70 @@ for (const [name, k] of Object.entries(KEYWORDS)) {
 /* ------------------------------------------------------------ reading */
 
 /**
- * A spell's keywords: printed on the card, plus copied onto this instance, plus
- * granted by somebody's passive, minus anything taken away.
- *
- * Recomputed on every query and never written back. Sorted and unique at the
- * exit, once, so no caller has to remember.
+ * The Keywords a card OWNS: printed on it, granted onto this instance by a
+ * card effect, or granted by somebody's passive -- minus anything taken away.
+ * The HUD prints these in gold.
  */
-export function keywordsOf(state, spell) {
+export function ownKeywords(state, spell) {
   if (!spell) return [];
   ensureFresh(state);
   const printed = defOf(state, spell)?.keywords || [];
   const all = new Set([...printed, ...(spell.keywords || []), ...grantedOn(state, spell.uid)]);
   for (const k of lostOn(state, spell.uid)) all.delete(k);
   return [...all].sort();
+}
+
+/**
+ * RESONANCE. A Keyword crosses a match on its own and stays on the other card
+ * for exactly as long as the corners agree (user: "the keywords AUTOMATICALLY
+ * transfer, but they ONLY remain on a not original spell as long as there is
+ * a match in edges"). Derived from the corners on every query and never
+ * written, so a turn, a shift or a destroy that parts the corners takes the
+ * Keyword with it, with no bookkeeping to forget.
+ *
+ * One hop: only what a neighbour OWNS crosses, never what it is itself
+ * resonating, so there is no fixpoint to iterate and no ring of three cards
+ * handing one Keyword round for ever. Returns `[{kw, from}]`, sorted.
+ *
+ * The one exception is the chain's CARRY: the Keywords a card holds as it is
+ * matched stay on it through the effect that match sets off, because the
+ * forced turn parts the very corners that met, and the whole point of the
+ * mechanic is that [Ignore Height] arriving on a push changes THAT push.
+ */
+export function resonantKeywords(state, spell) {
+  if (!spell) return [];
+  const own = new Set(ownKeywords(state, spell));
+  const lost = new Set(lostOn(state, spell.uid));
+  const out = new Map();
+  for (const t of touching(state, spell)) {
+    const other = findSpell(state, t.uid);
+    for (const kw of ownKeywords(state, other)) {
+      if (own.has(kw) || lost.has(kw) || out.has(kw)) continue;
+      out.set(kw, t.uid);
+    }
+  }
+  const carry = state.chain?.carry;
+  if (carry && carry.uid === spell.uid) {
+    for (const kw of carry.keywords) if (!own.has(kw) && !lost.has(kw) && !out.has(kw)) out.set(kw, null);
+  }
+  return [...out].map(([kw, from]) => ({ kw, from })).sort((a, b) => a.kw.localeCompare(b.kw));
+}
+
+/** For the HUD: `{own, resonant:[{kw, from}]}` -- gold and plain. */
+export function keywordSources(state, spell) {
+  return { own: ownKeywords(state, spell), resonant: resonantKeywords(state, spell) };
+}
+
+/**
+ * A spell's keywords: owned plus resonating. Recomputed on every query and
+ * never written back. Sorted and unique at the exit, once, so no caller has
+ * to remember.
+ */
+export function keywordsOf(state, spell) {
+  if (!spell) return [];
+  const own = ownKeywords(state, spell);
+  const res = resonantKeywords(state, spell);
+  return res.length ? [...own, ...res.map((r) => r.kw)].sort() : own;
 }
 
 export const has = (state, spell, kw) => keywordsOf(state, spell).includes(kw);
@@ -177,59 +228,28 @@ export function fireFor(names, hook, ctx, payload) {
   }
 }
 
-/* ------------------------------------------------------------ copying */
+/* ------------------------------------------------------------ resonance */
 
 /**
- * The match's keyword copy, offered ONCE PER LINK and BEFORE the effect
- * resolves.
- *
- * Before, because the whole point of the mechanic is that putting [Ignore
- * Height] on a push changes the push you are about to make. Offered after, it
- * would only ever affect some later turn, and your own cards' phrasing ("cast a
- * levitate spell on a pushing spell") is about this turn.
- *
- * A generator, because it asks questions, so it has to be able to park.
+ * A match has formed between these cards: note every Keyword that is now
+ * crossing it, for the log, the HUD and the ledger (printed purple faces
+ * count "Keywords copied this duel"). The Keywords themselves are already
+ * there -- derived above -- so this writes nothing onto a card.
  */
-export function* offerCopy(state, uids, { match = null } = {}) {
+export function resonate(state, uids) {
   const spells = uids.map((u) => findSpell(state, u)).filter(Boolean);
-  if (spells.length < 2) return false;
-
-  // Only keywords that are actually somewhere, and only onto a card that does
-  // not already have them. An offer with nothing behind it is a question the
-  // player cannot answer, and the driver answers a zero-option request null --
-  // but asking it at all costs a click and a replay step.
-  const pairs = [];
+  let n = 0;
   for (const from of spells) {
-    for (const kw of keywordsOf(state, from)) {
-      for (const to of spells) {
-        if (to.uid === from.uid) continue;
-        if (keywordsOf(state, to).includes(kw)) continue;
-        if ((to.keywords || []).length >= MAX_KEYWORDS) continue;
-        pairs.push({ kw, from: from.uid, to: to.uid });
+    for (const to of spells) {
+      if (to.uid === from.uid) continue;
+      const have = new Set(ownKeywords(state, to));
+      for (const kw of ownKeywords(state, from)) {
+        if (have.has(kw)) continue;
+        bump(state.players[to.owner].ledger, 'keywordsCopied');
+        fx(state, 'keywordCopy', { kw, from: from.uid, to: to.uid });
+        n++;
       }
     }
   }
-  if (!pairs.length) return false;
-  pairs.sort((a, b) => a.kw.localeCompare(b.kw) || a.from - b.from || a.to - b.to);
-
-  // The ANSWER IS AN INDEX, never a label. A label is a display string that a
-  // future rename changes, and an answer is recorded in `pending.answers` and
-  // replayed on every subsequent question -- so a recorded label is a saved
-  // game that breaks when the wording of a prompt is edited.
-  const options = [-1, ...pairs.map((_, i) => i)];
-  // Labels name the CARDS. "Inevitable: 12 to 14" told the player nothing
-  // about why the question had appeared; the match that earned the offer is
-  // passed along so the HUD can ring the corners that met.
-  const name = (u) => defOf(state, findSpell(state, u)).name;
-  const labels = ['(copy nothing)', ...pairs.map((x) => `[${x.kw}] from ${name(x.from)} onto ${name(x.to)}`)];
-  const choice = yield ask.pick(options, { prompt: 'Copy a Keyword?', labels, kind: 'copy', match });
-  if (choice === null || choice < 0) return false;
-  const picked = pairs[choice];
-  if (!picked) return false;
-
-  const to = findSpell(state, picked.to);
-  to.keywords = [...new Set([...(to.keywords || []), picked.kw])].sort();
-  bump(state.players[to.owner].ledger, 'keywordsCopied');
-  fx(state, 'keywordCopy', { kw: picked.kw, from: picked.from, to: picked.to });
-  return true;
+  return n;
 }

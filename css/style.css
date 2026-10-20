@@ -119,6 +119,20 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .cell.askable { border-color: #ffe066; box-shadow: 0 0 0 2px #ffe066, 0 0 26px #ffe066aa; animation: beckon 1.1s ease-in-out infinite; }
 .cell.selected { box-shadow: 0 0 0 2px var(--p0), 0 0 26px var(--p0); }
 .cell.hint { box-shadow: 0 0 0 2px #fff, 0 0 30px #ffe066; }
+/* A TURN being played: the cell glows its colour, the card lifts and spins,
+   a ring sweeps round and the new numeral pops as the face comes up. */
+.cell.turning { z-index: 4; border-color: var(--cc); box-shadow: 0 0 0 2px var(--cc), 0 0 34px var(--cc), inset 0 0 34px color-mix(in srgb, var(--cc) 55%, transparent); }
+.card.on-table.turning { animation: cardLift var(--turn-ms, 1000ms) cubic-bezier(.4,0,.3,1); }
+.card.on-table.turning .cbody { filter: drop-shadow(0 0 10px var(--cc)); }
+.turnring { position: absolute; inset: -5px; pointer-events: none; }
+.turnring svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; transform: rotate(-90deg); }
+.turnring circle { fill: none; stroke: var(--cc); stroke-width: 3.5; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100; animation: turnArc var(--turn-ms, 1000ms) cubic-bezier(.4,0,.3,1) forwards; filter: drop-shadow(0 0 6px var(--cc)); }
+.turnnum { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.4); font: 900 54px Cinzel, serif; color: #fff; text-shadow: 0 0 14px var(--cc), 0 0 30px var(--cc), 0 2px 4px #000; opacity: 0; pointer-events: none; }
+.table.small .turnnum { font-size: 38px; }
+.turnring.shown .turnnum { animation: numPop 620ms cubic-bezier(.2,.9,.3,1) forwards; }
+@keyframes cardLift { 0% { transform: scale(1); } 45% { transform: scale(1.18) translateY(-5px); filter: brightness(1.3) drop-shadow(0 16px 16px #000d); } 100% { transform: scale(1); } }
+@keyframes turnArc { 0% { stroke-dashoffset: 100; opacity: 1; } 80% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+@keyframes numPop { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.4); } 25% { opacity: 1; transform: translate(-50%, -50%) scale(1.25); } 60% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.1) translateY(-10px); } }
 .cell.flash-match { animation: flashMatch 1.2s ease-out; }
 .cell.flash-resolve { animation: flashResolve 1.2s ease-out; }
 .cell.actable::after { content: ''; position: absolute; inset: -1px; border-radius: 9px; box-shadow: 0 0 0 1px #ffcf5a66, 0 0 12px #ffcf5a33; pointer-events: none; }
@@ -137,6 +151,8 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .ctr.nxt { fill: #a69b84; font-size: 38px; font-weight: 500; }
 .nxl { font: 700 26px Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; opacity: .8; }
 .ckw { font: 600 42px Inter, sans-serif; fill: #d9b2ff; }
+.ckw .own { fill: #ffd166; }
+.kw.own { color: var(--gold); }
 .active-edge { filter: drop-shadow(0 0 12px currentColor); }
 
 /* ------------------------------------------------------------ golems & piles */

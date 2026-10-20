@@ -230,23 +230,39 @@ times a trigger fires.
 If every card in a matched group is under a prohibition, the vertex is spent and
 nothing happens.
 
-### Keywords on a match
+### Keywords on a match: resonance
 
-Once per link, you may **copy one Keyword** from one matched card to another. The copy
-is offered **before** the effect resolves, so putting `[Ignore Height]` on a push
-changes the push you are about to make. That is the point of the mechanic.
+Keywords **resonate** across a match by themselves. Wherever two of your cards meet
+corner to corner showing the same rune, each card has the other's Keywords — and keeps
+them **for exactly as long as those corners match**. A turn, a shift or a destruction
+that parts the corners takes the resonating Keyword with it. Nothing is asked and
+nothing is written onto the card; it is read off the corners every time.
+
+Resonance is **one hop**: only a Keyword a card *owns* (printed, or granted by an
+effect) crosses to its neighbour; a Keyword that is itself only resonating does not
+travel on. A card's own Keywords are shown in **gold**, resonating ones in plain purple.
+
+The one exception is the link itself: the Keywords a card holds *as it is matched* stay
+on it through the effect that match sets off, even though the forced turn parts the
+corners that met. So putting `[Ignore Height]` on a push changes the push you are about
+to make. That is the point of the mechanic.
+
+The ledger counts every Keyword that crosses at a link (printed purple `Tally`-style
+faces read "Keywords copied this duel").
 
 ---
 
 ## 6. Keywords
 
-Printed Keywords are **card-level**. Copied ones live on the **instance**. Granted
-ones are **derived** (printed `Link`: *"the Spell to the left of this Spell has the
-keywords of the Spell to the right of this Spell"*).
+Printed Keywords are **card-level**. Ones granted by an effect ("Grant a Spell
+[Crush]") live on the **instance**. Ones granted by a passive are **derived** (printed
+`Link`: *"the Spell to the left of this Spell has the keywords of the Spell to the right
+of this Spell"*). Those three are what a card **owns**, drawn in gold. Resonating ones
+(§5) are derived from the corners and drawn in purple.
 
-A spell's Keywords are recomputed on every query — printed, plus copied, plus
-granted, minus lost — and **never written onto the card**. An instance's copied list
-is sorted, unique, capped at 4, and cleared when the spell leaves the table.
+A spell's Keywords are recomputed on every query — owned, plus resonating, minus lost —
+and **never written onto the card**. An instance's granted list is sorted, unique,
+capped at 4, and cleared when the spell leaves the table.
 
 Effects never test for a Keyword by hand. They build a descriptor and pass it through
 one funnel, so a new Keyword works on every existing face the day it is registered:
@@ -443,7 +459,8 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
   rocks glide. Everything else — units, shards, standing stones, walls — slides and
   stops.
 - **Impacts:** bodies collide. Each takes damage from the **other's momentum** (mass ×
-  speed, 1 point per 2.5 mass·m/s, at most 5), so a rolling boulder hurts more than a
+  speed, 1 point per 2.5 mass·m/s, **never less than 1**, at most 5; a contact slower
+  than 0.3 m/s is a nudge, not a hit), so a rolling boulder hurts more than a
   thrown shard and a fast body more than a slow one; a thing that cannot move (an
   earth wall, the arena's ward, a rise too tall to climb) hits you with your own. The
   struck body is knocked on along the line of contact, sharing momentum by mass — a

@@ -56,9 +56,9 @@ export const FINDS = Object.freeze({
   banedThem:    { text: 'Destroy two enemy Spells.', test: (s, p) => L(s, p).enemySpellsDestroyed >= 2 },
 
   /* ---------------------------------------------------------------- purple */
-  spliceTwice:  { text: 'Copy five Keywords in one duel.', test: (s, p) => L(s, p).keywordsCopied >= 5 },
+  spliceTwice:  { text: 'Have five Keywords resonate across matches in one duel.', test: (s, p) => L(s, p).keywordsCopied >= 5 },
   linked:       { text: 'Control a Spell carrying three Keywords.', test: (s, p) => spellsOn(s, p).some((sp) => keywordsOf(s, sp).length >= 4) },
-  copyThree:    { text: 'Copy twelve Keywords in one duel.', test: (s, p) => L(s, p).keywordsCopied >= 12 },
+  copyThree:    { text: 'Have twelve Keywords resonate across matches in one duel.', test: (s, p) => L(s, p).keywordsCopied >= 12 },
   prismatic:    { text: 'Control Spells of four different schools at once.', test: (s, p) => new Set(spellsOn(s, p).map((sp) => defOf(s, sp).school)).size >= 5 },
   threeKeywords:{ text: 'Resolve a chain of four links.', test: (s, p) => L(s, p).longestChain >= 4 },
 
