@@ -22,21 +22,21 @@ card({
 
 card({
   id: 'SNARE', name: 'Snare', school: 'grey', kind: 'trap',
-  sigil: ['W.', 'LS'],
+  sigil: ['WL.', '.SW'],
   I: { text: 'TRAP: an enemy unit ending a move within 2m of your mage takes 1 damage and loses its next action.',
        ...T.trapSnare({ range: 2000, amount: 1 }) },
 });
 
 card({
   id: 'BACKLASH', name: 'Backlash', school: 'grey', kind: 'trap',
-  sigil: ['HSH'],
+  sigil: ['WLS', '.L.'],
   I: { text: 'TRAP: when an enemy Spell or unit damages your unit, the enemy mage takes 1 damage.',
        ...T.trapBacklash({ amount: 1 }) },
 });
 
 card({
   id: 'SPRING_TRAP', name: 'Spring Trap', school: 'grey', kind: 'trap',
-  sigil: ['.H', 'WS'],
+  sigil: ['WWW', '.S.'],
   I: { text: 'TRAP: an enemy unit ending a move within 1.5m of your unit is flung away from it with force 4.',
        ...T.trapSpring({ range: 1500, force: 4 }) },
 });

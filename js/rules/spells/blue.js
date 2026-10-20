@@ -30,7 +30,7 @@ card({
   // Lift the stones -- and then let one go on somebody's head.
   keywords: ['Ignore Height'],
   runes: [WHEEL, SPIRAL, WHEEL, WHEEL],
-  sigil: ['WWS'],
+  sigil: ['.WS', 'WS.'],
   I:   { text: 'Raise a terrain piece within 4m by 1m.', ...M.liftTerrain({ mm: 1000, range: 4000 }) },
   II:  { text: 'Remove a terrain piece within 5m until end of turn.', ...M.banishTerrain({ range: 5000 }) },
   III: { text: 'Put the top 2 cards of your deck into your discard. Relocate a friendly unit up to 3m.',
@@ -43,7 +43,7 @@ card({
   id: 'UNDERTOW', name: 'Undertow', school: 'blue',
   // A current that drags everything toward you.
   runes: [WHEEL, WHEEL, LATTICE, WHEEL],
-  sigil: ['L.', 'LW'],
+  sigil: ['WL', 'WW'],
   I:   { text: 'Pull an enemy unit within 4m toward you with force 2.', ...M.pull({ force: 2, range: 4000 }) },
   II:  { text: 'Discard a card. Pull an enemy unit within 5m toward you with force 4.',
          cost: [{ id: 'discard', n: 1 }], ...M.pull({ force: 4, range: 5000 }) },
@@ -56,7 +56,7 @@ card({
   // The ground itself, moving. The last face is an earthquake that does not
   // care whose units are standing near you.
   runes: [SPIRAL, WHEEL, WHEEL, WHEEL],
-  sigil: ['WS', 'W.'],
+  sigil: ['.W', '.W', 'SS'],
   I:   { text: 'Push a terrain piece within 4m with force 3.', ...M.shoveTerrain({ force: 3, range: 4000 }) },
   II:  { text: 'Raise a stone wall within 2m of your mage.', ...M.raiseWall({ mm: 2000 }) },
   III: { text: 'Destroy a Spell you control. Push a terrain piece within 5m with force 5.',
@@ -70,7 +70,7 @@ card({
   // Speed, ending in a single enormous leap.
   keywords: ['Swift'],
   runes: [WHEEL, WHEEL, LATTICE, WHEEL],
-  sigil: ['L', 'W', 'L'],
+  sigil: ['..W', 'WWL'],
   I:   { text: 'Your units move 1m further.', ...M.passiveUnitMove({ mm: 1000 }) },
   II:  { text: 'Relocate a friendly unit up to 3m.', ...M.relocate({ mm: 3000, range: 4000 }) },
   III: { text: 'Discard a card. Grant a Spell [Swift].',
@@ -83,7 +83,7 @@ card({
   // Gravity, reversed and then restored. The payoff throws an enemy three
   // metres up and lets the ground do the damage.
   runes: [SHARD, WHEEL, WHEEL, WHEEL],
-  sigil: ['H', 'W', 'H'],
+  sigil: ['WW', '.H', '.W'],
   I:   { text: 'If an enemy is within 2.5m, deal 1 damage to it.',
          gate: { id: 'enemyInRange', mm: 2500 }, ...M.damage({ amount: 1, range: 2500 }) },
   II:  { text: 'Pull an enemy unit within 4m toward you with force 3.', ...M.pull({ force: 3, range: 4000 }) },
@@ -96,7 +96,7 @@ card({
   id: 'FULCRUM', name: 'Fulcrum', school: 'blue',
   // Leverage. The last face swaps two bodies, either side, anywhere in reach.
   runes: [SPIRAL, WHEEL, WHEEL, WHEEL],
-  sigil: ['WS', '.S'],
+  sigil: ['WS', 'W.', 'W.'],
   I:   { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
   II:  { text: 'Push a terrain piece within 4m with force 4.', ...M.shoveTerrain({ force: 4, range: 4000 }) },
   III: { text: 'Destroy a Spell you control. Push an enemy unit within 4m with force 4.',
@@ -108,7 +108,7 @@ card({
   id: 'TIDE_CALLER', name: 'Tide Caller', school: 'blue',
   // A wave you ride, and finally one that breaks somebody against the rocks.
   runes: [SHARD, WHEEL, WHEEL, WHEEL],
-  sigil: ['.H', 'WW'],
+  sigil: ['WWH', '..H'],
   I:   { text: 'After a friendly unit moves, deal 1 damage to an enemy within 3m.',
          ...M.onMoveDamage({ amount: 1, range: 3000 }) },
   II:  { text: 'Pull an enemy unit within 4m toward you with force 3.', ...M.pull({ force: 3, range: 4000 }) },
@@ -123,7 +123,7 @@ card({
   // Floating stone. Raise the ground and put your army on top of it.
   keywords: ['Ignore Height'],
   runes: [SPIRAL, WHEEL, WHEEL, WHEEL],
-  sigil: ['W.', 'SW'],
+  sigil: ['SW.', '.WW'],
   I:   { text: 'If the cell above this one is empty, relocate a friendly unit up to 3m.',
          gate: { id: 'neighbourEmpty', where: 'above' }, ...M.relocate({ mm: 3000, range: 4000 }) },
   II:  { text: 'Raise a terrain piece within 4m by 2m.', ...M.liftTerrain({ mm: 2000, range: 4000 }) },

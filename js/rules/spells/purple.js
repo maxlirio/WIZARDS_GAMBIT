@@ -32,7 +32,7 @@ card({
   // Cut a spell open and use its heart. The payoff fires another card's side IV
   // without that card having to get there.
   runes: [LATTICE, SPIRAL, SHARD, LATTICE],
-  sigil: ['SH', '.L'],
+  sigil: ['LS', 'LH'],
   I:   { text: 'Grant a Spell [Crush].', ...M.grantKeyword({ kw: 'Crush' }) },
   II:  { text: "Destroy a Spell you control. Resolve a friendly Spell's face, adding adjacent Keywords.",
          cost: [{ id: 'destroyFriendly', n: 1 }], ...M.spliceResolve() },
@@ -45,7 +45,7 @@ card({
   id: 'LINK', name: 'Link', school: 'purple',
   // A chain between cards; at the end every keyword you own flows into one.
   runes: [LATTICE, SPIRAL, LATTICE, LATTICE],
-  sigil: ['LL', '.S'],
+  sigil: ['.L.', 'LSL'],
   I:   { text: 'The Spell left of this has the Keywords of the Spell right of it.', ...M.passiveLink() },
   II:  { text: 'Grant a Spell [Reach].', ...M.grantKeyword({ kw: 'Reach' }) },
   III: { text: "Discard a card. Resolve a friendly Spell's face, adding adjacent Keywords.",
@@ -57,7 +57,7 @@ card({
   id: 'RESONANCE', name: 'Resonance', school: 'purple',
   // Every keyword on your table hums at once.
   runes: [WHEEL, SHARD, LATTICE, SHARD],
-  sigil: ['H.', 'WH'],
+  sigil: ['WHH', 'L..'],
   I:   { text: 'Grant a Spell [Impact].', ...M.grantKeyword({ kw: 'Impact' }) },
   II:  { text: '1 damage per Keyword that has resonated onto your Spells this duel, up to 3.',
          ...M.damagePerLedger({ key: 'keywordsCopied', per: 1, cap: 3, range: 3500 }) },
@@ -71,7 +71,7 @@ card({
   id: 'PRISM', name: 'Prism', school: 'purple',
   // Light split many ways: this card's keywords, given to every card you own.
   runes: [SPIRAL, LATTICE, LATTICE, LATTICE],
-  sigil: ['L', 'S', 'L'],
+  sigil: ['..S', 'LLL'],
   I:   { text: 'Grant a Spell [Levitate].', ...M.grantKeyword({ kw: 'Levitate' }) },
   II:  { text: 'Grant a Spell [Stun].', ...M.grantKeyword({ kw: 'Stun' }) },
   III: { text: "Rotate another Spell you control left. Resolve a friendly Spell's face, adding adjacent Keywords.",
@@ -85,7 +85,7 @@ card({
   // spell you own, in cell order -- the biggest single effect in the game, and
   // as dangerous as your table is careless.
   runes: [SPIRAL, SPIRAL, LATTICE, LATTICE],
-  sigil: ['SLL'],
+  sigil: ['S', 'S', 'L', 'L'],
   I:   { text: 'Draw 2 cards, then discard a card.', ...M.drawThenDiscard({ draw: 2, discard: 1 }) },
   II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   III: { text: "Destroy a Spell you control. Resolve a friendly Spell's face, adding adjacent Keywords.",
@@ -98,7 +98,7 @@ card({
   // A key that fits every lock: at the end, any keyword in the game.
   keywords: ['Consume'],
   runes: [LATTICE, SPIRAL, SPIRAL, LATTICE],
-  sigil: ['L.', 'SL'],
+  sigil: ['.L', 'SS', 'L.'],
   I:   { text: 'Grant a Spell [Consume].', ...M.grantKeyword({ kw: 'Consume' }) },
   II:  { text: 'Destroy a Spell you control. Draw a card.',
          cost: [{ id: 'destroyFriendly', n: 1 }], ...M.drawCards({ n: 1 }) },
@@ -110,7 +110,7 @@ card({
   id: 'CHORUS', name: 'Chorus', school: 'purple',
   // Many voices; the last note lands only at the end of a long chain.
   runes: [LATTICE, SPIRAL, LATTICE, SHARD],
-  sigil: ['SHL'],
+  sigil: ['L.', 'LL', 'H.'],
   I:   { text: 'At the end of one of your chains of 2 or more, draw a card.',
          ...M.onChainEndDraw({ n: 1, minLinks: 2 }) },
   II:  { text: 'If you have 4 cards in hand, grant a Spell [Reach].',

@@ -20,7 +20,7 @@ import { canonical, contains, sigilRunes } from './sigils.js';
 /**
  * Validate the corpus's sigils at load.
  *
- * Two cards with the same sigil (in any orientation) would be a shape that
+ * Two cards with the same sigil (as drawn -- orientation matters) would be a shape that
  * finds two spells -- a page the player cannot act on. A sigil that contains
  * another could never be completed: the smaller one fires first and spends
  * the runes. Both are refused here rather than discovered by a player.

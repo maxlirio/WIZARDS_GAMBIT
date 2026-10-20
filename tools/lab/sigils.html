@@ -116,7 +116,7 @@ const known = page.filter((x) => x.known).length;
 const runeList = (x) => x.runes.map((r) => RUNE_NAME[r]).join(', ');
 const book = document.createElement('div'); book.className = 'mbox';
 book.innerHTML = `<h2>The Spellbook</h2>
-  <p class="dim">Spells are <b>found</b>, not earned. Every face you resolve earns a rune of its kind of work — Spiral for turning, Shard for breaking, Wheel for moving, Lattice for drawing — into your pouch. Once a turn, lay runes on your board and <b>Bind</b>: any card whose <b>sigil</b> you have laid, in any of its four turns, is found and its runes are spent; the rest go back to your pouch. The Spellbook remembers every shape you have made; for the rest it knows only which runes they take.</p>
+  <p class="dim">Spells are <b>found</b>, not earned. Every face you resolve earns a rune of its kind of work — Spiral for turning, Shard for breaking, Wheel for moving, Lattice for drawing — into your pouch. Once a turn, lay runes on your board and <b>Bind</b>: any card whose <b>sigil</b> you have laid, exactly as drawn — orientation matters — is found and its runes are spent; the rest go back to your pouch. The Spellbook remembers every shape you have made; for the rest it knows only which runes they take.</p>
   <p><b>${known}</b> of ${page.length} sigils known · 12 duels · 7 won</p>
   <div class="book sig">${page.slice(0, +(q.get('n') || 24)).map((x) => {
     if (!x.known) return `<div class="bk sg unknown"><span class="q">?</span><div><span class="bc">undiscovered</span><span class="bh">${x.size} runes: ${esc(runeList(x))}</span></div></div>`;

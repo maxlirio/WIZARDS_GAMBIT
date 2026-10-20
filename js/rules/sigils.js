@@ -3,10 +3,10 @@
 // Every face you RESOLVE earns you one rune of its kind of work: a Spiral for
 // turning, a Shard for breaking, a Wheel for moving, a Lattice for drawing
 // (the verb taxonomy in runes.js). Runes bank up in your POUCH across turns.
-// Every findable card has a SIGIL: a small shape of three runes (four for a
+// Every findable card has a SIGIL: a small shape of four runes (five for a
 // gold card or a golem), printed in the Spellbook once you have made it.
 // Once a turn, free, you may lay runes from your pouch on a 4 x 4 board and
-// BIND: whatever sigils the board completes, in any of their four turns, are
+// BIND: whatever sigils the board completes, laid exactly as drawn, are
 // found -- their runes are spent and the card goes to your discard for the
 // rest of the duel -- and every other rune goes back to the pouch. Nothing
 // stays on the board between turns; the board is a scratch surface the HUD
@@ -74,31 +74,22 @@ function normalise(cells) {
 
 const cellKey = (cells) => cells.map((c) => `${c.x},${c.y}${LETTER_OF[c.r]}`).join(' ');
 
-/** The four quarter-turns of a sigil, deduped (a symmetric shape has fewer). */
-export function orientations(cells) {
-  const out = []; const keys = new Set();
-  let cur = cells;
-  for (let k = 0; k < 4; k++) {
-    const key = cellKey(cur);
-    if (!keys.has(key)) { keys.add(key); out.push(cur); }
-    cur = normalise(cur.map((c) => ({ x: c.y, y: -c.x, r: c.r })));
-  }
-  return out;
-}
+/**
+ * ORIENTATION MATTERS (user: "orientation should matter"): a sigil is the
+ * shape exactly as drawn, never its turns. So the key of a sigil is its one
+ * normalised form, a rotated copy is a different sigil, and a layout must be
+ * laid the way the Spellbook shows it.
+ */
+export const canonical = (cells) => cellKey(normalise(cells));
 
-/** One key for a sigil however it is turned: the smallest of its orientations. */
-export const canonical = (cells) => orientations(cells).map(cellKey).sort()[0];
-
-/** Does `big` contain `small` in some orientation at some offset? */
+/** Does `big` contain `small`, as drawn, at some offset? */
 export function contains(big, small) {
   if (small.length > big.length) return false;
   const at = new Map(big.map((c) => [`${c.x},${c.y}`, c.r]));
-  for (const o of orientations(small)) {
-    const ow = Math.max(...o.map((c) => c.x)), oh = Math.max(...o.map((c) => c.y));
-    const bw = Math.max(...big.map((c) => c.x)), bh = Math.max(...big.map((c) => c.y));
-    for (let dy = 0; dy + oh <= bh; dy++) for (let dx = 0; dx + ow <= bw; dx++) {
-      if (o.every((c) => at.get(`${c.x + dx},${c.y + dy}`) === c.r)) return true;
-    }
+  const ow = Math.max(...small.map((c) => c.x)), oh = Math.max(...small.map((c) => c.y));
+  const bw = Math.max(...big.map((c) => c.x)), bh = Math.max(...big.map((c) => c.y));
+  for (let dy = 0; dy + oh <= bh; dy++) for (let dx = 0; dx + ow <= bw; dx++) {
+    if (small.every((c) => at.get(`${c.x + dx},${c.y + dy}`) === c.r)) return true;
   }
   return false;
 }
@@ -159,9 +150,9 @@ export function bindError(state, p, cells) {
 }
 
 /**
- * The sigils a layout completes: every open pattern, in every orientation at
- * every offset, largest first and ties by id, each rune spent by at most one
- * sigil. Pure, so the HUD can ask it about a layout it has not sent.
+ * The sigils a layout completes: every open pattern, as drawn, at every
+ * offset, largest first and ties by id, each rune spent by at most one
+ * sigil. Pure, so a harness can ask it about a layout it has not sent.
  */
 export function bindHits(patterns, cells) {
   const at = new Map(cells.map((c) => [c.idx, c.r]));
@@ -170,13 +161,10 @@ export function bindHits(patterns, cells) {
   const sorted = [...patterns].sort((a, b) => b.cells.length - a.cells.length || a.id.localeCompare(b.id));
   for (const { id, cells: shape } of sorted) {
     let hit = null;
-    for (const o of orientations(shape)) {
-      const ow = Math.max(...o.map((c) => c.x)), oh = Math.max(...o.map((c) => c.y));
-      for (let dy = 0; dy + oh < BOARD_H && !hit; dy++) for (let dx = 0; dx + ow < BOARD_W && !hit; dx++) {
-        const idxs = o.map((c) => (c.y + dy) * BOARD_W + c.x + dx);
-        if (o.every((c, i) => at.get(idxs[i]) === c.r && !used.has(idxs[i]))) hit = idxs.sort((a, b) => a - b);
-      }
-      if (hit) break;
+    const ow = Math.max(...shape.map((c) => c.x)), oh = Math.max(...shape.map((c) => c.y));
+    for (let dy = 0; dy + oh < BOARD_H && !hit; dy++) for (let dx = 0; dx + ow < BOARD_W && !hit; dx++) {
+      const idxs = shape.map((c) => (c.y + dy) * BOARD_W + c.x + dx);
+      if (shape.every((c, i) => at.get(idxs[i]) === c.r && !used.has(idxs[i]))) hit = idxs.sort((a, b) => a - b);
     }
     if (hit) { for (const i of hit) used.add(i); hits.push({ id, cells: hit }); }
   }

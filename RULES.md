@@ -538,18 +538,18 @@ of the game, not an inventory and not a deck list.
   for drawing (the verb taxonomy of §3). A face that resolves inert — gate unmet, cost
   unpaid — earns nothing; a passive face earns nothing, its worth is ongoing. Runes go
   into your **pouch** and stay there, across turns, until you spend them.
-- Every findable card has a **sigil**: a small shape of **three runes** (four for a gold
+- Every findable card has a **sigil**: a small shape of **four runes** (five for a gold
   card or a golem), the same shape every match, made of the runes on the card's own
   corners.
 - **Once a turn, free**, in either phase of your own turn, you may **lay runes from your
-  pouch on your 4 × 4 sigil board and bind**. Every sigil the board holds, in any of its
-  four orientations, is **found**: its runes are **spent** and you are asked whether the
+  pouch on your 4 × 4 sigil board and bind**. Every sigil the board holds, **laid exactly as
+  drawn — orientation matters** — is **found**: its runes are **spent** and you are asked whether the
   card joins this duel — if so it goes into your **discard pile** for the rest of the
   match. Every other rune you laid goes back into your pouch. A card is found **once per
   match**. Where two sigils overlap, the **larger** wins (ties by card name).
 - **Nothing stays on the board between turns.** The board is a scratch surface; the only
   thing the match remembers is your pouch. You are never made to lay a rune.
-- No sigil contains another and no two are alike in any orientation; `tools/checkcorpus.js`
+- No sigil contains another and no two are alike (a turned copy is a different sigil); `tools/checkcorpus.js`
   refuses a corpus that breaks either. A sigil is one connected shape with at least two
   different runes.
 - **The Spellbook shows the shape of every sigil you have made**, and for the ones you
@@ -566,7 +566,7 @@ second handed you **one random rune a turn** to set on a board that persisted al
 with five- and six-rune sigils there were too many arrangements to ever close one on
 purpose, and the board could not be cleared. Now the runes come from what you actually
 do, you keep them until you choose to use them, and the puzzle is the **shape**: the
-Spellbook tells you a card takes a Shard, a Shard and a Wheel, and the three-rune
+Spellbook tells you a card takes a Shard, a Shard, a Wheel and a Lattice, and the
 arrangements of that are yours to try, one bind a turn.
 
 This is the system that took mana's place, so it is a first-class subsystem rather

@@ -26,7 +26,7 @@ card({
   id: 'PRECISION', name: 'Precision', school: 'green',
   // Exactness: at the end, any card turned to any face, without consequence.
   runes: [SPIRAL, SPIRAL, SHARD, SPIRAL],
-  sigil: ['S', 'H', 'S'],
+  sigil: ['S.', 'HS', 'S.'],
   I:   { text: 'Rotate a Spell you control right.', ...M.turnASpell({ dir: 'right' }) },
   II:  { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
   III: { text: 'Discard a card. Destroy an enemy Spell.',
@@ -38,7 +38,7 @@ card({
   id: 'SPELL_DRAIN', name: 'Spell Drain', school: 'green',
   // Eat your own table for cards.
   runes: [SPIRAL, SHARD, SPIRAL, LATTICE],
-  sigil: ['S', 'S', 'L'],
+  sigil: ['.S.', 'SSH'],
   I:   { text: 'Shift this Spell to an adjacent cell.', ...M.shiftSelf() },
   II:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
   III: { text: 'If the cell above is occupied, rotate a Spell left.',
@@ -51,7 +51,7 @@ card({
   id: 'REWIND', name: 'Time Warp', school: 'green',
   // Turn the clock back. The payoff turns every other spell you own back a face.
   runes: [SPIRAL, LATTICE, LATTICE, SPIRAL],
-  sigil: ['S', 'L', 'S'],
+  sigil: ['LS', 'LS'],
   I:   { text: 'Rotate a Spell you control right.', ...M.turnASpell({ dir: 'right' }) },
   II:  { text: 'Return a card from your discard to your hand.', ...M.recall() },
   III: { text: 'Destroy a Spell you control. Resolve the I of a friendly Spell, regardless of orientation.',
@@ -63,7 +63,7 @@ card({
   id: 'GROVE_KEEPER', name: 'Grove Keeper', school: 'green',
   // Growth. The payoff is spring: every other spell you own turns forward at once.
   runes: [SPIRAL, SPIRAL, LATTICE, SPIRAL],
-  sigil: ['LS', '.S'],
+  sigil: ['SSLS'],
   I:   { text: 'This Spell may be rotated on any colour.', ...M.passiveFreeTurn() },
   II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   III: { text: 'Your mage regains 1 life.', ...M.mend({ n: 1 }) },
@@ -74,7 +74,7 @@ card({
   id: 'SEED_OF_ORDER', name: 'Seed of Order', school: 'green',
   // Discipline, spread to everything you control.
   runes: [LATTICE, SPIRAL, SPIRAL, LATTICE],
-  sigil: ['SL', '.S'],
+  sigil: ['.S.', 'LLS'],
   I:   { text: 'Your range is increased by 1m.', ...M.passiveRange({ mm: 1000 }) },
   II:  { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
   III: { text: 'Discard a card. Grant a Spell [Spell Mastery].',
@@ -87,7 +87,7 @@ card({
   // Pulling the enemy's magic apart, thread by thread, then all at once.
   keywords: ['Spell Bane'],
   runes: [LATTICE, SPIRAL, SPIRAL, SHARD],
-  sigil: ['SSH'],
+  sigil: ['HS', 'LL'],
   I:   { text: 'Spells either side of this one lose their Keywords.', ...M.passiveSilence() },
   II:  { text: 'Hex an enemy Spell: it may not rotate until after its owner’s next turn.', ...M.hexSpell() },
   III: { text: 'Discard a card. Rotate a Spell left.',
@@ -99,7 +99,7 @@ card({
   id: 'WEAVER', name: 'Weaver', school: 'green',
   // Threads of fate: draw deep, keep the best.
   runes: [SPIRAL, SPIRAL, LATTICE, LATTICE],
-  sigil: ['S', 'W', 'H'],
+  sigil: ['.L', 'LS', '.L'],
   I:   { text: 'Draw a card, then discard a card.', ...M.drawThenDiscard({ draw: 1, discard: 1 }) },
   II:  { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   III: { text: 'Rotate another Spell you control left. Draw 2 cards.',
@@ -111,7 +111,7 @@ card({
   id: 'SPIRE_WARD', name: 'Spire Ward', school: 'green',
   // A tower around your table. At the top, nothing of yours can be touched.
   runes: [SPIRAL, SHARD, SPIRAL, LATTICE],
-  sigil: ['LS', 'H.'],
+  sigil: ['S', 'S', 'H', 'H'],
   I:   { text: 'This Spell may be rotated on any colour.', ...M.passiveFreeTurn() },
   II:  { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
   III: { text: 'If you control 4 Spells, destroy an enemy Spell.',
@@ -123,7 +123,7 @@ card({
   id: 'HOLLOW_RITE', name: 'Hollow Rite', school: 'green',
   // A rite over the dead. The last face raises a destroyed spell back onto the table.
   runes: [LATTICE, SPIRAL, LATTICE, LATTICE],
-  sigil: ['L.', 'LS'],
+  sigil: ['SLLL'],
   I:   { text: 'After one of your Spells is destroyed, draw a card.', ...M.onDestroyedDraw({ n: 1 }) },
   II:  { text: 'Put the top 2 cards of your deck into your discard. Draw a card.',
          cost: [{ id: 'millSelf', n: 2 }], ...M.drawCards({ n: 1 }) },
