@@ -43,6 +43,13 @@ export function createArena(host, state, handlers = {}) {
   const quality = handlers.quality || 'high';
 
   const renderer = new THREE.WebGLRenderer({ antialias: quality !== 'high', preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+  // A GPU that gives up (too little memory for the shadows and the grass on
+  // an integrated chip, a driver reset) loses the context and the canvas goes
+  // black with nothing thrown. Say so, where the player can read it.
+  renderer.domElement.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    window.__bootfail?.(`WebGL context lost: the graphics driver gave up (quality ${quality}). Retry on low graphics.`);
+  });
   // A Retina display at full ratio is four times the pixels of a 1x one and
   // bloom, shadows and the sky all scale with it: 1.5 keeps the edges crisp
   // and the frame time sane. Low quality renders at 1x.
@@ -93,6 +100,41 @@ export function createArena(host, state, handlers = {}) {
     composer.addPass(new OutputPass());
   }
 
+  /**
+   * A black battlefield diagnoses itself. A player on another machine got the
+   * whole HUD over a black canvas, with nothing thrown: the renderer ran and
+   * painted nothing. The canvas keeps its drawing buffer, so sample it once
+   * the world is up. Black with the composer on: drop to a plain render
+   * (bloom's float render targets are the usual GPU refusal) and look again.
+   * Still black: put the GPU's name, the float-target extensions and the
+   * renderer's own console errors on the screen, where they can be read out.
+   */
+  function blackCheck(stage) {
+    let mean = -1;
+    try {
+      const c = renderer.domElement, t = document.createElement('canvas');
+      t.width = 48; t.height = 27;
+      const g = t.getContext('2d');
+      g.drawImage(c, 0, 0, 48, 27);
+      const d = g.getImageData(0, 0, 48, 27).data;
+      let sum = 0; for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+      mean = sum / (d.length / 4) / 3;
+    } catch (e) { return; }
+    if (mean > 2) return;
+    if (stage === 0 && composer) {
+      console.warn(`battlefield rendered black with post-processing (mean ${mean.toFixed(1)}); falling back to a plain render`);
+      composer = null;
+      setTimeout(() => blackCheck(1), 1500);
+      return;
+    }
+    const gl = renderer.getContext();
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'unknown GPU';
+    const ext = ['EXT_color_buffer_float', 'EXT_color_buffer_half_float', 'OES_texture_float_linear'].map((x) => `${x}:${gl.getExtension(x) ? 'yes' : 'no'}`).join(' ');
+    const lost = gl.isContextLost() ? ' CONTEXT LOST' : '';
+    window.__bootfail?.(`battlefield rendered black (mean ${mean.toFixed(1)}, pass ${stage})${lost} — ${gpu} — ${ext} — max texture ${gl.getParameter(gl.MAX_TEXTURE_SIZE)}`);
+  }
+
   /* ---------------------------------------------------------- loading */
   let world = null;
   let gltfs = null;
@@ -111,6 +153,7 @@ export function createArena(host, state, handlers = {}) {
     setTimeout(() => loading.remove(), 600);
     for (const f of whenReady) f();
     whenReady.length = 0;
+    setTimeout(() => blackCheck(0), 2500);
   }).catch((e) => { console.error(e); loading.innerHTML = `<span>Could not load the battlefield: ${e.message}</span>`; });
 
   // Ground height anywhere: the engine's inside the ward, the landscape's outside.

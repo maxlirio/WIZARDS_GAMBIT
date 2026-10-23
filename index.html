@@ -123,6 +123,12 @@
 // browser is named so the report can be acted on.
 (function () {
   var fails = [];
+  // The renderer reports its own trouble (a shader that would not compile, a
+  // render target the GPU refused) through console.error, which no event
+  // carries. Keep the first few so a black battlefield can show them.
+  var errs = []; window.__errs = errs;
+  var origErr = console.error.bind(console);
+  console.error = function () { try { if (errs.length < 6) errs.push(Array.prototype.map.call(arguments, function (a) { return a && a.message ? a.message : String(a); }).join(' ').slice(0, 600)); } catch (e) { } origErr.apply(console, arguments); };
   function esc(t) { return String(t).replace(/[<>&]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); }
   function missing() {
     var m = [];
@@ -141,11 +147,18 @@
     var body = '';
     if (miss.length) body += '<code>This browser lacks: ' + esc(miss.join('; ')) + '</code>';
     if (fails.length) body += '<code>' + esc(fails.slice(0, 3).join('\n')) + '</code>';
+    if (errs.length) body += '<code>' + esc(errs.slice(0, 3).join('\n')) + '</code>';
     if (!miss.length && !fails.length && !still) body += '<code>No error was reported. A blocked script, an extension, or a very slow connection.</code>';
     body += '<code>' + esc(navigator.userAgent) + '</code>';
     if (!still) body += '<code>Try the latest Chrome, Edge, Firefox or Safari, and tell Max what this says.</code>';
+    // The game code is up but the battlefield is not: offer the cheapest
+    // render. (The quality setting is js/profile.js's key, written here only
+    // because the game's own code may be the thing that failed.)
+    if (!still && window.WG) body += '<button id="bootlow" style="margin-top:8px;padding:6px 12px;border-radius:8px;border:1px solid #ff9a9a;background:#5a1a1a;color:#fff;font:600 13px Inter,sans-serif;cursor:pointer">Retry on low graphics</button>';
     el.innerHTML = head + body;
     el.hidden = false; shown = true;
+    var low = document.getElementById('bootlow');
+    if (low) low.onclick = function () { try { localStorage.setItem('wizards-gambit:setting:quality', 'low'); } catch (e) { } location.href = location.pathname; };
   }
   function hide() { var el = document.getElementById('bootfail'); if (el && shown) { el.hidden = true; shown = false; } }
   window.addEventListener('error', function (e) { fails.push((e.message || 'error') + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : '')); if (!window.WG || !window.WG.arena) show(false); });
