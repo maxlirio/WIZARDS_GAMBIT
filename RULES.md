@@ -562,6 +562,29 @@ of the game, not an inventory and not a deck list.
   the match's seed) and binds one whenever its pouch can pay for it. It never binds a
   shape it has not been dealt.
 
+### Coins and the shop
+
+Finding every sigil by laying runes alone would take dozens of duels, so there is a
+second way in: **coins**, paid at the end of every duel you play to the end, and
+**packs** bought with them in the lobby's shop. A pack holds one sigil of its rarity that
+you do not already know, chosen at random, and writes it straight into your Spellbook.
+
+- **The purse.** A finished duel pays **20 coins** for playing, **30** more for winning,
+  **2 per VP** you scored and **10 per sigil you bound** in play. Watching two computer
+  opponents pays nothing; neither does a duel abandoned before 15 VP.
+- **Rarity** follows the kind of work a sigil finds. The **red, blue and green** school
+  spells are **common** (four-rune sigils); the **purple** spells, the **artifacts** and
+  the **traps** are **uncommon** (four runes); the **gold** cards and the **golems** are
+  **rare** (five runes). An **Apprentice pack** (common) costs **50**, an **Adept pack**
+  (uncommon) **100**, an **Archmage pack** (rare) **200** — so a won duel buys a common
+  sigil outright and a rare one takes three or four.
+- A pack **never holds a sigil you already know**, and a rarity whose every sigil you
+  know is sold out. The Spellbook records how each sigil came to it — bound in play or
+  bought — and a bought sigil is yours in every later duel exactly as a bound one is.
+- **The engine never sees the purse.** Coins and packs live in the browser's save file
+  with the Spellbook; a replay and an online duel are unaffected by how rich either
+  player is, and the standard deck is still the same ten cards.
+
 This replaced two earlier Spellbooks. The first was a list of **earned conditions**
 ("deal 25 damage in one duel", "let your mage be wounded to half"); that made a find a
 quest to seek, and a quest that wins games becomes the one thing every match does. The

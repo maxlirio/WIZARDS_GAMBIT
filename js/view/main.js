@@ -29,6 +29,7 @@ import { gateProgress, counted } from '../rules/gates.js';
 import { keywordsOf, keywordSources, KEYWORDS } from '../rules/keywords.js';
 import { TIER_CAP } from '../rules/golems.js';
 import { spellbookPage } from '../rules/learn.js';
+import { PACKS, packOf, packContents, rarityOf, PURSE } from '../rules/shop.js';
 import { bindError, BOARD_W, BOARD_CELLS } from '../rules/sigils.js';
 import { RUNES } from '../rules/runes.js';
 import { seedRng, pick } from '../rules/rng.js';
@@ -61,8 +62,17 @@ let gameId = 0;
 let timers = [];         // scheduled cues, cleared on a new match
 let tlEnd = 0;           // when the cues scheduled so far have all played (performance.now ms)
 let NET = null;          // the connection when playing online; the other seat is a person
+let LOBBY = false;       // the lobby is up: the HUD is gone and no AI drives
+let IDLE = false;        // the match on the field is the lobby's backdrop, nobody is playing it
+let learnedNow = 0;      // sigils this duel wrote into the Spellbook (they go in as they are found, so the end count must be kept here)
 
-function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool = false, policy = 'oneply', seat = 0 } = {}) {
+/**
+ * `idle` deals a duel for the LOBBY'S BACKDROP: the arena and the state are
+ * built so the field has mages and terrain to look at, but `drive()` is
+ * never called -- no AI thinks behind the front screen -- and the URL is
+ * left alone so a reload comes back to the lobby.
+ */
+function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool = false, policy = 'oneply', seat = 0, idle = false } = {}) {
   gameId++;
   for (const t of timers) clearTimeout(t);
   timers = [];
@@ -70,10 +80,11 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   const rng = seedRng(seed ^ 0xdeed);
   const decks = pool ? [randomDeck(rng, pick), randomDeck(rng, pick)] : null;
   S = createGame({ seed, decks });
-  HUMAN = watch ? null : seat;
+  HUMAN = watch || idle ? null : seat;
+  IDLE = idle;
   POLICY = policy;
   seatLayout();
-  fxSeen = 0; sel = null; someChosen = []; matchOver = false;
+  fxSeen = 0; sel = null; someChosen = []; matchOver = false; learnedNow = 0;
   angles.clear();
   pendingTurns.clear();
   scratch.fill(null); picked = null;
@@ -89,8 +100,19 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
     seat: HUMAN ?? 0,
   });
   $('#seed').textContent = `seed ${seed} · ${S.arena.challenge}`;
+  if (idle) {
+    history.replaceState(null, '', location.pathname);
+    flushFx();
+    render();
+    updateViewport();
+    arena.whenReady.then(() => { if (S) { render(); updateViewport(); } });
+    return;
+  }
   history.replaceState(null, '', NET ? `?room=${NET.code}` : `?seed=${seed}${watch ? '&watch' : ''}${pool ? '&pool' : ''}${FAST ? '&fast' : ''}`);
   logLine(`<b>A new duel${NET ? ` in room ${esc(NET.code)}` : ''}.</b> Arena: <i>${esc(S.arena.challenge)}</i>. First to 15 VP.`, 'sys');
+  // A real duel starting is what closes the lobby, whoever started it: the
+  // Play card, the HUD's New duel, or the host dealing to a room.
+  closeLobby({ resume: false });
   flushFx();
   render();
   updateViewport();
@@ -139,18 +161,20 @@ async function drive() {
   busy = true;
   const my = gameId;
   try {
-    while (S.winner === null && my === gameId) {
+    // The lobby over a running duel pauses the AI: the loop leaves and
+    // closeLobby() calls drive() again. An idle backdrop never drives at all.
+    while (S.winner === null && my === gameId && !LOBBY && !IDLE) {
       if (S.pending) {
         const whose = S.pending.request.player ?? S.active;
         if (whose === HUMAN) break;
         await sleep(FAST ? 0 : Math.max(380, cuesLeft() + 150));
-        if (my !== gameId) return;
+        if (my !== gameId || LOBBY) return;
         choose(S, answerFor(S, { policy: POLICY }));
       } else if (S.active !== HUMAN) {
         // Not before the last action's cues have played out: a walk is as
         // long as the walk, and the next move must not land on it.
         await sleep(FAST ? 0 : Math.max(420, cuesLeft() + 150));
-        if (my !== gameId) return;
+        if (my !== gameId || LOBBY) return;
         const a = chooseAction(S, { policy: POLICY });
         if (!a) break;
         apply(S, a);
@@ -223,6 +247,7 @@ function leaveRoom() {
   NET = null;
   toast('Left the room.', '');
   $('#btn-online').textContent = 'Play online';
+  renderLobby();
 }
 
 function startOnline(seed, pool) {
@@ -232,50 +257,62 @@ function startOnline(seed, pool) {
   newMatch({ seed, pool, seat: NET.isHost ? 0 : 1 });
 }
 
-function openOnline() {
+/** The HUD's "Play online" is the lobby's Online card: one place, one code path. */
+function openOnline() { openLobby({ online: true }); }
+
+/**
+ * The Online card of the lobby. Hosting shows the code, the link and "waiting
+ * for opponent" right there; the room's state stays on the card until the
+ * host deals (the `hello` handler below), which starts the duel and closes
+ * the lobby.
+ */
+function renderOnline() {
+  const host = $('#lb-online');
+  if (!host) return;
   const url = (code) => `${location.origin}${location.pathname}?room=${code}`;
   if (NET) {
-    modal(`<h2>Room ${esc(NET.code)}</h2>
-      <p>${NET.ready ? `Connected to your opponent. ${NET.isHost ? 'You are the host: you start the duels.' : 'The host starts the duels.'}` : 'Waiting for your opponent to join…'}</p>
-      <p class="code">${esc(NET.code)}</p>
-      <p class="dim">Share the code or this link: <input class="link" readonly value="${esc(url(NET.code))}"></p>
-      <div class="mbtns">${NET.ready && NET.isHost ? '<button id="ol-new" class="primary">New duel</button>' : ''}<button id="ol-leave" class="ghost">Leave room</button><button id="close" class="ghost">Close</button></div>`);
-    $('#ol-leave').onclick = () => { leaveRoom(); closeModal(); };
-    const n = $('#ol-new'); if (n) n.onclick = () => { closeModal(); openNewGame(); };
-    $('#close').onclick = closeModal;
+    host.innerHTML = `<p class="code">${esc(NET.code)}</p>
+      <div class="olstate${NET.ready ? ' on' : ''}">${NET.ready ? `Connected to your opponent. ${NET.isHost ? 'You are the host: you deal the duels.' : 'The host deals the duels.'}`
+        : '<span class="dots"><i></i><i></i><i></i></span> Waiting for your opponent to join…'}</div>
+      <p>Share the code or this link:</p>
+      <input class="link" readonly value="${esc(url(NET.code))}">
+      <div class="lbtns">${NET.ready && NET.isHost ? '<button id="ol-new" class="primary">Deal a duel</button>' : ''}<button id="ol-copy" class="ghost">Copy link</button><button id="ol-leave" class="ghost">Leave room</button></div>`;
+    $('#ol-leave').onclick = leaveRoom;
+    $('#ol-copy').onclick = async () => { try { await navigator.clipboard.writeText(url(NET.code)); toast('Link copied.', 'good'); } catch { host.querySelector('.link').select(); } };
+    const n = $('#ol-new'); if (n) n.onclick = openNewGame;
     return;
   }
-  modal(`<h2>Play online</h2>
-    <p>Two browsers, one duel. One of you hosts and reads out the four-letter room code; the other joins with it. No account, no server of ours — the two browsers talk directly.</p>
-    <div class="online-grid">
-      <div><button id="ol-host" class="primary">Host a room</button><p class="dim">You get a code to share, and you start each duel.</p></div>
-      <div><label>Room code <input id="ol-code" maxlength="4" placeholder="ABCD" autocapitalize="characters"></label><button id="ol-join">Join</button></div>
+  host.innerHTML = `<p>Two browsers, one duel. One of you hosts and reads out the four-letter room code; the other joins with it. No account, no server of ours — the two browsers talk directly.</p>
+    <div class="olgrid">
+      <div><button id="ol-host" class="primary">Host a room</button><p>You get a code to share, and you deal each duel.</p></div>
+      <div><label>Room code <input id="ol-code" maxlength="4" placeholder="ABCD" autocapitalize="characters" autocomplete="off"></label><button id="ol-join">Join</button></div>
     </div>
-    <p id="ol-msg" class="dim"></p>
-    <div class="mbtns"><button id="close" class="ghost">Cancel</button></div>`);
-  const say = (t, bad) => { const m = $('#ol-msg'); if (m) { m.innerHTML = t; m.classList.toggle('bad', !!bad); } };
-  $('#close').onclick = closeModal;
+    <p id="ol-msg"></p>`;
   $('#ol-host').onclick = async () => {
-    say('Opening a room…');
+    sayOnline('Opening a room…');
     const net = new Net();
-    try { await net.host(); } catch (e) { say(esc(e.message), true); return; }
+    try { await net.host(); } catch (e) { sayOnline(esc(e.message), true); return; }
     bindNet(net);
-    openOnline();
+    renderLobby();
   };
-  const join = async () => {
-    const code = $('#ol-code').value.trim().toUpperCase();
-    if (code.length !== 4) { say('A room code is four letters.', true); return; }
-    say(`Joining ${esc(code)}…`);
-    const net = new Net();
-    try { await net.join(code); } catch (e) { say(esc(e.message), true); return; }
-    bindNet(net);
-    net.sendHello({ v: 1 });
-    closeModal();
-    toast(`Joined room <b>${esc(code)}</b>. Waiting for the host to start a duel.`, 'good');
-  };
-  $('#ol-join').onclick = join;
-  $('#ol-code').onkeydown = (e) => { if (e.key === 'Enter') join(); };
-  if (params.get('room')) { $('#ol-code').value = params.get('room').toUpperCase(); join(); }
+  $('#ol-join').onclick = () => joinRoom($('#ol-code').value);
+  $('#ol-code').onkeydown = (e) => { if (e.key === 'Enter') joinRoom($('#ol-code').value); };
+}
+
+function sayOnline(t, bad) { const m = $('#ol-msg'); if (m) { m.innerHTML = t; m.classList.toggle('bad', !!bad); } }
+
+/** Join a room by code -- the Join button and a shared `?room=` link both land here. */
+async function joinRoom(raw) {
+  const code = String(raw || '').trim().toUpperCase();
+  if (code.length !== 4) { sayOnline('A room code is four letters.', true); return; }
+  const field = $('#ol-code'); if (field) field.value = code;
+  sayOnline(`Joining ${esc(code)}…`);
+  const net = new Net();
+  try { await net.join(code); } catch (e) { sayOnline(esc(e.message), true); return; }
+  bindNet(net);
+  net.sendHello({ v: 1 });
+  toast(`Joined room <b>${esc(code)}</b>. Waiting for the host to deal a duel.`, 'good');
+  renderLobby();
 }
 
 function bindNet(net) {
@@ -289,7 +326,7 @@ function bindNet(net) {
     closeModal();
     startOnline(Math.floor(Math.random() * 1e6), params.has('pool'));
   });
-  net.addEventListener('joined', () => { if (!net.isHost) seatLayout(); });
+  net.addEventListener('joined', () => { if (!net.isHost) seatLayout(); renderLobby(); });
   net.addEventListener('left', () => { toast('<b>Your opponent left.</b> The room is closed.', 'bad'); leaveRoom(); render(); });
   net.addEventListener('neterror', (e) => toast(esc(e.detail.message), 'bad'));
   net.addEventListener('desync', () => toast('<b>Desync</b> reported by your opponent — start a new duel from the host.', 'bad'));
@@ -517,7 +554,7 @@ function flushFx() {
         if (f.p === HUMAN) {
           // Into the Spellbook NOW, not at the end of the match -- a player
           // who opens the book mid-duel should see what they just learned.
-          profile.learn(f.defId, f.why);
+          if (profile.learn(f.defId, f.why)) learnedNow++;
           toast(`Learned <b>${esc(CARDS[f.defId]?.name || f.defId)}</b> — ${f.taken === false ? 'written in your Spellbook, not taken' : 'it goes to your discard'}`, 'learn');
         }
         t += 300; break;
@@ -698,7 +735,8 @@ function toast(html, cls = '') {
   const el = document.createElement('div');
   el.className = `toast ${cls}`;
   el.innerHTML = html;
-  $('#toasts').appendChild(el);
+  // The HUD is gone under the lobby, so its toasts would be too.
+  $(LOBBY ? '#ltoasts' : '#toasts').appendChild(el);
   setTimeout(() => el.classList.add('out'), FAST ? 400 : 2600);
   setTimeout(() => el.remove(), FAST ? 700 : 3200);
 }
@@ -1747,6 +1785,7 @@ function renderTop() {
 function updateViewport() {
   if (!arena) return;
   const hud = $('#hud');
+  if (LOBBY) { arena.setViewport({ left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }); return; }
   if (hud.classList.contains('hidden')) { arena.setViewport({ left: 0, top: 58, width: window.innerWidth, height: window.innerHeight - 58 }); return; }
   const mine = $('#mine').getBoundingClientRect();
   const theirs = $('#theirs').getBoundingClientRect();
@@ -1783,17 +1822,24 @@ function render() {
 function endMatch() {
   if (matchOver) return;
   matchOver = true;
-  let learned = 0;
-  if (HUMAN !== null) learned = profile.recordMatch(S, HUMAN);
+  // What the duel wrote into the Spellbook and paid into the purse, itemised
+  // (user: "After each game you get coins"). Watching two AIs pays nothing.
+  const rec = HUMAN !== null ? profile.recordMatch(S, HUMAN) : { learned: 0, coins: 0, lines: [] };
+  rec.learned = Math.max(rec.learned, learnedNow);
   const prof = profile.load();
   const won = S.winner === HUMAN;
+  const cheapest = Math.min(...PACKS.map((k) => k.price));
+  const canShop = HUMAN !== null && prof.coins >= cheapest;
   const title = S.winner === -1 ? 'A draw' : HUMAN === null ? `Player ${S.winner + 1} wins` : won ? 'Victory' : 'Defeat';
   setTimeout(() => modal(`<h2 class="${won ? 'gold' : ''}">${title}</h2>
     <p class="big">${S.vp[0]} – ${S.vp[1]} <small>after ${S.turn} turns · ${esc(S.reason || '')}</small></p>
-    ${HUMAN !== null ? `<p>${learned ? `<b class="green">${learned} new sigil${learned > 1 ? 's' : ''}</b> written into your Spellbook.` : 'Nothing new for the Spellbook this time — binding runes on your board is how spells are found.'}<br>
-      Spellbook: ${Object.keys(prof.learned).length}/${spellbookPage(Object.values(CARDS), prof.learned).length} sigils known · ${prof.matches} duel${prof.matches === 1 ? '' : 's'} · ${prof.wins} won</p>` : ''}
+    ${HUMAN !== null ? `<p>${rec.learned ? `<b class="green">${rec.learned} new sigil${rec.learned > 1 ? 's' : ''}</b> written into your Spellbook.` : 'Nothing new for the Spellbook this time — binding runes on your board is how spells are found.'}<br>
+      Spellbook: ${Object.keys(prof.learned).length}/${spellbookPage(Object.values(CARDS), prof.learned).length} sigils known · ${prof.matches} duel${prof.matches === 1 ? '' : 's'} · ${prof.wins} won</p>
+      <div class="purse">${rec.lines.map((l) => `<div><span>${esc(l.label)}</span><b>+${l.coins}</b></div>`).join('')}
+        <div class="total"><span>Coins earned</span><b>${coinSVG()}+${rec.coins}</b></div>
+        <div class="have"><span>Your purse</span><b>${coinSVG()}${prof.coins} coins</b></div></div>` : ''}
     ${ledgerTable()}
-    <div class="mbtns"><button id="again" class="primary">New duel</button><button id="sb">Open Spellbook</button><button id="close" class="ghost">Look at the battlefield</button></div>`), FAST ? 0 : 1800);
+    <div class="mbtns"><button id="again" class="primary">New duel</button>${canShop ? '<button id="shop">Open shop</button>' : ''}<button id="sb">Open Spellbook</button><button id="to-lobby">Back to lobby</button><button id="close" class="ghost">Look at the battlefield</button></div>`), FAST ? 0 : 1800);
   const hook = () => {
     const again = $('#again'); if (!again) { setTimeout(hook, 100); return; }
     again.onclick = () => {
@@ -1802,6 +1848,8 @@ function endMatch() {
       newMatch({ pool: params.has('pool'), policy: POLICY, watch: HUMAN === null });
     };
     $('#sb').onclick = openSpellbook;
+    $('#to-lobby').onclick = () => { closeModal(); openLobby(); };
+    const shop = $('#shop'); if (shop) shop.onclick = () => { closeModal(); openLobby({ shop: true }); };
     $('#close').onclick = closeModal;
   };
   setTimeout(hook, FAST ? 10 : 1850);
@@ -1844,6 +1892,10 @@ function sigilMiniHTML(cells, ink) {
   return out + '</div>';
 }
 
+/** "golem, tier B" / "artifact" / "trap" / "red spell" -- the line under a card's name. */
+const kindOf = (d) => (d?.kind === 'golem' ? `golem, tier ${d.tier}` : d?.kind === 'artifact' ? 'artifact' : d?.kind === 'trap' ? 'trap' : `${d?.school} spell`);
+const inkOf = (d) => SCHOOL_INK[d?.kind === 'golem' ? 'golem' : d?.school] || '#ccc';
+
 function openSpellbook() {
   const prof = profile.load();
   const page = spellbookPage(Object.values(CARDS), prof.learned);
@@ -1855,8 +1907,8 @@ function openSpellbook() {
     <div class="book sig">${page.map((x) => {
       if (!x.known) return `<div class="bk sg unknown"><span class="q">?</span><div><span class="bc">undiscovered</span><span class="bh">${x.size} runes: ${esc(runeList(x))}</span></div></div>`;
       const d = CARDS[x.id];
-      const ink = SCHOOL_INK[d?.kind === 'golem' ? 'golem' : d?.school] || '#ccc';
-      return `<div class="bk sg"><span class="sgbox">${sigilMiniHTML(x.sigil, ink)}</span><div><span class="bc" style="color:${ink}">${esc(x.name)}</span><span class="bh">${x.size} runes · ${d?.kind === 'golem' ? `golem, tier ${d.tier}` : d?.kind === 'artifact' ? 'artifact' : d?.kind === 'trap' ? 'trap' : `${d?.school} spell`}</span></div></div>`;
+      const ink = inkOf(d);
+      return `<div class="bk sg"><span class="sgbox">${sigilMiniHTML(x.sigil, ink)}</span><div><span class="bc" style="color:${ink}">${esc(x.name)}</span><span class="bh">${x.size} runes · ${kindOf(d)}${prof.learned[x.id] === 'pack' ? ' · from a pack' : ''}</span></div></div>`;
     }).join('')}</div>
     <div class="mbtns"><button id="close" class="primary">Close</button></div>`);
   $('#close').onclick = closeModal;
@@ -1914,6 +1966,153 @@ function openDiscard(p) {
   $('#close').onclick = closeModal;
 }
 
+/* ================================================================ the lobby */
+
+// The front screen (user: "There needs to be like a lobby screen with a nice
+// UI, where you can connect to games, etc."). It overlays the arena -- an
+// idle duel dealt for atmosphere, or the duel you came from -- and holds the
+// purse, Play, Online, the Spellbook and the shop. The shell is in
+// index.html; these fill the parts that change.
+
+const coinSVG = () => '<svg class="coin" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="#d9a63a" stroke="#fff0b0" stroke-width="1.2"/><circle cx="10" cy="10" r="6.2" fill="none" stroke="#7a5212" stroke-width="1"/><path d="M10 5.3 L11.3 8.7 L14.7 10 L11.3 11.3 L10 14.7 L8.7 11.3 L5.3 10 L8.7 8.7 Z" fill="#fff3c8"/></svg>';
+
+/** A sealed pack, drawn in `currentColor` so the rarity tint carries into it. */
+const packSVG = () => `<svg class="packart" viewBox="0 0 120 150" aria-hidden="true">
+  <rect x="8" y="8" width="104" height="134" rx="10" fill="currentColor" fill-opacity=".10" stroke="currentColor" stroke-width="2"/>
+  <rect x="17" y="17" width="86" height="116" rx="7" fill="none" stroke="currentColor" stroke-opacity=".35"/>
+  <path d="M8 84 H112" stroke="currentColor" stroke-opacity=".4" stroke-dasharray="3 4"/>
+  <circle cx="60" cy="58" r="30" fill="none" stroke="currentColor" stroke-opacity=".45" stroke-dasharray="4 6"/>
+  <path d="M60 30 L68 50 L88 58 L68 66 L60 86 L52 66 L32 58 L52 50 Z" fill="currentColor" fill-opacity=".9"/>
+  <circle cx="60" cy="112" r="11" fill="currentColor" fill-opacity=".85"/>
+  <circle cx="60" cy="112" r="6" fill="none" stroke="#000" stroke-opacity=".45" stroke-width="1.5"/>
+</svg>`;
+
+function openLobby({ online = false, shop = false } = {}) {
+  LOBBY = true;
+  document.body.classList.add('lobby');
+  $('#lobby').hidden = false;
+  closePeek();
+  renderLobby();
+  updateViewport();
+  if (shop) $('#lb-shopcard').scrollIntoView({ block: 'start' });
+  else if (online) { $('#lb-online').closest('.lcard').scrollIntoView({ block: 'nearest' }); $('#ol-code')?.focus(); }
+  else $('#lobby').scrollTop = 0;
+}
+
+/**
+ * Back to the field. `resume` restarts the AI it paused -- not when a new
+ * duel is what closed the lobby, since newMatch drives that itself.
+ */
+function closeLobby({ resume = true } = {}) {
+  if (!LOBBY) return;
+  LOBBY = false;
+  document.body.classList.remove('lobby');
+  $('#lobby').hidden = true;
+  $('#lb-shopcard .reveal')?.remove();
+  updateViewport();
+  if (S) render();
+  if (resume && S && !IDLE && S.winner === null) drive();
+}
+
+function renderLobby() {
+  if (!LOBBY) return;
+  const prof = profile.load();
+  const cards = Object.values(CARDS);
+  const page = spellbookPage(cards, prof.learned);
+  const known = page.filter((x) => x.known).length;
+  $('#lb-purse').innerHTML = `
+    <div class="lstat coins" title="coins: every finished duel pays, the shop's packs cost"><b>${coinSVG()}${prof.coins | 0}</b><small>coins</small></div>
+    <div class="lstat"><b>${known}<i>/${page.length}</i></b><small>sigils known</small></div>
+    <div class="lstat"><b>${prof.matches | 0}</b><small>duel${prof.matches === 1 ? '' : 's'}</small></div>
+    <div class="lstat"><b>${prof.wins | 0}</b><small>won</small></div>`;
+  // A duel to go back to: the one you came from, never the idle backdrop.
+  const live = !!S && !IDLE;
+  const back = $('#lb-back');
+  back.hidden = !live;
+  back.textContent = live && S.winner !== null ? 'Back to the battlefield' : 'Back to the duel';
+  // The Play card: in a room, the host deals and the guest waits.
+  const note = $('#lb-playnote'), go = $('#lb-go'), watch = $('#lb-watch');
+  if (NET) {
+    note.textContent = NET.isHost ? (NET.ready ? `Room ${NET.code}: the duel is dealt to both of you.` : `Room ${NET.code}: waiting for your opponent before dealing.`) : `Room ${NET.code}: the host deals the duels.`;
+    go.disabled = !NET.isHost || !NET.ready;
+    go.textContent = 'Deal the duel';
+    watch.hidden = true;
+  } else {
+    note.textContent = '';
+    go.disabled = false;
+    go.textContent = 'Begin duel';
+    watch.hidden = false;
+  }
+  renderOnline();
+  renderBook(prof, page, known);
+  renderShop(prof, cards);
+}
+
+function renderBook(prof, page, known) {
+  // The last few sigils written, newest last: the book's insertion order.
+  const recent = Object.keys(prof.learned).slice(-8).map((id) => CARDS[id]).filter((d) => d?.sigil);
+  $('#lb-book').innerHTML = `
+    <div class="bookrow"><b>${known}<i>/${page.length}</i></b><div style="flex:1;min-width:0"><div class="bookbar"><i style="width:${page.length ? (known / page.length) * 100 : 0}%"></i></div><p>sigils known${known ? '' : ' — bind runes in a duel, or buy a pack'}</p></div></div>
+    ${recent.length ? `<div class="bookrecent">${recent.map((d) => `<span class="sgbox" title="${esc(d.name)}">${sigilMiniHTML(d.sigil, inkOf(d))}</span>`).join('')}</div>` : ''}
+    <p>Every findable card has a sigil, a small shape of runes. The book keeps every shape you have made and hints at the rest.</p>
+    <div class="lbtns"><button id="lb-openbook" class="primary">Open the Spellbook</button></div>`;
+  $('#lb-openbook').onclick = openSpellbook;
+}
+
+function renderShop(prof, cards) {
+  $('#lb-shophint').innerHTML = `A pack holds one spell formula you do not know yet, written straight into your Spellbook — rarer spells cost more. Every duel played pays <b>${PURSE.played}</b> coins, a win <b>+${PURSE.won}</b>, each VP <b>+${PURSE.perVp}</b>, each sigil bound in play <b>+${PURSE.perFind}</b>.`;
+  const host = $('#lb-shop');
+  host.innerHTML = PACKS.map((k) => {
+    const left = packContents(cards, prof.learned, k.rarity).length;
+    const total = cards.filter((d) => d.sigil && rarityOf(d) === k.rarity).length;
+    const why = !left ? `Sold out — every ${k.rarity} sigil is in your Spellbook` : prof.coins < k.price ? `${k.price - prof.coins} more coin${k.price - prof.coins === 1 ? '' : 's'} needed` : '';
+    return `<div class="pack ${k.rarity}${left ? '' : ' none'}">${packSVG()}
+      <div class="pname">${esc(k.name)}</div><div class="prarity">${esc(k.rarity)}</div>
+      <p class="pblurb">${esc(k.blurb)}</p>
+      <div class="pprice">${coinSVG()}${k.price}</div>
+      <div class="pleft">${left} of ${total} left</div>
+      <div class="pwhy">${esc(why)}</div>
+      <button class="primary" data-r="${k.rarity}"${why ? ' disabled' : ''}>Buy</button></div>`;
+  }).join('');
+  host.querySelectorAll('button[data-r]').forEach((b) => {
+    b.onclick = () => { try { buyPack(b.dataset.r); } catch (e) { toast(esc(e.message), 'bad'); } };
+  });
+}
+
+/**
+ * Buy a pack: the one path the Buy button and `WG.shop.buy` share. The
+ * profile does the selling and throws, without charging, when the purse is
+ * short or the rarity is sold out; here the pack is torn open and the counts
+ * redrawn. The shop is the one place chance is real: Math.random, not the
+ * duel's rng.
+ */
+function buyPack(rarity) {
+  const id = profile.buyPack(Object.values(CARDS), rarity, Math.random());
+  const d = CARDS[id];
+  revealPack(d, rarity);
+  renderLobby();
+  toast(`<b>${esc(d.name)}</b> — written into your Spellbook`, 'learn');
+  return id;
+}
+
+/** The pack shakes, tears open and flips into the card it held: name in its school's ink, kind, sigil. */
+function revealPack(d, rarity) {
+  const card = $('#lb-shopcard');
+  card.querySelector('.reveal')?.remove();
+  const pack = packOf(rarity);
+  const el = document.createElement('div');
+  el.className = `reveal ${rarity}`;
+  el.innerHTML = `<div class="rstage"><div class="flip">
+      <div class="front">${packSVG()}<div class="pname">${esc(pack?.name || rarity)}</div></div>
+      <div class="back"><div class="rcard">${cardSVG(d)}</div><div class="rname" style="color:${inkOf(d)}">${esc(d.name)}</div><div class="rkind">${esc(kindOf(d))}</div><div class="rsig">${sigilMiniHTML(d.sigil, inkOf(d))}</div></div>
+    </div><div class="rburst"></div></div>
+    <div class="rcap">Written into your Spellbook</div>
+    <div class="lbtns"><button class="primary rdone">Keep shopping</button></div>`;
+  card.appendChild(el);
+  el.querySelector('.rdone').onclick = () => el.remove();
+  el.onclick = (e) => { if (e.target === el) el.remove(); };
+}
+
 /* ================================================================ boot */
 
 window.WG = {
@@ -1922,6 +2121,9 @@ window.WG = {
   newMatch,
   hash: () => hashState(S),
   get net() { return NET ? { code: NET.code, isHost: NET.isHost, ready: NET.ready, seat: HUMAN } : null; },
+  /** Test hooks: the lobby and the shop, through the same paths the buttons take. */
+  lobby: { open: openLobby, close: closeLobby, get visible() { return LOBBY; } },
+  shop: { buy: buyPack },
   /** Test hook: let the AI make this seat's next decision through the real act/answer path. */
   auto(policy = 'greedy') {
     if (humanToAnswer()) { answer(answerFor(S, { policy })); return 'answer'; }
@@ -1945,13 +2147,21 @@ function boot() {
   $('#btn-online').onclick = openOnline;
   $('#btn-log').onclick = () => { const w = $('#logwrap'); w.classList.toggle('collapsed'); $('#btn-log').textContent = w.classList.contains('collapsed') ? 'Expand' : 'Collapse'; $('#log').scrollTop = $('#log').scrollHeight; };
   $('#btn-hide').onclick = toggleHud;
+  $('#btn-lobby').onclick = () => openLobby();
   document.addEventListener('click', (e) => {
     const d = e.target.closest('.discard');
     if (d) openDiscard(Number(d.dataset.p));
   });
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-    if (e.key === 'Escape') { if (closePeek()) return; if (!$('#modal').hidden) closeModal(); else { sel = null; render(); } }
+    if (e.key === 'Escape') {
+      if (closePeek()) return;
+      if (!$('#modal').hidden) closeModal();
+      else if (LOBBY) { if ($('#lb-shopcard .reveal')) $('#lb-shopcard .reveal').remove(); else if (S && !IDLE) closeLobby(); }
+      else { sel = null; render(); }
+      return;
+    }
+    if (LOBBY) return;
     if (e.key === 'Tab') { e.preventDefault(); toggleHud(); }
     if (e.key === 'h' || e.key === 'H') arena?.home();
     if (e.key === 'Enter' && humanToMove()) { if (S.phase === 'unit') endTurn(); else { const a = myActions().find((x) => x.type === 'pass'); if (a && !sel) act(a); } }
@@ -1959,10 +2169,39 @@ function boot() {
   window.addEventListener('resize', () => { updateViewport(); render(); });
   $('#peek').addEventListener('click', closePeek);
   $('#peek').addEventListener('contextmenu', (e) => { e.preventDefault(); closePeek(); });
+  bootLobby();
+  // A link with a seed, a watch or a pool goes straight into that duel, as
+  // it always has (the labs and the harness depend on it); a room link joins
+  // the room from the lobby's Online card; a bare visit lands in the lobby,
+  // over an idle duel.
   const seed = params.has('seed') ? Number(params.get('seed')) : undefined;
-  newMatch({ seed, watch: params.has('watch'), pool: params.has('pool'), policy: params.get('ai') || 'oneply' });
-  if (params.has('room')) openOnline();
-  else if (!params.has('seed') && !profile.seen('rules')) openRules();
+  if (params.has('seed') || params.has('watch') || params.has('pool')) {
+    newMatch({ seed, watch: params.has('watch'), pool: params.has('pool'), policy: params.get('ai') || 'oneply' });
+    if (!params.has('seed') && !profile.seen('rules')) openRules();
+    return;
+  }
+  newMatch({ idle: true, policy: params.get('ai') || 'oneply' });
+  openLobby({ online: params.has('room') });
+  if (params.has('room')) joinRoom(params.get('room'));
+}
+
+/** The lobby's static controls, wired once. */
+function bootLobby() {
+  $('#lb-rules').onclick = openRules;
+  $('#lb-back').onclick = () => closeLobby();
+  $('#lb-q').value = profile.setting('quality') || 'high';
+  $('#lb-ai').value = POLICY;
+  const begin = (watch) => {
+    const raw = $('#lb-seed').value.trim();
+    const seed = raw === '' ? Math.floor(Math.random() * 1e6) : (Number(raw) || 1);
+    const pool = $('#lb-deck').value === 'pool';
+    profile.setting('quality', $('#lb-q').value);
+    if (NET) { if (NET.isHost && NET.ready) startOnline(seed, pool); else toast(NET.isHost ? 'Wait for your opponent to join first.' : 'The host deals the duels.', ''); return; }
+    newMatch({ seed, policy: $('#lb-ai').value, pool, watch });
+  };
+  $('#lb-go').onclick = () => begin(false);
+  $('#lb-watch').onclick = () => begin(true);
+  $('#lb-seed').onkeydown = (e) => { if (e.key === 'Enter') begin(false); };
 }
 
 function toggleHud() {

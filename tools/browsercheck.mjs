@@ -74,11 +74,53 @@ const waitIdle = async (ms = 20000) => {
   return false;
 };
 
+const PROFILE_KEY = 'wizards-gambit:profile:v1';
+const purse = () => ev(`(JSON.parse(localStorage.getItem(${JSON.stringify(PROFILE_KEY)}) || '{}').coins | 0)`);
+
 try {
   await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
+
+  // THE LOBBY. A bare visit is the front screen: the HUD gone, no AI
+  // thinking behind it; it fits a phone; the shop sells a pack through the
+  // same path as its Buy button and the Spellbook then shows the sigil.
+  await send('Page.navigate', { url: `http://localhost:${port}/` });
+  for (let k = 0; k < 100; k++) { if (await ev('!!(window.WG && WG.state)')) break; await sleep(200); }
+  const lob = await ev(`JSON.stringify({ lobby: !!(WG.lobby && WG.lobby.visible) && !document.querySelector('#lobby').hidden, hud: getComputedStyle(document.querySelector('#hud')).display, busy: WG.busy })`);
+  check('a bare visit shows the lobby and hides the HUD', JSON.parse(lob).lobby && JSON.parse(lob).hud === 'none' && !JSON.parse(lob).busy, lob);
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await ev('dispatchEvent(new Event("resize"))');
+  await sleep(500);
+  const mob = await ev(`[document.documentElement.scrollWidth, innerWidth, document.querySelector('#lobby').scrollWidth]`);
+  check('the lobby fits a 390 px phone without horizontal overflow', mob[0] <= mob[1] && mob[2] <= mob[1], `scrollWidth ${mob[0]}, lobby ${mob[2]} vs ${mob[1]}`);
+  await shot('lobby-phone');
+  await send('Emulation.clearDeviceMetricsOverride');
+  await ev('dispatchEvent(new Event("resize"))');
+  await sleep(400);
+  await shot('lobby');
+  // Fund the purse (a duel pays 20 or so; a common pack costs 50) and buy.
+  await ev(`(()=>{ const K=${JSON.stringify(PROFILE_KEY)}; const p=JSON.parse(localStorage.getItem(K)||'{}'); p.coins=200; localStorage.setItem(K, JSON.stringify(p)); })()`);
+  await ev('WG.lobby.open()');
+  const funded = await purse();
+  const bought = await ev(`(()=>{ try { return { id: WG.shop.buy('common') }; } catch (e) { return { error: e.message }; } })()`);
+  const prof = await ev(`JSON.parse(localStorage.getItem(${JSON.stringify(PROFILE_KEY)}))`);
+  check('buying a common pack charges 50 and writes the card into the Spellbook as a pack',
+    !!bought.id && prof.coins === funded - 50 && prof.learned?.[bought.id] === 'pack', `${JSON.stringify(bought)} coins ${funded} -> ${prof.coins}`);
+  await sleep(1300);
+  await shot('shop-reveal');
+  await ev(`document.querySelector('#lb-shopcard .reveal')?.remove(); document.querySelector('#lb-openbook').click()`);
+  const inBook = await ev(`(async()=>{ const { CARDS } = await import('./js/rules/spells/index.js'); const name = CARDS[${JSON.stringify(bought.id || '')}]?.name;
+    const e = [...document.querySelectorAll('#modal .bk.sg:not(.unknown)')].find(x => x.querySelector('.bc')?.textContent === name);
+    return { name, shown: !!e, sigil: !!e?.querySelector('.sgrid i .rune-i') } })()`);
+  check('the Spellbook modal shows the bought card with its sigil drawn', inBook.shown && inBook.sigil, JSON.stringify(inBook));
+  await shot('spellbook-after-pack');
+  await ev('document.querySelector("#modal").hidden = true');
+
   await send('Page.navigate', { url: `http://localhost:${port}/?seed=${seed}&fast${arg('extra', '')}` });
   for (let k = 0; k < 100; k++) { if (await ev('!!(window.WG && WG.state)')) break; await sleep(200); }
   check('page boots and exposes WG', await ev('!!(window.WG && WG.state)'));
+  const lobSeeded = await ev(`JSON.stringify({ lobby: !!(WG.lobby && WG.lobby.visible), hud: getComputedStyle(document.querySelector('#hud')).display })`);
+  check('?seed= goes straight into the duel, no lobby', !JSON.parse(lobSeeded).lobby && JSON.parse(lobSeeded).hud !== 'none', lobSeeded);
+  const coinsBefore = await purse();
   for (let k = 0; k < 200; k++) { if (await ev('!!(WG.arena && WG.arena.ready)')) break; await sleep(250); }
   check('the battlefield loads its models', await ev('!!(WG.arena && WG.arena.ready)'));
   await sleep(1500);
@@ -226,6 +268,12 @@ try {
   // The pouch chips read what the engine holds (nothing is laid on the scratch).
   const pouch = await ev(`(()=>{const p=WG.state.players[0].runes; const c={}; for (const el of document.querySelectorAll('#sigils0 .chip')) c[el.dataset.r]=+el.querySelector('b').textContent; return JSON.stringify({ pouch: p, chips: c, same: Object.keys(p).every(r => p[r] === c[r]) })})()`);
   check('the pouch chips match the engine pouch', JSON.parse(pouch).same, pouch);
+  // The duel paid: the end modal itemises the coins and the purse grew.
+  for (let k = 0; k < 30; k++) { if (await ev('!document.querySelector("#modal").hidden')) break; await sleep(100); }
+  const endText = await ev(`document.querySelector('#modal').hidden ? '' : document.querySelector('#modal .mbox').innerText`);
+  check('the end-of-match modal itemises the coins earned', /coins/i.test(endText) && /Duel played/.test(endText), endText.split('\n').filter((l) => /coins|played/i.test(l)).join(' | ') || 'no modal');
+  const coinsAfter = await purse();
+  check('the purse grew by what the duel paid', coinsAfter > coinsBefore, `${coinsBefore} -> ${coinsAfter}`);
   await shot('end');
 } catch (e) {
   check('harness ran', false, e.message);

@@ -30,6 +30,7 @@
       <button id="btn-book" class="ghost">Spellbook</button>
       <button id="btn-online" class="ghost" title="Play a friend with a room code">Play online</button>
       <button id="btn-hide" class="ghost" title="Hide the panels (Tab)">Hide HUD</button>
+      <button id="btn-lobby" class="ghost" title="The lobby: play, online rooms, your Spellbook and the shop">Lobby</button>
       <button id="btn-new">New duel</button>
     </nav>
   </header>
@@ -64,6 +65,51 @@
   <div id="toasts"></div>
   <div id="tray"></div>
   <footer id="hand"></footer>
+</div>
+
+<!-- The LOBBY: the front screen. It overlays the arena (an idle duel plays
+     behind it for atmosphere) and holds everything that is not a duel in
+     progress: play, online rooms, the Spellbook and the shop. The static
+     shell is here; js/view/main.js fills the parts that change. -->
+<div id="lobby" hidden>
+  <div class="lwrap">
+    <div class="lnav">
+      <button id="lb-rules" class="ghost">How to play</button>
+      <button id="lb-back" class="ghost" hidden>Back to the duel</button>
+    </div>
+    <header class="lhead">
+      <div class="ltitle">Wizard's <span>Gambit</span></div>
+      <div class="ltag">A duel of turning spells, rune chains and a battlefield that fights back.</div>
+      <div id="lb-purse" class="lstrip"></div>
+    </header>
+    <div class="lgrid">
+      <section class="lcard play">
+        <h3>Play</h3>
+        <p>One spell action a turn, units on a living field, first to 15 VP.</p>
+        <label>Opponent <select id="lb-ai"><option value="oneply">Adept (strongest)</option><option value="greedy">Apprentice</option><option value="random">Novice (random)</option></select></label>
+        <label>Deck <select id="lb-deck"><option value="std">Standard ten cards</option><option value="pool">Random from all cards</option></select></label>
+        <label>Seed <input id="lb-seed" type="text" inputmode="numeric" placeholder="random" autocomplete="off"></label>
+        <label>Graphics <select id="lb-q"><option value="high">High (bloom, 4k shadows)</option><option value="medium">Medium</option><option value="low">Low (laptops)</option></select></label>
+        <p id="lb-playnote" class="note"></p>
+        <div class="lbtns"><button id="lb-go" class="primary">Begin duel</button><button id="lb-watch" class="ghost">Watch two AIs</button></div>
+      </section>
+      <section class="lcard online">
+        <h3>Online</h3>
+        <div id="lb-online"></div>
+      </section>
+      <section class="lcard book">
+        <h3>Spellbook</h3>
+        <div id="lb-book"></div>
+      </section>
+      <section class="lcard shop" id="lb-shopcard">
+        <h3>Shop</h3>
+        <p id="lb-shophint"></p>
+        <div id="lb-shop" class="packs"></div>
+      </section>
+    </div>
+    <footer class="lfoot">Drag to orbit the battlefield · right-click a card to see it big · Tab hides the panels</footer>
+  </div>
+  <div id="ltoasts"></div>
 </div>
 
 <div id="peek" hidden title="click, right-click or Esc to put it back"></div>
