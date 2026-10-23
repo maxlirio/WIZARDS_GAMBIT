@@ -92,10 +92,10 @@ try {
   await ev('dispatchEvent(new Event("resize"))');
   await sleep(500);
 
-  // The reveal: a rare pack torn open, caught mid-flip and once it has settled.
+  // The reveal: an Archmage pack torn open, caught mid-flip and once it has settled.
   await ev('document.querySelector("#lb-shopcard").scrollIntoView({ block: "center" })');
   const t0 = Date.now();
-  const bought = await ev(`WG.shop.buy('rare')`);
+  const bought = await ev(`WG.shop.buy('archmage')`);
   console.log('  bought', bought);
   await sleep(Math.max(0, 520 - (Date.now() - t0)));
   await shot('shop-reveal-mid');

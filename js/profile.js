@@ -99,18 +99,19 @@ export function recordMatch(state, p) {
 export const coins = () => load().coins | 0;
 
 /**
- * Buy a pack of `rarity` from `cards` (the corpus). Returns the card id the
- * pack held, now in the Spellbook as 'pack'; throws when the purse is short or
- * every sigil of that rarity is already known. `rng01` is a number in [0, 1):
- * the page passes its own dice, a harness passes what it likes -- the shop is
- * not part of any replay, so it is the one place chance may be real.
+ * Buy the pack `packId` ('apprentice' | 'adept' | 'archmage') from `cards`
+ * (the corpus). Returns the card id the pack held, now in the Spellbook as
+ * 'pack'; throws when the purse is short or every sigil is already known.
+ * `rng` is a function returning a number in [0, 1): the page passes its own
+ * dice, a harness passes what it likes -- the shop is not part of any replay,
+ * so it is the one place chance may be real.
  */
-export function buyPack(cards, rarity, rng01) {
-  const pack = packOf(rarity);
-  if (!pack) throw new Error(`no ${rarity} pack`);
+export function buyPack(cards, packId, rng) {
+  const pack = packOf(packId);
+  if (!pack) throw new Error(`no pack '${packId}'`);
   const prof = load();
-  const id = openPack(cards, prof.learned, rarity, rng01);
-  if (!id) throw new Error(`you know every ${rarity} sigil`);
+  const id = openPack(cards, prof.learned, pack, rng);
+  if (!id) throw new Error('you know every sigil there is');
   if (prof.coins < pack.price) throw new Error(`${pack.name} costs ${pack.price} coins; you have ${prof.coins}`);
   prof.coins -= pack.price;
   prof.spent += pack.price;

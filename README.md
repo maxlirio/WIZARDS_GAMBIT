@@ -114,7 +114,7 @@ tools/check.sh --quick                      # skips the long sweeps
 | `checkrotate` | the orientation algebra and the 16-vertex lattice |
 | `checkrunes` | rune distribution, and the chain-length curve against table occupancy |
 | `checkcorpus` | every gate, cost, Keyword, VP formula, event and motif is on a card — or declared reserved with a reason |
-| `checkshop` | coins, pack prices and rarities; a pack never sells a sigil you know, never charges on a refusal |
+| `checkshop` | coins, pack odds and the measured power tiers; a pack never sells a sigil you know, never charges on a refusal |
 | `checkchains` | **the gate**: chains terminate under adversarial tables, and replay identically |
 | `verify-faces` | **the gate**: every face against its own printed text. `--selftest` plants 10 faults |
 | `checkderived` | every derived bucket is both written by a card and read by a rule |
@@ -128,6 +128,7 @@ And two instruments rather than tests:
 ```sh
 node tools/selfplay.js --games 200 --a oneply --b greedy --csv out.csv
 node tools/checkrunes.js --tables 200000
+node tools/ratecards.js --games 800 --workers 3 --write   # rank every card by deck win rate -> spells/rarity.js
 ```
 
 `selfplay` is the balance panel: VP from objectives against VP from kills, table
@@ -157,6 +158,7 @@ js/rules/
   combat.js golems.js  damage and death; the tier table and the attrition rule
   sigils.js learn.js   the Spellbook: the rune pouch, the bind action and the 63 sigils that find cards
   shop.js              coins paid by a finished duel, and the packs that buy a sigil into the Spellbook
+  spells/rarity.js     every findable card's power tier, measured by tools/ratecards.js
   spells/              the corpus, one file per school (60 cards, 216 faces)
 js/field/
   fixed.js             integer millimetres. THE ONLY FILE ALLOWED Math.*

@@ -566,37 +566,31 @@ of the game, not an inventory and not a deck list.
 
 Finding every sigil by laying runes alone would take dozens of duels, so there is a
 second way in: **coins**, paid at the end of every duel you play to the end, and
-**packs** bought with them in the lobby's shop. A pack holds one sigil of its rarity that
-you do not already know, chosen at random, and writes it straight into your Spellbook.
+**packs** bought with them in the lobby's shop. A pack holds one sigil you do not already
+know, chosen at random, and writes it straight into your Spellbook.
 
 - **The purse.** A finished duel pays **20 coins** for playing, **30** more for winning,
   **2 per VP** you scored and **10 per sigil you bound** in play. Watching two computer
   opponents pays nothing; neither does a duel abandoned before 15 VP.
-- **Rarity** follows the kind of work a sigil finds. The **red, blue and green** school
-  spells are **common** (four-rune sigils); the **purple** spells, the **artifacts** and
-  the **traps** are **uncommon** (four runes); the **gold** cards and the **golems** are
-  **rare** (five runes). An **Apprentice pack** (common) costs **50**, an **Adept pack**
-  (uncommon) **100**, an **Archmage pack** (rare) **200** — so a won duel buys a common
-  sigil outright and a rare one takes three or four.
-- A pack **never holds a sigil you already know**, and a rarity whose every sigil you
-  know is sold out. The Spellbook records how each sigil came to it — bound in play or
+- **Rarity is power.** Every findable card has a tier — **common**, **uncommon** or
+  **rare** — and the tier is **measured**, not declared: `tools/ratecards.js` plays
+  hundreds of random-deck duels between bots and ranks every card by how often decks
+  holding it win; the top fifth are rare, the next three tenths uncommon, the rest
+  common (`js/rules/spells/rarity.js`). A tier is public knowledge; the shape of the
+  sigil is still the secret.
+- **Every pack holds every kind of card** — a spell of any school, an artifact, a trap, a
+  golem, a gold card. What a dearer pack buys is **better odds of a stronger one**: an
+  **Apprentice pack** (50 coins) pays common 80 %, uncommon 18 %, rare 2 %; an **Adept
+  pack** (100) 45 / 45 / 10; an **Archmage pack** (200) never common, uncommon 50 %,
+  rare 50 %. So a won duel buys an Apprentice pack outright and an Archmage pack takes
+  three or four.
+- A pack **never holds a sigil you already know**. If the tier it rolls has nothing left
+  to give, it pays the nearest tier that does, upward on a tie; only a full Spellbook
+  closes the shop. The Spellbook records how each sigil came to it — bound in play or
   bought — and a bought sigil is yours in every later duel exactly as a bound one is.
 - **The engine never sees the purse.** Coins and packs live in the browser's save file
   with the Spellbook; a replay and an online duel are unaffected by how rich either
   player is, and the standard deck is still the same ten cards.
-
-This replaced two earlier Spellbooks. The first was a list of **earned conditions**
-("deal 25 damage in one duel", "let your mage be wounded to half"); that made a find a
-quest to seek, and a quest that wins games becomes the one thing every match does. The
-second handed you **one random rune a turn** to set on a board that persisted all match;
-with five- and six-rune sigils there were too many arrangements to ever close one on
-purpose, and the board could not be cleared. Now the runes come from what you actually
-do, you keep them until you choose to use them, and the puzzle is the **shape**: the
-Spellbook tells you a card takes a Shard, a Shard, a Wheel and a Lattice, and the
-arrangements of that are yours to try, one bind a turn.
-
-This is the system that took mana's place, so it is a first-class subsystem rather
-than a late addition.
 
 ---
 

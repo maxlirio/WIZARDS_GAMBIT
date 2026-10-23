@@ -29,7 +29,7 @@ import { gateProgress, counted } from '../rules/gates.js';
 import { keywordsOf, keywordSources, KEYWORDS } from '../rules/keywords.js';
 import { TIER_CAP } from '../rules/golems.js';
 import { spellbookPage } from '../rules/learn.js';
-import { PACKS, packOf, packContents, rarityOf, PURSE } from '../rules/shop.js';
+import { PACKS, RARITIES, packOf, packContents, rarityOf, PURSE } from '../rules/shop.js';
 import { bindError, BOARD_W, BOARD_CELLS } from '../rules/sigils.js';
 import { RUNES } from '../rules/runes.js';
 import { seedRng, pick } from '../rules/rng.js';
@@ -91,7 +91,8 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   for (const p of [0, 1]) for (const el of document.querySelectorAll(`#table${p} .cell`)) el.dataset.uid = '';
   $('#log').innerHTML = '';
   arena?.dispose();
-  arena = createArena($('#arena'), S, {
+  try {
+    arena = createArena($('#arena'), S, {
     onPickUnit, onPickMarker, onPickProp, onPickGround, onHover: onArenaHover,
     onPickNothing: () => {},
     isPickable: () => true,
@@ -99,13 +100,20 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
     quality: profile.setting('quality') || 'high',
     seat: HUMAN ?? 0,
   });
+  } catch (e) {
+    // No WebGL (or a GPU that refused it): the rest of the page still works,
+    // and the reason is on the screen rather than a black battlefield.
+    console.error(e);
+    arena = null;
+    window.__bootfail?.(`battlefield: ${e.message}`);
+  }
   $('#seed').textContent = `seed ${seed} · ${S.arena.challenge}`;
   if (idle) {
     history.replaceState(null, '', location.pathname);
     flushFx();
     render();
     updateViewport();
-    arena.whenReady.then(() => { if (S) { render(); updateViewport(); } });
+    arena?.whenReady.then(() => { if (S) { render(); updateViewport(); } });
     return;
   }
   history.replaceState(null, '', NET ? `?room=${NET.code}` : `?seed=${seed}${watch ? '&watch' : ''}${pool ? '&pool' : ''}${FAST ? '&fast' : ''}`);
@@ -116,7 +124,7 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   flushFx();
   render();
   updateViewport();
-  arena.whenReady.then(() => { if (S) { render(); updateViewport(); } });
+  arena?.whenReady.then(() => { if (S) { render(); updateViewport(); } });
   drive();
 }
 
@@ -1903,12 +1911,13 @@ function openSpellbook() {
   const runeList = (x) => x.runes.map((r) => RUNE_NAME[r]).join(', ');
   modal(`<h2>The Spellbook</h2>
     <p class="dim">Spells are <b>found</b>, not earned. Every face you resolve earns a rune of its kind of work — Spiral for turning, Shard for breaking, Wheel for moving, Lattice for drawing — into your pouch. Once a turn, lay runes on your board and <b>Bind</b>: any card whose <b>sigil</b> you have laid, exactly as drawn — orientation matters — is found and its runes are spent; the rest go back to your pouch. The Spellbook remembers every shape you have made; for the rest it knows only which runes they take.</p>
-    <p><b>${known}</b> of ${page.length} sigils known · ${prof.matches} duels · ${prof.wins} won</p>
+    <p><b>${known}</b> of ${page.length} sigils known · ${prof.matches} duels · ${prof.wins} won. Every card has a power tier — <span class="tier common">common</span> <span class="tier uncommon">uncommon</span> <span class="tier rare">rare</span> — measured from how often it wins; the shop's packs pay out by tier.</p>
     <div class="book sig">${page.map((x) => {
-      if (!x.known) return `<div class="bk sg unknown"><span class="q">?</span><div><span class="bc">undiscovered</span><span class="bh">${x.size} runes: ${esc(runeList(x))}</span></div></div>`;
       const d = CARDS[x.id];
+      // The tier is public knowledge; the shape is the secret.
+      if (!x.known) return `<div class="bk sg unknown"><span class="q">?</span><div><span class="bc">undiscovered ${tierBadge(d)}</span><span class="bh">${x.size} runes: ${esc(runeList(x))}</span></div></div>`;
       const ink = inkOf(d);
-      return `<div class="bk sg"><span class="sgbox">${sigilMiniHTML(x.sigil, ink)}</span><div><span class="bc" style="color:${ink}">${esc(x.name)}</span><span class="bh">${x.size} runes · ${kindOf(d)}${prof.learned[x.id] === 'pack' ? ' · from a pack' : ''}</span></div></div>`;
+      return `<div class="bk sg"><span class="sgbox">${sigilMiniHTML(x.sigil, ink)}</span><div><span class="bc" style="color:${ink}">${esc(x.name)} ${tierBadge(d)}</span><span class="bh">${x.size} runes · ${kindOf(d)}${prof.learned[x.id] === 'pack' ? ' · from a pack' : ''}</span></div></div>`;
     }).join('')}</div>
     <div class="mbtns"><button id="close" class="primary">Close</button></div>`);
   $('#close').onclick = closeModal;
@@ -2053,58 +2062,65 @@ function renderBook(prof, page, known) {
   const recent = Object.keys(prof.learned).slice(-8).map((id) => CARDS[id]).filter((d) => d?.sigil);
   $('#lb-book').innerHTML = `
     <div class="bookrow"><b>${known}<i>/${page.length}</i></b><div style="flex:1;min-width:0"><div class="bookbar"><i style="width:${page.length ? (known / page.length) * 100 : 0}%"></i></div><p>sigils known${known ? '' : ' — bind runes in a duel, or buy a pack'}</p></div></div>
-    ${recent.length ? `<div class="bookrecent">${recent.map((d) => `<span class="sgbox" title="${esc(d.name)}">${sigilMiniHTML(d.sigil, inkOf(d))}</span>`).join('')}</div>` : ''}
+    ${recent.length ? `<div class="bookrecent">${recent.map((d) => `<span class="sgbox ${rarityOf(d)}" title="${esc(d.name)} · ${rarityOf(d)}">${sigilMiniHTML(d.sigil, inkOf(d))}</span>`).join('')}</div>` : ''}
     <p>Every findable card has a sigil, a small shape of runes. The book keeps every shape you have made and hints at the rest.</p>
     <div class="lbtns"><button id="lb-openbook" class="primary">Open the Spellbook</button></div>`;
   $('#lb-openbook').onclick = openSpellbook;
 }
 
 function renderShop(prof, cards) {
-  $('#lb-shophint').innerHTML = `A pack holds one spell formula you do not know yet, written straight into your Spellbook — rarer spells cost more. Every duel played pays <b>${PURSE.played}</b> coins, a win <b>+${PURSE.won}</b>, each VP <b>+${PURSE.perVp}</b>, each sigil bound in play <b>+${PURSE.perFind}</b>.`;
+  // RARITY IS POWER (user: "The packs have all the types of card in each, just
+  // there are different power tiers"): every pack holds any kind of card, a
+  // dearer one buys better odds of a stronger one, and the only sell-out is a
+  // full Spellbook.
+  const left = packContents(cards, prof.learned).length;
+  const total = cards.filter((d) => d.sigil).length;
+  $('#lb-shophint').innerHTML = `Every pack holds one card of <b>any kind</b> — a spell of any school, an artifact, a trap, a golem, a gold card — written straight into your Spellbook. A dearer pack buys better odds of a <b>stronger</b> one. <b>${left}</b> of ${total} sigils still to find. Every duel played pays <b>${PURSE.played}</b> coins, a win <b>+${PURSE.won}</b>, each VP <b>+${PURSE.perVp}</b>, each sigil bound in play <b>+${PURSE.perFind}</b>.`;
   const host = $('#lb-shop');
   host.innerHTML = PACKS.map((k) => {
-    const left = packContents(cards, prof.learned, k.rarity).length;
-    const total = cards.filter((d) => d.sigil && rarityOf(d) === k.rarity).length;
-    const why = !left ? `Sold out — every ${k.rarity} sigil is in your Spellbook` : prof.coins < k.price ? `${k.price - prof.coins} more coin${k.price - prof.coins === 1 ? '' : 's'} needed` : '';
-    return `<div class="pack ${k.rarity}${left ? '' : ' none'}">${packSVG()}
-      <div class="pname">${esc(k.name)}</div><div class="prarity">${esc(k.rarity)}</div>
+    const why = !left ? 'Sold out — you know every sigil there is' : prof.coins < k.price ? `${k.price - prof.coins} more coin${k.price - prof.coins === 1 ? '' : 's'} needed` : '';
+    return `<div class="pack ${esc(k.id)}${left ? '' : ' none'}">${packSVG()}
+      <div class="pname">${esc(k.name)}</div>
+      <div class="odds">${RARITIES.map((t, i) => `<span class="tier ${t}" title="${esc(t)} cards">${esc(t)} ${Math.round(k.odds[i] * 100)}%</span>`).join('')}</div>
       <p class="pblurb">${esc(k.blurb)}</p>
       <div class="pprice">${coinSVG()}${k.price}</div>
-      <div class="pleft">${left} of ${total} left</div>
       <div class="pwhy">${esc(why)}</div>
-      <button class="primary" data-r="${k.rarity}"${why ? ' disabled' : ''}>Buy</button></div>`;
+      <button class="primary" data-pack="${esc(k.id)}"${why ? ' disabled' : ''}>Buy</button></div>`;
   }).join('');
-  host.querySelectorAll('button[data-r]').forEach((b) => {
-    b.onclick = () => { try { buyPack(b.dataset.r); } catch (e) { toast(esc(e.message), 'bad'); } };
+  host.querySelectorAll('button[data-pack]').forEach((b) => {
+    b.onclick = () => { try { buyPack(b.dataset.pack); } catch (e) { toast(esc(e.message), 'bad'); } };
   });
 }
 
+/** The power-tier badge: common steel, uncommon purple, rare gold. The tier is public; the shape is the secret. */
+const tierBadge = (d) => { const t = rarityOf(d); return `<span class="tier ${t}">${t}</span>`; };
+
 /**
- * Buy a pack: the one path the Buy button and `WG.shop.buy` share. The
+ * Buy a pack by id: the one path the Buy button and `WG.shop.buy` share. The
  * profile does the selling and throws, without charging, when the purse is
- * short or the rarity is sold out; here the pack is torn open and the counts
+ * short or the Spellbook is full; here the pack is torn open and the counts
  * redrawn. The shop is the one place chance is real: Math.random, not the
  * duel's rng.
  */
-function buyPack(rarity) {
-  const id = profile.buyPack(Object.values(CARDS), rarity, Math.random());
+function buyPack(packId) {
+  const id = profile.buyPack(Object.values(CARDS), packId, Math.random);
   const d = CARDS[id];
-  revealPack(d, rarity);
+  revealPack(d, packId);
   renderLobby();
   toast(`<b>${esc(d.name)}</b> — written into your Spellbook`, 'learn');
   return id;
 }
 
-/** The pack shakes, tears open and flips into the card it held: name in its school's ink, kind, sigil. */
-function revealPack(d, rarity) {
+/** The pack shakes, tears open and flips into the card it held: name in its school's ink, tier and kind, sigil. The glow is the TIER's colour. */
+function revealPack(d, packId) {
   const card = $('#lb-shopcard');
   card.querySelector('.reveal')?.remove();
-  const pack = packOf(rarity);
+  const pack = packOf(packId);
   const el = document.createElement('div');
-  el.className = `reveal ${rarity}`;
+  el.className = `reveal ${esc(packId)} tier-${rarityOf(d)}`;
   el.innerHTML = `<div class="rstage"><div class="flip">
-      <div class="front">${packSVG()}<div class="pname">${esc(pack?.name || rarity)}</div></div>
-      <div class="back"><div class="rcard">${cardSVG(d)}</div><div class="rname" style="color:${inkOf(d)}">${esc(d.name)}</div><div class="rkind">${esc(kindOf(d))}</div><div class="rsig">${sigilMiniHTML(d.sigil, inkOf(d))}</div></div>
+      <div class="front">${packSVG()}<div class="pname">${esc(pack?.name || packId)}</div></div>
+      <div class="back"><div class="rcard">${cardSVG(d)}</div><div class="rname" style="color:${inkOf(d)}">${esc(d.name)}</div><div class="rkind">${tierBadge(d)} · ${esc(kindOf(d))}</div><div class="rsig">${sigilMiniHTML(d.sigil, inkOf(d))}</div></div>
     </div><div class="rburst"></div></div>
     <div class="rcap">Written into your Spellbook</div>
     <div class="lbtns"><button class="primary rdone">Keep shopping</button></div>`;

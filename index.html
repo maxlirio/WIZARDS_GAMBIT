@@ -10,10 +10,13 @@
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect x=%224%22 y=%224%22 width=%2292%22 height=%2292%22 rx=%228%22 fill=%22%2307080b%22 stroke=%22%23ffcf5a%22 stroke-width=%226%22/%3E%3Cpath d=%22M50 18 L60 40 L82 50 L60 60 L50 82 L40 60 L18 50 L40 40Z%22 fill=%22%23ffcf5a%22/%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/style.css">
+<!-- three.js is served WITH the site (vendor/three, r170), not from a CDN: a
+     player whose network or browser blocked the CDN got the lobby over a black
+     battlefield, and the game must not depend on a third host being reachable. -->
 <script type="importmap">
 { "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  "three": "./vendor/three/three.module.js",
+  "three/addons/": "./vendor/three/addons/"
 } }
 </script>
 </head>
@@ -114,6 +117,28 @@
 
 <div id="peek" hidden title="click, right-click or Esc to put it back"></div>
 <div id="modal" hidden></div>
+<div id="bootfail" hidden></div>
+<script>
+// If the game's code or the battlefield fails to come up, SAY SO. A player on
+// another machine reported "the menu and stuff but the game is just black":
+// a blocked script, a refused WebGL context or a thrown module all used to
+// look the same -- a lobby over nothing. Now the reason is on the screen.
+(function () {
+  var fails = [];
+  function show() {
+    var el = document.getElementById('bootfail');
+    if (!el) return;
+    el.innerHTML = '<b>The game could not start in this browser.</b> ' + (fails.length ? 'Reason:' : 'The game code never loaded (a blocked script or a very old browser).')
+      + (fails.length ? '<code>' + fails.slice(0, 3).map(function (f) { return String(f).replace(/[<>&]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); }).join('\n') + '</code>' : '')
+      + '<code>Try the latest Chrome, Edge or Firefox with hardware acceleration on, and tell Max what this says.</code>';
+    el.hidden = false;
+  }
+  window.addEventListener('error', function (e) { fails.push((e.message || 'error') + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : '')); if (window.WG && !window.WG.arena) show(); });
+  window.addEventListener('unhandledrejection', function (e) { fails.push('promise: ' + (e.reason && (e.reason.message || e.reason))); if (window.WG && !window.WG.arena) show(); });
+  window.__bootfail = function (msg) { fails.push(msg); show(); };
+  setTimeout(function () { if (!window.WG) show(); }, 8000);
+})();
+</script>
 <script type="module" src="js/view/main.js"></script>
 </body>
 </html>

@@ -97,19 +97,33 @@ try {
   await ev('dispatchEvent(new Event("resize"))');
   await sleep(400);
   await shot('lobby');
-  // Fund the purse (a duel pays 20 or so; a common pack costs 50) and buy.
-  await ev(`(()=>{ const K=${JSON.stringify(PROFILE_KEY)}; const p=JSON.parse(localStorage.getItem(K)||'{}'); p.coins=200; localStorage.setItem(K, JSON.stringify(p)); })()`);
+  // Fund the purse (a duel pays 20 or so; packs cost 50 / 100 / 200) and buy.
+  await ev(`(()=>{ const K=${JSON.stringify(PROFILE_KEY)}; const p=JSON.parse(localStorage.getItem(K)||'{}'); p.coins=400; localStorage.setItem(K, JSON.stringify(p)); })()`);
   await ev('WG.lobby.open()');
   const funded = await purse();
-  const bought = await ev(`(()=>{ try { return { id: WG.shop.buy('common') }; } catch (e) { return { error: e.message }; } })()`);
+  const unknownBefore = await ev(`(async()=>{ const { CARDS } = await import('./js/rules/spells/index.js'); const { packContents } = await import('./js/rules/shop.js');
+    return packContents(Object.values(CARDS), JSON.parse(localStorage.getItem(${JSON.stringify(PROFILE_KEY)})).learned) })()`);
+  const bought = await ev(`(()=>{ try { return { id: WG.shop.buy('apprentice') }; } catch (e) { return { error: e.message }; } })()`);
   const prof = await ev(`JSON.parse(localStorage.getItem(${JSON.stringify(PROFILE_KEY)}))`);
-  check('buying a common pack charges 50 and writes the card into the Spellbook as a pack',
-    !!bought.id && prof.coins === funded - 50 && prof.learned?.[bought.id] === 'pack', `${JSON.stringify(bought)} coins ${funded} -> ${prof.coins}`);
+  check('buying an Apprentice pack charges 50 and writes the card into the Spellbook as a pack',
+    !!bought.id && prof.coins === funded - 50 && prof.learned?.[bought.id] === 'pack' && unknownBefore.includes(bought.id), `${JSON.stringify(bought)} coins ${funded} -> ${prof.coins}`);
+  // The Archmage pack never pays a common card -- while any stronger one is
+  // left to find. Until tools/ratecards.js has rated the corpus every card
+  // is common, so the tier claim is only made when a stronger tier exists.
+  const arch = await ev(`(async()=>{ const { CARDS } = await import('./js/rules/spells/index.js'); const { tierContents, rarityOf, packContents } = await import('./js/rules/shop.js');
+    const cards = Object.values(CARDS); const learned = JSON.parse(localStorage.getItem(${JSON.stringify(PROFILE_KEY)})).learned;
+    const stronger = tierContents(cards, learned, 'uncommon').length + tierContents(cards, learned, 'rare').length;
+    const before = packContents(cards, learned); let id, error; try { id = WG.shop.buy('archmage'); } catch (e) { error = e.message; }
+    const after = packContents(cards, JSON.parse(localStorage.getItem(${JSON.stringify(PROFILE_KEY)})).learned);
+    return { id, error, tier: id && rarityOf(CARDS[id]), stronger, wasUnknown: before.includes(id), nowKnown: !after.includes(id), coins: JSON.parse(localStorage.getItem(${JSON.stringify(PROFILE_KEY)})).coins } })()`);
+  check('an Archmage pack (200) pays an unknown card, never a common one while stronger ones are left',
+    !!arch.id && arch.wasUnknown && arch.nowKnown && arch.coins === funded - 250 && (arch.stronger === 0 || arch.tier !== 'common'), JSON.stringify(arch));
+  await ev(`document.querySelector('#lb-shopcard .reveal')?.remove()`);
   await sleep(1300);
   await shot('shop-reveal');
   await ev(`document.querySelector('#lb-shopcard .reveal')?.remove(); document.querySelector('#lb-openbook').click()`);
   const inBook = await ev(`(async()=>{ const { CARDS } = await import('./js/rules/spells/index.js'); const name = CARDS[${JSON.stringify(bought.id || '')}]?.name;
-    const e = [...document.querySelectorAll('#modal .bk.sg:not(.unknown)')].find(x => x.querySelector('.bc')?.textContent === name);
+    const e = [...document.querySelectorAll('#modal .bk.sg:not(.unknown)')].find(x => x.querySelector('.bc')?.firstChild?.textContent?.trim() === name);
     return { name, shown: !!e, sigil: !!e?.querySelector('.sgrid i .rune-i') } })()`);
   check('the Spellbook modal shows the bought card with its sigil drawn', inBook.shown && inBook.sigil, JSON.stringify(inBook));
   await shot('spellbook-after-pack');
