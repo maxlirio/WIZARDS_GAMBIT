@@ -15,7 +15,7 @@
 // since `die()`); the gather rides fx's tween clock. Both the arena and the
 // mage lab use this, so the sequence lives in one place.
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 /** One wind for the whole arena: dust leaves along +x, drifting a little to +z. */
 export const WIND = new THREE.Vector3(1, 0, 0.22).normalize();

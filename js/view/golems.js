@@ -21,7 +21,7 @@
 // still runs its own tumble over `parts` finds nothing to move. `revive()`
 // puts the rocks back on their pivots and plays the rise.
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { pickLod } from './assets.js';
 
 const TAU = Math.PI * 2;

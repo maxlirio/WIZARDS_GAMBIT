@@ -20,8 +20,8 @@
 // Frame: the mage faces +Z at `root.rotation.y = 0`; `root.position` is at the
 // feet; +X is its LEFT side; everything is in metres.
 
-import * as THREE from 'three';
-import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import * as THREE from '../../vendor/three/three.module.js';
+import { mergeGeometries, mergeVertices } from '../../vendor/three/addons/utils/BufferGeometryUtils.js';
 
 const { DEG2RAD } = THREE.MathUtils;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);

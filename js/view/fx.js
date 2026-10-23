@@ -11,7 +11,7 @@
 // come from a fixed pool that is always in the scene, so a flash never makes
 // three.js recompile every lit material.
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 /* ------------------------------------------------------------ sprites */
 

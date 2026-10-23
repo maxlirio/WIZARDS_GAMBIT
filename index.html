@@ -10,15 +10,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect x=%224%22 y=%224%22 width=%2292%22 height=%2292%22 rx=%228%22 fill=%22%2307080b%22 stroke=%22%23ffcf5a%22 stroke-width=%226%22/%3E%3Cpath d=%22M50 18 L60 40 L82 50 L60 60 L50 82 L40 60 L18 50 L40 40Z%22 fill=%22%23ffcf5a%22/%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/style.css">
-<!-- three.js is served WITH the site (vendor/three, r170), not from a CDN: a
-     player whose network or browser blocked the CDN got the lobby over a black
-     battlefield, and the game must not depend on a third host being reachable. -->
-<script type="importmap">
-{ "imports": {
-  "three": "./vendor/three/three.module.js",
-  "three/addons/": "./vendor/three/addons/"
-} }
-</script>
+<!-- three.js and PeerJS are served WITH the site (vendor/, r170 and 1.5.4), and
+     every import is a RELATIVE PATH -- no import map, no CDN. A player on a
+     browser without import maps (Safari before 16.4, Firefox before 108) or on
+     a network that blocked the CDN got the lobby over a black battlefield. -->
 </head>
 <body>
 <div id="arena"></div>
@@ -119,26 +114,61 @@
 <div id="modal" hidden></div>
 <div id="bootfail" hidden></div>
 <script>
-// If the game's code or the battlefield fails to come up, SAY SO. A player on
-// another machine reported "the menu and stuff but the game is just black":
-// a blocked script, a refused WebGL context or a thrown module all used to
-// look the same -- a lobby over nothing. Now the reason is on the screen.
+// If the game's code or the battlefield fails to come up, SAY SO, and say
+// WHY. A player on another machine reported "the menu and stuff but the game
+// is just black", then "The game code never loaded": a blocked script, a
+// browser missing a feature, a refused WebGL context or a thrown module all
+// used to look the same. The game is started by a dynamic import so a failure
+// carries its message, the features it needs are tested by name, and the
+// browser is named so the report can be acted on.
 (function () {
   var fails = [];
-  function show() {
+  function esc(t) { return String(t).replace(/[<>&]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); }
+  function missing() {
+    var m = [];
+    if (typeof structuredClone !== 'function') m.push('structuredClone (Safari 15.4+, Chrome 98+, Firefox 94+)');
+    try { new Function('class A { #p() {} static s = 1; }'); } catch (e) { m.push('private class methods (Safari 15+, Chrome 84+)'); }
+    try { new Function('let a = 0; a ||= 1; a?.b; a ?? 1;'); } catch (e) { m.push('modern syntax ||= ?. ?? (Safari 14+, Chrome 85+)'); }
+    try { var c = document.createElement('canvas'); if (!c.getContext('webgl2')) m.push('WebGL 2 (turn on hardware acceleration, or update the browser)'); } catch (e) { m.push('WebGL 2'); }
+    return m;
+  }
+  var shown = false;
+  function show(still) {
     var el = document.getElementById('bootfail');
     if (!el) return;
-    el.innerHTML = '<b>The game could not start in this browser.</b> ' + (fails.length ? 'Reason:' : 'The game code never loaded (a blocked script or a very old browser).')
-      + (fails.length ? '<code>' + fails.slice(0, 3).map(function (f) { return String(f).replace(/[<>&]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); }).join('\n') + '</code>' : '')
-      + '<code>Try the latest Chrome, Edge or Firefox with hardware acceleration on, and tell Max what this says.</code>';
-    el.hidden = false;
+    var miss = missing();
+    var head = still ? '<b>The game is still loading…</b> ' : '<b>The game could not start in this browser.</b> ';
+    var body = '';
+    if (miss.length) body += '<code>This browser lacks: ' + esc(miss.join('; ')) + '</code>';
+    if (fails.length) body += '<code>' + esc(fails.slice(0, 3).join('\n')) + '</code>';
+    if (!miss.length && !fails.length && !still) body += '<code>No error was reported. A blocked script, an extension, or a very slow connection.</code>';
+    body += '<code>' + esc(navigator.userAgent) + '</code>';
+    if (!still) body += '<code>Try the latest Chrome, Edge, Firefox or Safari, and tell Max what this says.</code>';
+    el.innerHTML = head + body;
+    el.hidden = false; shown = true;
   }
-  window.addEventListener('error', function (e) { fails.push((e.message || 'error') + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : '')); if (window.WG && !window.WG.arena) show(); });
-  window.addEventListener('unhandledrejection', function (e) { fails.push('promise: ' + (e.reason && (e.reason.message || e.reason))); if (window.WG && !window.WG.arena) show(); });
-  window.__bootfail = function (msg) { fails.push(msg); show(); };
-  setTimeout(function () { if (!window.WG) show(); }, 8000);
+  function hide() { var el = document.getElementById('bootfail'); if (el && shown) { el.hidden = true; shown = false; } }
+  window.addEventListener('error', function (e) { fails.push((e.message || 'error') + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : '')); if (!window.WG || !window.WG.arena) show(false); });
+  window.addEventListener('unhandledrejection', function (e) { fails.push('promise: ' + (e.reason && (e.reason.message || e.reason))); if (!window.WG || !window.WG.arena) show(false); });
+  window.__bootfail = function (msg) { fails.push(msg); show(false); };
+  // Start the game. A module that fails to fetch or to parse rejects here
+  // with its reason, which a <script type="module"> tag never reports.
+  function start() {
+    try {
+      new Function('return import("./js/view/main.js")')().catch(function (e) { fails.push('module: ' + (e && (e.message || e))); show(false); });
+    } catch (e) { fails.push('dynamic import unsupported: ' + (e && e.message)); show(false); }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+  // Slow or dead: after 8 s say "still loading"; after 25 s, "could not start".
+  var t0 = Date.now();
+  var tick = setInterval(function () {
+    if (window.WG && window.WG.arena) { hide(); clearInterval(tick); return; }
+    if (fails.length) { clearInterval(tick); return; }
+    var dt = Date.now() - t0;
+    if (dt > 25000) { show(false); clearInterval(tick); }
+    else if (dt > 8000) show(true);
+  }, 1000);
 })();
 </script>
-<script type="module" src="js/view/main.js"></script>
 </body>
 </html>

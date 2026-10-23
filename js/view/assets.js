@@ -10,9 +10,9 @@
 // Nothing in the rules knows these exist. The engine says "a tree at x,y"; this
 // file knows what a tree looks like.
 
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { clone as skelClone } from 'three/addons/utils/SkeletonUtils.js';
+import * as THREE from '../../vendor/three/three.module.js';
+import { GLTFLoader } from '../../vendor/three/addons/loaders/GLTFLoader.js';
+import { clone as skelClone } from '../../vendor/three/addons/utils/SkeletonUtils.js';
 
 const BASE = new URL('../../assets/models/', import.meta.url).href;
 

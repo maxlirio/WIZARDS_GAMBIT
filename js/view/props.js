@@ -21,8 +21,8 @@
 // Any material a piece changes at runtime is its own (cloned), because one
 // burning tree must char without the forest going black with it.
 
-import * as THREE from 'three';
-import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import * as THREE from '../../vendor/three/three.module.js';
+import { mergeGeometries, mergeVertices } from '../../vendor/three/addons/utils/BufferGeometryUtils.js';
 import { propSpec, propR, propH } from '../field/arena.js';
 import { pickLod } from './assets.js';
 import { menhir } from './world.js';

@@ -15,9 +15,9 @@
 // heavy materials, nothing cheerful. The arena is a worn fighting pit in a
 // clearing; the forest frames it and the ridges close the horizon.
 
-import * as THREE from 'three';
-import { Sky } from 'three/addons/objects/Sky.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import * as THREE from '../../vendor/three/three.module.js';
+import { Sky } from '../../vendor/three/addons/objects/Sky.js';
+import { mergeGeometries } from '../../vendor/three/addons/utils/BufferGeometryUtils.js';
 import { heightAt } from '../field/arena.js';
 import { pickLod, meshParts } from './assets.js';
 
