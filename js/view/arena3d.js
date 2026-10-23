@@ -219,7 +219,7 @@ export function createArena(host, state, handlers = {}) {
           r.actor.setHidden(true); r.base.visible = false; r.label.classList.add('gone');
           r.gather = rites.gather(x, y, z, colour, { onAppear() { r.gather = null; r.base.visible = true; r.label.classList.remove('gone'); rites.materialise(r.actor, colour); } });
         } else if (back) { rec.actor.revive(); rec.label.classList.remove('gone'); fx.sigil(u.x * MM, u.z * MM, u.y * MM, TEAM[u.owner], { dur: 1.4, r: 1.1 }); }
-        else if (u.kind === 'golem') { rec.actor.rise?.(); fx.dust(u.x * MM, u.z * MM, u.y * MM, { n: 26, size: 0.6 }); }
+        else if (u.kind === 'golem') { rec.actor.rise?.(); fx.dust(u.x * MM, u.z * MM, u.y * MM, { n: 16, size: 0.6 }); }
         actors.set(u.id, rec);
       }
       rec.unit = u;
@@ -253,7 +253,7 @@ export function createArena(host, state, handlers = {}) {
         m.position.set(pr.x * MM, pr.z * MM, pr.y * MM);
         if (pr.raised) { m.scale.y = 0.01; fx.tween(0.7, (t) => { m.scale.y = 0.01 + fx.ease.out(t) * 0.99; }); fx.dust(pr.x * MM, pr.z * MM, pr.y * MM, { n: 30, size: 0.8 }); fx.shake(0.05, 0.4); }
         // Earth heaving up throws clods and a darker dust than stone does.
-        if (pr.raised && pr.kind === 'earthwall') { fx.debris(pr.x * MM, pr.z * MM + 0.3, pr.y * MM, { n: 14, colour: 0x4a3a28, size: 0.1, spread: m.userData.r * 1.1, up: 3.5 }); fx.dust(pr.x * MM, pr.z * MM, pr.y * MM, { n: 36, size: 0.9, colour: 0x5a4a36, spread: 0.6, up: 1.6 }); fx.shake(0.08, 0.5); }
+        if (pr.raised && pr.kind === 'earthwall') { fx.debris(pr.x * MM, pr.z * MM + 0.3, pr.y * MM, { n: 8, colour: 0x4a3a28, size: 0.1, spread: m.userData.r * 1.1, up: 3.5 }); fx.dust(pr.x * MM, pr.z * MM, pr.y * MM, { n: 36, size: 0.9, colour: 0x5a4a36, spread: 0.6, up: 1.6 }); fx.shake(0.08, 0.5); }
       }
       m.userData.target = new THREE.Vector3(pr.x * MM, pr.z * MM, pr.y * MM);
       // The engine has already written the piece off, but its fall has not
@@ -265,7 +265,7 @@ export function createArena(host, state, handlers = {}) {
       const on = propOnBoard(s, pr);
       if (m.visible && !on && pr.destroyed && !m.userData.shattered) {
         m.userData.shattered = true;
-        fx.debris(pr.x * MM, pr.z * MM, pr.y * MM, { n: pr.kind === 'shard' ? 8 : 12, colour: pr.kind === 'shard' ? 0x7fdcff : pr.kind === 'tree' ? 0x2a1d12 : pr.kind === 'earthwall' ? 0x4a3a28 : 0x6b6358, size: m.userData.r * 0.45, spread: m.userData.r, up: 3 + m.userData.h });
+        fx.debris(pr.x * MM, pr.z * MM, pr.y * MM, { n: pr.kind === 'shard' ? 6 : 9, colour: pr.kind === 'shard' ? 0x7fdcff : pr.kind === 'tree' ? 0x2a1d12 : pr.kind === 'earthwall' ? 0x4a3a28 : 0x6b6358, size: m.userData.r * 0.45, spread: m.userData.r, up: 3 + m.userData.h });
         fx.shake(0.06, 0.35);
         fx.unburn(pr.id);
         if (pr.kind === 'tree') {
@@ -540,8 +540,8 @@ export function createArena(host, state, handlers = {}) {
     fx.pools.sparks.emit({ x: c.x, y: c.y + 0.7, z: c.z, n: 18 + dmg * 10, spread: 0.15, radial: 3 + dmg, radialSpread: 1.5, vx: -D.x * 2, vz: -D.z * 2, vy: 2, life: 0.55, lifeSpread: 0.2, size: 0.09, sizeEnd: 0.02, color: 0xffffff, colorEnd: PUSH_HEX, gravity: -9, drag: 0.6 });
     fx.pools.soft.emit({ x: c.x, y: c.y + 0.7, z: c.z, n: 1, life: 0.18, size: 0.9 + dmg * 0.4, sizeEnd: 0.2, color: 0xffffff, alpha: 0.9 * hard, fade: 0 });
     fx.ring(c.x, c.y, c.z, 0.9 + dmg * 0.35, 0xdff6ff, { dur: 0.4, width: 0.12 });
-    fx.dust(c.x, c.y, c.z, { n: 12 + dmg * 6, size: 0.5, spread: 0.4, up: 1 + dmg * 0.3 });
-    fx.shake(Math.min(0.2, 0.04 + 0.03 * dmg), 0.35);
+    fx.dust(c.x, c.y, c.z, { n: 3 + dmg * 4, size: 0.45, spread: 0.4, up: 0.8 + dmg * 0.3 });
+    fx.shake(Math.min(0.2, 0.02 + 0.03 * dmg), 0.35);
   }
   /** What a struck body does: a unit reels (or is slammed flat), a piece of terrain shudders and chips. */
   function jolt(d, dmg, D, away) {
@@ -555,8 +555,12 @@ export function createArena(host, state, handlers = {}) {
     } else {
       const m = d.m, inner = m.userData.inner;
       fx.tween(0.4, (t) => { const k = Math.sin(t * Math.PI) * (1 - t) * (0.06 + dmg * 0.03); inner.scale.set(1 + k, 1 - k * 1.4, 1 + k); }, () => inner.scale.setScalar(1));
-      // Rock chips fly on ANY bump, harder with damage: stone meeting stone is loud even when nothing cracks.
-      fx.debris(m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, { n: 6 + dmg * 4, colour: PROP_COLOUR(m.userData.kind), size: 0.09, spread: m.userData.r, up: 2.5 + dmg });
+      // Chips fly only when something actually cracked, and as many as the
+      // damage says. A bump that did no harm is a shudder and a breath of
+      // dust (user: "too many chips and rock dust stuff, it makes it look way
+      // more dramatic than it actually is").
+      if (dmg > 0) fx.debris(m.position.x, m.position.y + m.userData.h * 0.4, m.position.z, { n: 2 + dmg * 3, colour: PROP_COLOUR(m.userData.kind), size: 0.09, spread: m.userData.r, up: 2.5 + dmg });
+      else fx.dust(m.position.x, m.position.y, m.position.z, { n: 3, size: 0.35, spread: m.userData.r * 0.6, up: 0.5 });
     }
   }
 
@@ -576,7 +580,7 @@ export function createArena(host, state, handlers = {}) {
         slam(c, D, dmg);
         if (d) jolt(d, dmg, D, false);
         if (o) jolt(o, dmg, D, true);
-        else fx.debris(c.x, c.y, c.z, { n: 3 + dmg, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });
+        else if (dmg > 0) fx.debris(c.x, c.y, c.z, { n: 1 + dmg, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });
         break;
       }
       case 'wall': case 'ward': {
@@ -585,12 +589,12 @@ export function createArena(host, state, handlers = {}) {
         const dmg = Math.min(4, Math.round((ev.speed || 0) / 1800));
         slam(c, dir, dmg, ev.kind === 'ward' ? 0xbfe8ff : 0xe6fbff);
         if (ev.kind === 'ward') fx.pools.sparks.emit({ x: c.x, y: c.y + 1.2, z: c.z, n: 24 + dmg * 8, spread: 0.3, vspread: 2.5, vy: 1, life: 0.7, size: 0.08, sizeEnd: 0.02, color: 0xffffff, colorEnd: 0x7fe0ff, gravity: -5 });
-        else fx.debris(c.x, c.y, c.z, { n: 3 + dmg, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });
+        else if (dmg > 0) fx.debris(c.x, c.y, c.z, { n: 1 + dmg, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });
         if (d) jolt(d, dmg, dir, false);
         break;
       }
       case 'edge':
-        fx.dust(P.x, P.y, P.z, { n: 10, size: 0.45, spread: 0.3, up: 0.8 });
+        fx.dust(P.x, P.y, P.z, { n: 4, size: 0.4, spread: 0.3, up: 0.6 });
         if (d) { d.air = true; if (d.unit) tumbleUntilLand(play, d, ev.t); }
         break;
       case 'land': {
@@ -599,9 +603,9 @@ export function createArena(host, state, handlers = {}) {
         if (d) d.air = false;
         // A dashing body comes down on its feet: a soft landing, a flare of its magic.
         if (d?.unit && d.self) { d.rec.actor.land?.(false); d.rec.landedAt = performance.now(); fx.ring(P.x, P.y, P.z, 0.8, PUSH_HEX, { dur: 0.35, width: 0.08 }); }
-        fx.dust(P.x, P.y, P.z, { n: Math.round(10 + 40 * hard), size: 0.5 + 0.5 * hard, spread: 0.3 + r, up: 0.8 + 1.5 * hard });
+        fx.dust(P.x, P.y, P.z, { n: Math.round(4 + 18 * hard * heavy), size: 0.45 + 0.4 * hard, spread: 0.3 + r, up: 0.7 + 1.2 * hard });
         if (hard > 0.2) { fx.ring(P.x, P.y, P.z, 0.8 + 1.4 * hard, 0xd9c9a8, { dur: 0.5 }); fx.shake(0.03 + 0.14 * hard * heavy, 0.35); }
-        if (d && !d.unit && hard > 0.4) fx.debris(P.x, P.y, P.z, { n: 4, colour: PROP_COLOUR(d.m.userData.kind), size: 0.08, spread: r, up: 2 });
+        if (d && !d.unit && hard > 0.6) fx.debris(P.x, P.y, P.z, { n: 3, colour: PROP_COLOUR(d.m.userData.kind), size: 0.08, spread: r, up: 2 });
         break;
       }
       case 'crumple': {
@@ -611,15 +615,15 @@ export function createArena(host, state, handlers = {}) {
         rec.actor.hit('crush'); rec.crushedAt = performance.now();
         fx.shake(0.22, 0.5);
         fx.ring(P.x, P.y, P.z, 1.5, 0xd9c9a8, { dur: 0.55, width: 0.16 });
-        fx.dust(P.x, P.y, P.z, { n: 46, size: 0.7, spread: 0.6, up: 1.6 });
+        fx.dust(P.x, P.y, P.z, { n: 22, size: 0.6, spread: 0.6, up: 1.4 });
         fx.flash(P.x, P.y + 0.8, P.z, 0xfff0d0, 10, 0.25, 5);
-        fx.debris(P.x, P.y + 0.9, P.z, { n: 6, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });
+        fx.debris(P.x, P.y + 0.9, P.z, { n: 4, colour: 0x6b6358, size: 0.08, spread: 0.4, up: 2.5 });
         const sc = rec.actor.root.scale;
         fx.tween(0.6, (t) => { const k = t < 0.18 ? t / 0.18 : 1 - fx.ease.out((t - 0.18) / 0.82); sc.set(1 + 0.3 * k, 1 - 0.45 * k, 1 + 0.3 * k); }, () => sc.setScalar(1));
         break;
       }
       case 'rest':
-        if (d && !d.unit && (d.mass || 0) >= 2 && d.travel > 0.2) fx.dust(P.x, P.y, P.z, { n: 6, size: 0.4, spread: r * 0.8, up: 0.5 });
+        if (d && !d.unit && (d.mass || 0) >= 2 && d.travel > 0.2) fx.dust(P.x, P.y, P.z, { n: 3, size: 0.4, spread: r * 0.8, up: 0.4 });
         if (d?.unit) d.lean = 0;
         break;
       default: break;
@@ -663,7 +667,7 @@ export function createArena(host, state, handlers = {}) {
             const want = d.air ? 0 : Math.min(0.32, sp * 0.07);
             d.lean += (want - d.lean) * 0.25;
             rec.actor.root.rotation.x = -d.lean;
-            if (!d.air && sp > 2 && Math.random() < 0.35) fx.dust(x, y, z, { n: 2, size: 0.35, up: 0.6 });
+            if (!d.air && sp > 2 && Math.random() < 0.2) fx.dust(x, y, z, { n: 1, size: 0.3, up: 0.5 });
           }
         } else {
           const m = d.m;
@@ -680,9 +684,9 @@ export function createArena(host, state, handlers = {}) {
             const rock = m.userData.rock, rest = rock.userData.rest;
             rock.quaternion.copy(d.roll).multiply(rest.q);
             rock.position.copy(_dv.copy(rest.p).sub(d.centre).applyQuaternion(d.roll).add(d.centre));
-          } else if (!d.sphere && !d.air && sp > 0.3 && Math.random() < 0.3) {
+          } else if (!d.sphere && !d.air && sp > 0.3 && Math.random() < 0.2) {
             // A sliding piece grinds along the ground.
-            fx.dust(x - (vx / sp) * d.r * MM * 0.5, y, z - (vz / sp) * d.r * MM * 0.5, { n: 2, size: 0.4, up: 0.7 });
+            fx.dust(x - (vx / sp) * d.r * MM * 0.5, y, z - (vz / sp) * d.r * MM * 0.5, { n: 1, size: 0.4, up: 0.6 });
           }
         }
         d.speed = sp; d.vx = vx; d.vz = vz; d.vy = vy; d.x = x; d.y = y; d.z = z;
@@ -791,7 +795,7 @@ export function createArena(host, state, handlers = {}) {
       const q = new THREE.Quaternion();
       const swung = new THREE.Vector3();
       let creak = 0;
-      fx.dust(base.x, base.y, base.z, { n: 8, size: 0.4, spread: r });
+      fx.dust(base.x, base.y, base.z, { n: 4, size: 0.4, spread: r });
       fx.tween(0.72, (t) => {
         const ang = -Math.PI / 2 * t;
         q.setFromAxisAngle(axis, ang);
@@ -803,7 +807,7 @@ export function createArena(host, state, handlers = {}) {
       }, () => {
         // The thud: dust the whole length of the fallen piece, a ring where
         // its middle landed, and the ground jumps.
-        for (let i = 1; i <= 4; i++) { const s = (h * i) / 4; fx.dust(base.x + D.x * s, base.y, base.z + D.z * s, { n: 14, size: 0.6 + r, spread: r, up: 1.2 }); }
+        for (let i = 1; i <= 4; i++) { const s = (h * i) / 4; fx.dust(base.x + D.x * s, base.y, base.z + D.z * s, { n: 7, size: 0.6 + r, spread: r, up: 1.2 }); }
         const mid = base.clone().addScaledVector(D, h * 0.5);
         fx.ring(mid.x, base.y, mid.z, h * 0.55, 0xd9c9a8, { dur: 0.55, width: 0.15 });
         fx.debris(base.x + D.x * h, base.y, base.z + D.z * h, { n: 5, colour: m.userData.kind === 'tree' ? 0x2a1d12 : 0x6b6358, size: r * 0.3, spread: r, up: 2.5 });
@@ -829,7 +833,7 @@ export function createArena(host, state, handlers = {}) {
       const D = dirVec(dir);
       if (rec.actor.knockdown) rec.actor.knockdown(dir); else if (rec.actor.tumble) rec.actor.tumble(0.6); else rec.actor.hit('crush');
       rec.crushedAt = performance.now();
-      fx.dust(p.x + D.x * 0.4, p.y, p.z + D.z * 0.4, { n: 16, size: 0.5, spread: 0.4 });
+      fx.dust(p.x + D.x * 0.4, p.y, p.z + D.z * 0.4, { n: 8, size: 0.5, spread: 0.4 });
       fx.pools.stars.emit({ x: p.x, y: p.y + rec.actor.height * 0.9, z: p.z, n: 5, spread: 0.3, vy: 0.5, vspread: 0.3, life: 1.1, size: 0.2, sizeEnd: 0.05, color: 0xfff1a0, alpha: 1, fade: 2, spinJitter: 2 });
       fx.shake(0.05, 0.3);
     },
@@ -861,7 +865,7 @@ export function createArena(host, state, handlers = {}) {
         fx.tween(dur, (t) => { rec.airY = h0 * (1 - t * t); }, () => {
           rec.airY = 0; rec.airborne = false;
           const p = rec.actor.root.position;
-          fx.dust(p.x, p.y, p.z, { n: 26 + drop / 100, size: 0.7 }); fx.ring(p.x, p.y, p.z, 1.4 + drop / 2000, 0xd9c9a8, { dur: 0.5 }); fx.shake(0.06 + drop / 30000, 0.35);
+          fx.dust(p.x, p.y, p.z, { n: 12 + drop / 200, size: 0.6 }); fx.ring(p.x, p.y, p.z, 1.4 + drop / 2000, 0xd9c9a8, { dur: 0.5 }); fx.shake(0.06 + drop / 30000, 0.35);
         });
       }
     },
@@ -892,9 +896,9 @@ export function createArena(host, state, handlers = {}) {
         const r = Math.max(1.2, radius * MM * 1.4);
         fx.explosion(B.x, B.y, B.z, { r, colour: 0xff8a2a });
         fx.ring(B.x, B.y, B.z, r * 2.4, 0xffd090, { dur: 0.55, width: 0.2 });
-        fx.debris(B.x, B.y + 0.2, B.z, { n: 18, colour: 0x6b6358, size: 0.16, spread: 0.6, up: 5 });
-        fx.debris(B.x, B.y + 0.2, B.z, { n: 10, colour: 0x3a2a20, size: 0.1, spread: 1.2, up: 3 });
-        fx.dust(B.x, B.y, B.z, { n: 60, size: 1.1, spread: 0.8, up: 2.2, colour: 0x7a6a55 });
+        fx.debris(B.x, B.y + 0.2, B.z, { n: 10, colour: 0x6b6358, size: 0.16, spread: 0.6, up: 5 });
+        fx.debris(B.x, B.y + 0.2, B.z, { n: 6, colour: 0x3a2a20, size: 0.1, spread: 1.2, up: 3 });
+        fx.dust(B.x, B.y, B.z, { n: 34, size: 1.0, spread: 0.8, up: 2.2, colour: 0x7a6a55 });
         fx.scorch(B.x, B.y, B.z, r * 1.1);
         fx.shake(0.22, 0.6);
       } });
@@ -921,9 +925,9 @@ export function createArena(host, state, handlers = {}) {
       const colour = m?.userData.kind === 'shard' ? 0x7fdcff : m?.userData.kind === 'tree' ? 0x2a1d12 : 0x6b6358;
       fx.flash(P.x, P.y + 0.8, P.z, 0xfff0d0, 18, 0.3, 7);
       fx.ring(P.x, P.y, P.z, r * 1.3, 0xd9c9a8, { dur: 0.45, width: 0.14 });
-      fx.debris(P.x, P.y + 0.5, P.z, { n: 28, colour, size: 0.12, spread: 0.3, up: 4.5 });
+      fx.debris(P.x, P.y + 0.5, P.z, { n: 14, colour, size: 0.12, spread: 0.3, up: 4.5 });
       fx.pools.sparks.emit({ x: P.x, y: P.y + 0.6, z: P.z, n: 90, spread: 0.2, radial: 7, radialSpread: 3, vy: 1.5, life: 0.6, lifeSpread: 0.25, size: 0.07, sizeEnd: 0.02, color: 0xffffff, colorEnd: colour, gravity: -9, drag: 0.8 });
-      fx.dust(P.x, P.y, P.z, { n: 40, size: 0.8, spread: 0.6, up: 1.6 });
+      fx.dust(P.x, P.y, P.z, { n: 20, size: 0.7, spread: 0.6, up: 1.4 });
       fx.shake(0.14, 0.4);
     },
     /** Thunderclap: a crack of light at the caster and a shock ring that floors the circle. */
@@ -937,7 +941,7 @@ export function createArena(host, state, handlers = {}) {
       fx.ring(P.x, P.y, P.z, r, 0xdff6ff, { dur: 0.45, width: 0.12 });
       fx.ring(P.x, P.y, P.z, r * 0.8, 0xffffff, { dur: 0.7, width: 0.5, opacity: 0.5, thin: false });
       fx.burst(P.x, P.y + 1.2, P.z, 0xbfe8ff, { n: 40, r: 0.5, up: 2 });
-      fx.dust(P.x, P.y, P.z, { n: 50, size: 0.7, spread: r * 0.5, up: 1.4 });
+      fx.dust(P.x, P.y, P.z, { n: 26, size: 0.6, spread: r * 0.5, up: 1.2 });
       fx.shake(0.16, 0.45);
     },
     /**
@@ -969,7 +973,7 @@ export function createArena(host, state, handlers = {}) {
         if (Math.random() < 0.35) fx.dust(x, y, z, { n: 2, size: 0.35, up: 0.6 });
       }, () => {
         fx.scorch(A.x + (B.x - A.x) * 0.5, A.y, A.z + (B.z - A.z) * 0.5, 0.5);
-        fx.dust(B.x, B.y, B.z, { n: 16, size: 0.6 });
+        fx.dust(B.x, B.y, B.z, { n: 8, size: 0.55 });
         fx.flash(B.x, B.y + 1, B.z, 0xff9a3a, 12, 0.3, 5);
         fx.shake(0.05, 0.3);
       });
@@ -1014,7 +1018,7 @@ export function createArena(host, state, handlers = {}) {
       fx.tween(0.95, (t) => { rec.airY = Math.sin(t * Math.PI) * h; }, () => {
         rec.airY = 0; rec.airborne = false;
         const p = rec.actor.root.position;
-        fx.dust(p.x, p.y, p.z, { n: 30, size: 0.7 }); fx.ring(p.x, p.y, p.z, 1.6, 0xd9c9a8, { dur: 0.5 }); fx.shake(0.08, 0.35);
+        fx.dust(p.x, p.y, p.z, { n: 16, size: 0.6 }); fx.ring(p.x, p.y, p.z, 1.6, 0xd9c9a8, { dur: 0.5 }); fx.shake(0.08, 0.35);
       });
       const p = rec.actor.root.position;
       fx.motes(p.x, p.y, p.z, 0xb98bff, { n: 24, up: 3, r: 0.4 });
@@ -1036,7 +1040,7 @@ export function createArena(host, state, handlers = {}) {
       }, () => {
         m.userData.flying = false;
         fx.unburn(propId + ':fly');
-        fx.dust(B.x, B.y, B.z, { n: 36, size: 0.9, colour: 0x8a7b62 });
+        fx.dust(B.x, B.y, B.z, { n: 20, size: 0.8, colour: 0x8a7b62 });
         fx.ring(B.x, B.y, B.z, 2.2, 0xd9c9a8, { dur: 0.5, width: 0.15 });
         fx.shake(0.14, 0.45);
         const rec = actors.get(ontoId);
@@ -1073,7 +1077,7 @@ export function createArena(host, state, handlers = {}) {
       if (!m) return;
       const pos = m.actor.root.position;
       fx.ring(pos.x, pos.y, pos.z, r * MM, colour, { dur: 0.7, width: 0.08 });
-      fx.dust(pos.x, pos.y, pos.z, { n: 40, size: 0.7, spread: 0.8, up: 1.5 });
+      fx.dust(pos.x, pos.y, pos.z, { n: 20, size: 0.6, spread: 0.8, up: 1.3 });
       fx.flash(pos.x, pos.y + 1, pos.z, colour, 24, 0.4, r * MM * 1.5);
       m.actor.cast('raise');
       fx.shake(0.07, 0.4);
@@ -1563,7 +1567,7 @@ export function createArena(host, state, handlers = {}) {
             const hard = !rec.walk && rec.fallFrom - floor > FALL_SAFE * MM;
             rec.vy = 0; rec.falling = false; rec.landedAt = now;
             if (actor.land) actor.land(hard); else if (hard && actor.tumble) actor.tumble(0.15);
-            fx.dust(pos.x, pos.y, pos.z, { n: hard ? 26 : 12, size: hard ? 0.6 : 0.45, up: hard ? 1.2 : 0.7 });
+            fx.dust(pos.x, pos.y, pos.z, { n: hard ? 12 : 4, size: hard ? 0.55 : 0.4, up: hard ? 1.1 : 0.6 });
             if (hard) { fx.ring(pos.x, pos.y, pos.z, 1.1, 0xd9c9a8, { dur: 0.45 }); fx.shake(0.05, 0.3); }
           }
         } else if (dy < -0.35) {
@@ -1575,7 +1579,7 @@ export function createArena(host, state, handlers = {}) {
           if (walking) for (let k = 1; k <= 3; k++) bottom = Math.min(bottom, surfaceY(pos.x + dx / dist * 0.33 * k, pos.z + dz / dist * 0.33 * k, pos.y));
           const air = Math.sqrt(2 * Math.max(0.01, pos.y - bottom) / 9.8);
           if (actor.drop) actor.drop(air); else if (air > 0.4 && actor.jump) actor.jump(air);
-          fx.dust(pos.x, pos.y, pos.z, { n: 6, size: 0.35, up: 0.5 });
+          fx.dust(pos.x, pos.y, pos.z, { n: 2, size: 0.3, up: 0.4 });
         } else if (dy < 0) {
           // Downhill: the feet keep the ground, but no faster than a walking
           // descent (~50 degrees). Steeper than that and the ground falls
@@ -1631,7 +1635,7 @@ export function createArena(host, state, handlers = {}) {
         // A rigid-body replay (or its hold) owns the position.
       } else if (m.userData.target && !m.userData.flying) {
         const d = m.position.distanceTo(m.userData.target);
-        if (d > 0.01) { m.position.lerp(m.userData.target, 1 - Math.pow(0.0005, dt)); if (d > 0.3 && Math.random() < 0.4) fx.dust(m.position.x, m.position.y, m.position.z, { n: 2, size: 0.4 }); }
+        if (d > 0.01) { m.position.lerp(m.userData.target, 1 - Math.pow(0.0005, dt)); if (d > 0.3 && Math.random() < 0.25) fx.dust(m.position.x, m.position.y, m.position.z, { n: 1, size: 0.4 }); }
       }
       const inner = m.userData.inner;
       if (inner?.userData.bob) inner.position.y = Math.sin(now / 900 + m.position.x) * 0.07;

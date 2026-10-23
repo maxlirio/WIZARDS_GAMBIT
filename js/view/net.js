@@ -137,7 +137,9 @@ function loadPeerJS() {
   if (peerLoading) return peerLoading;
   peerLoading = new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
+    // Served with the site (vendor/peerjs 1.5.4), not from a CDN: a player
+    // whose network blocks the CDN must still be able to join a room.
+    s.src = new URL('../../vendor/peerjs/peerjs.min.js', import.meta.url).href;
     s.onload = resolve;
     s.onerror = () => { peerLoading = null; reject(new Error('could not load PeerJS — are you online?')); };
     document.head.appendChild(s);

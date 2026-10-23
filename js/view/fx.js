@@ -537,14 +537,23 @@ export function createFx(scene, { quality = 'high' } = {}) {
 
   /* -------------------------------------------- recipes */
 
-  /** A puff of dust at a point: pushes, landings, summons. Soft, lit, settles. */
+  /**
+   * A puff of dust at a point: pushes, landings, summons. Soft, lit, settles.
+   *
+   * `n` is the number of sprites, not a mood: the first cut emitted 1.4 n
+   * sprites that grew to three times their size at 42 % alpha, so a mage
+   * stepping off a rock stood in a cloud. User: "too many chips and rock dust
+   * stuff, it makes it look way more dramatic than it actually is." Callers
+   * now size `n` by the damage or the mass, and this stays thin.
+   */
   function dust(x, y, z, { n = 18, size = 0.5, colour = 0x8a7b62, spread = 0.3, up = 1.2 } = {}) {
     const k = Math.round(n * q);
-    dustp.emit({ x, y: y + 0.3, z, n: Math.round(k * 1.4), spread, spreadY: 0.15, vy: up * 0.8, vspread: 0, vspreadY: up * 0.4, radial: 0.9 + up * 0.5, radialSpread: 0.6, radialFlat: true,
-      life: 1.1, lifeSpread: 0.4, size: size * 0.45, sizeEnd: size * 1.5, color: colour, colorEnd: colour, colorJitter: 0.35, alpha: 0.42, sizeJitter: 0.8, drag: 2.2, gravity: -0.5, fade: 1,
+    if (k <= 0) return;
+    dustp.emit({ x, y: y + 0.3, z, n: k, spread, spreadY: 0.15, vy: up * 0.8, vspread: 0, vspreadY: up * 0.4, radial: 0.9 + up * 0.5, radialSpread: 0.6, radialFlat: true,
+      life: 0.9, lifeSpread: 0.3, size: size * 0.4, sizeEnd: size * 1.1, color: colour, colorEnd: colour, colorJitter: 0.35, alpha: 0.3, sizeJitter: 0.8, drag: 2.2, gravity: -0.5, fade: 1,
       rotJitter: 3.14, spinJitter: 1.4, turb: 0.6 });
     // Grit: a few sharp specks that fall out of the cloud.
-    sparks.emit({ x, y: y + 0.15, z, n: Math.max(2, Math.round(k * 0.35)), spread: spread * 0.6, vy: up * 1.6, vspreadY: up * 0.6, radial: 1.4, radialSpread: 0.8, radialFlat: true,
+    if (k >= 4) sparks.emit({ x, y: y + 0.15, z, n: Math.round(k * 0.25), spread: spread * 0.6, vy: up * 1.6, vspreadY: up * 0.6, radial: 1.4, radialSpread: 0.8, radialFlat: true,
       life: 0.6, lifeSpread: 0.25, size: 0.045, sizeEnd: 0.02, color: 0x6a5a44, colorEnd: 0x4a4034, alpha: 0.9, gravity: -7, drag: 0.8 });
   }
 
@@ -814,10 +823,19 @@ export function createFx(scene, { quality = 'high' } = {}) {
     soft.emit({ x, y: y + 0.6, z, n: Math.round(6 * q) + 1, spreadY: 0.5, size: r * 1.1, sizeEnd: r * 0.4, life: 0.5, lifeSpread: 0.15, vy: 1.5, color: colour, alpha: 0.35, fade: 1 });
   }
 
-  /** Chunks of a shattered thing flying apart: they tumble, bounce, and sink away. */
+  /**
+   * Chunks of a shattered thing flying apart: they tumble, bounce, and sink away.
+   *
+   * `n` chunks, and the finer fragments and dust IN PROPORTION: the first cut
+   * put two extra chunks, sixteen sparks and a twenty-sprite dust cloud under
+   * every call, so three chips off a nudged boulder looked like a quarry
+   * blast (the user's "too many chips and rock dust stuff"). A small n is now
+   * a small event.
+   */
   function debris(x, y, z, { n = 10, colour = 0x6b6358, size = 0.18, spread = 0.5, up = 4 } = {}) {
     const mat = debrisMat(colour);
-    const count = Math.round(n * q) + 2;
+    const count = Math.round(n * q);
+    if (count <= 0) return;
     for (let i = 0; i < count; i++) {
       const s = size * (0.45 + Math.random() * 0.9);
       const m = new THREE.Mesh(DEBRIS_GEOS[i % DEBRIS_GEOS.length], mat);
@@ -851,8 +869,8 @@ export function createFx(scene, { quality = 'high' } = {}) {
       });
     }
     // Finer fragments as sparks of the same colour, and the dust of the break.
-    sparks.emit({ x, y: y + 0.4, z, n: Math.round(16 * q), spread: spread * 0.5, radial: 3, radialSpread: 1.5, vy: up * 0.6, life: 0.9, lifeSpread: 0.3, size: 0.05, sizeEnd: 0.03, color: colour, colorJitter: 0.3, alpha: 1, gravity: -9.8, drag: 0.5 });
-    dust(x, y, z, { n: 20, size: 0.6, colour: 0x7a6d5c, spread: spread * 0.6, up: 1.4 });
+    sparks.emit({ x, y: y + 0.4, z, n: Math.round(Math.min(16, n * 0.8) * q), spread: spread * 0.5, radial: 3, radialSpread: 1.5, vy: up * 0.6, life: 0.9, lifeSpread: 0.3, size: 0.05, sizeEnd: 0.03, color: colour, colorJitter: 0.3, alpha: 1, gravity: -9.8, drag: 0.5 });
+    if (n >= 6) dust(x, y, z, { n: Math.min(20, Math.round(n * 0.8)), size: 0.6, colour: 0x7a6d5c, spread: spread * 0.6, up: 1.4 });
   }
 
   /** Camera shake: amplitude in metres, decaying over `dur`. The arena applies the offset. */
@@ -927,8 +945,8 @@ export function createFx(scene, { quality = 'high' } = {}) {
       const want = Math.min(3, Math.floor(t * 3) + 1);
       while (fired < want) { ring(x, y, z, r * (0.6 + fired * 0.25), colour, { dur: 0.8, width: 0.35, opacity: 0.7 }); fired++; }
     });
-    dust(x, y, z, { n: 80, size: 0.9, spread: r * 0.6, up: 1.2 });
-    debris(x, y, z, { n: 6, colour: 0x6b6358, size: 0.07, spread: r * 0.8, up: 2.5 });
+    dust(x, y, z, { n: 36, size: 0.9, spread: r * 0.6, up: 1.2 });
+    debris(x, y, z, { n: 5, colour: 0x6b6358, size: 0.07, spread: r * 0.8, up: 2.5 });
     shake(0.22, dur);
   }
 
