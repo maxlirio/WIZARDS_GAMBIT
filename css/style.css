@@ -405,6 +405,17 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
   #tray { right: 12px; }
   #hand { left: 8px; right: 8px; }
 }
+/* A short screen (a phone held sideways). The hand goes between the two
+   panels (fitMine() places it), so your table comes down to the bottom edge
+   instead of standing on the hand; the enemy's table and the rune board give
+   up room first, and fitMine() shrinks your cells only if that is not enough. */
+@media (max-height: 600px) {
+  :root { --hand: clamp(84px, 24vh, 120px); --sig-cell: 18px; --cell-s: clamp(34px, calc((100vh - 170px) / 4.4), 56px); --right-w: calc(var(--cell-s) * 3 + 40px); }
+  #mine { bottom: 8px; padding: 6px 8px; row-gap: 5px; }
+  #theirs { padding: 6px 8px; row-gap: 4px; }
+  #mine .sighint { font-size: 10px; line-height: 1.25; }
+  #inspector, #logwrap { display: none; }
+}
 
 /* ------------------------------------------------------------ the lobby */
 /* The front screen. It sits over the arena (an idle duel for atmosphere, dimmed

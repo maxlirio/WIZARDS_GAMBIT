@@ -556,6 +556,38 @@ export function createSim(state, { byP = null, crush = false } = {}) {
 }
 
 /**
+ * Throw SEVERAL bodies in one simulation: they all leave at the same instant,
+ * fly together, and can hit one another on the way (user, 2026-10-24: "the
+ * shift IV should push everything at the same time" -- one at a time, the
+ * first had landed before the second moved, and the first could block the
+ * second's path as a standing obstacle rather than a fellow flyer). One `dyn`
+ * note, so the view plays it as one moment.
+ *
+ * `items` is [{ body, dir, travel }]; returns the realised travel of each, in
+ * the same order, and the run's events.
+ */
+export function throwMany(state, items, { byP = null, crush = false } = {}) {
+  const live = items.filter((it) => it.body && !it.body.dead && !it.body.destroyed && it.travel > 0);
+  if (!live.length) return { mm: items.map(() => 0), events: [] };
+  const sim = createSim(state, { byP, crush });
+  const starts = new Map();
+  for (const it of live) {
+    const rec = sim.get(it.body);
+    rec.hit = 1;
+    starts.set(it.body, { x: it.body.x, y: it.body.y });
+    const v = speedForTravel(rec, it.travel);
+    if (v <= 0) continue;
+    const [ux, uy] = DIR64[it.dir & 63];
+    sim.launch(it.body, idiv(ux * v, DIR_SCALE), idiv(uy * v, DIR_SCALE), 0, { air: it.body.support === null });
+  }
+  const r = sim.run();
+  return {
+    mm: items.map((it) => { const s0 = starts.get(it.body); return s0 ? isqrt(dist2(s0.x, s0.y, it.body.x, it.body.y)) : 0; }),
+    events: r.events,
+  };
+}
+
+/**
  * Throw a body along a bearing with `force`. The one entry point every push
  * in the game uses: Shift's drag, a quake, a rock hurled by a meteor.
  *

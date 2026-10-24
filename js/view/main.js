@@ -257,12 +257,15 @@ function onRemoteMove(msg) {
   if (S.winner !== null) endMatch();
 }
 
-function leaveRoom() {
+function leaveRoom({ quiet = false } = {}) {
   if (!NET) return;
   NET.close();
   NET = null;
-  toast('Left the room.', '');
+  if (!quiet) toast('Left the room.', '');
   $('#btn-online').textContent = 'Play online';
+  // An online duel cannot go on with one player: without this the AI quietly
+  // took over the other seat of a duel that the other device had left.
+  if (S && !IDLE && S.winner === null) { newMatch({ idle: true }); openLobby({ online: true }); return; }
   renderLobby();
 }
 
@@ -306,6 +309,7 @@ function renderOnline() {
     <p id="ol-msg"></p>`;
   $('#ol-host').onclick = async () => {
     sayOnline('Opening a room…');
+    leaveRoom({ quiet: true });
     const net = new Net();
     try { await net.host(); } catch (e) { sayOnline(esc(e.message), true); return; }
     bindNet(net);
@@ -322,6 +326,7 @@ async function joinRoom(raw) {
   const code = String(raw || '').trim().toUpperCase();
   if (code.length !== 4) { sayOnline('A room code is four letters.', true); return; }
   const field = $('#ol-code'); if (field) field.value = code;
+  leaveRoom({ quiet: true });
   sayOnline(`Joining ${esc(code)}…`);
   const net = new Net();
   try { await net.join(code); } catch (e) { sayOnline(esc(e.message), true); return; }
@@ -334,18 +339,22 @@ async function joinRoom(raw) {
 function bindNet(net) {
   NET = net;
   $('#btn-online').textContent = `Room ${net.code}`;
-  net.addEventListener('move', (e) => onRemoteMove(e.detail));
-  net.addEventListener('setup', (e) => { closeModal(); startOnline(e.detail.seed, !!e.detail.pool); });
-  net.addEventListener('hello', () => {
+  // Only the room you are in now speaks. A connection from an earlier room
+  // that closes late, or a frame from it still in flight, must not end, deal
+  // into or move in the new one.
+  const on = (type, fn) => net.addEventListener(type, (e) => { if (NET === net) fn(e); });
+  on('move', (e) => onRemoteMove(e.detail));
+  on('setup', (e) => { closeModal(); startOnline(e.detail.seed, !!e.detail.pool); });
+  on('hello', () => {
     // The guest is in. The host deals the first duel straight away.
     toast('Your opponent joined. Dealing…', 'good');
     closeModal();
     startOnline(Math.floor(Math.random() * 1e6), params.has('pool'));
   });
-  net.addEventListener('joined', () => { if (!net.isHost) seatLayout(); renderLobby(); });
-  net.addEventListener('left', () => { toast('<b>Your opponent left.</b> The room is closed.', 'bad'); leaveRoom(); render(); });
-  net.addEventListener('neterror', (e) => toast(esc(e.detail.message), 'bad'));
-  net.addEventListener('desync', () => toast('<b>Desync</b> reported by your opponent — start a new duel from the host.', 'bad'));
+  on('joined', () => { if (!net.isHost) seatLayout(); renderLobby(); });
+  on('left', () => { toast('<b>Your opponent left.</b> The room is closed.', 'bad'); leaveRoom({ quiet: true }); render(); });
+  on('neterror', (e) => toast(esc(e.detail.message), 'bad'));
+  on('desync', () => toast('<b>Desync</b> reported by your opponent — start a new duel from the host.', 'bad'));
 }
 
 const humanToMove = () => HUMAN !== null && S.winner === null && !S.pending && S.active === HUMAN && !busy;
@@ -2013,8 +2022,45 @@ function render() {
   arena.sync(S);
   renderHighlights();
   renderPopover();
+  fitMine();
   pendingFlash = new Map();
   window.WG.state = S;
+}
+
+/**
+ * Keep YOUR table on the screen. The panel stands on the hand and grows
+ * upward, so on a short screen (a phone held sideways) its top rows went up
+ * under the bar and off the page -- the player saw the opponent's table and
+ * not their own (user, 2026-10-24: "he couldn't see any on his table"). When
+ * the top would pass the seed line, the cells shrink until it does not.
+ */
+function fitMine() {
+  const el = $('#mine'), hand = $('#hand');
+  el.style.removeProperty('--cell');
+  el.style.removeProperty('width');
+  const tray = $('#tray');
+  for (const k of ['left', 'right']) hand.style.removeProperty(k);
+  for (const k of ['right', 'bottom', 'width']) tray.style.removeProperty(k);
+  const floor = $('#top').getBoundingClientRect().bottom + 22;   // below the seed line
+  for (let k = 0; k < 4; k++) {
+    const top = el.getBoundingClientRect().top;
+    if (top >= floor) break;
+    const cell = el.querySelector('.table .cell')?.getBoundingClientRect().width || 0;
+    if (cell <= 40) break;
+    el.style.setProperty('--cell', `${Math.max(40, Math.floor(cell - (floor - top) / 3) - 1)}px`);
+    el.style.width = 'auto';
+  }
+  // On a short screen the hand lives between the panels, whatever the width.
+  if (window.innerHeight <= 600) {
+    hand.style.left = `${el.getBoundingClientRect().right + 6}px`;
+    hand.style.right = `${window.innerWidth - $('#theirs').getBoundingClientRect().left + 6}px`;
+    // The prompts and Done buttons stand on the hand, in the middle, rather
+    // than above the enemy panel where a short screen has no room for them.
+    const h = hand.getBoundingClientRect();
+    tray.style.right = hand.style.right;
+    tray.style.bottom = `${window.innerHeight - h.top + 4}px`;
+    tray.style.width = `${Math.min(320, h.width)}px`;
+  }
 }
 
 /* ================================================================ end */
@@ -2153,7 +2199,7 @@ function openRules() {
     <p><b>Everything on the field can be affected.</b> Every rock, stone, crystal, wall and tree has weight and hit points: force spells throw them and crack them, fire lights the trees — and a burning tree bites everyone beside it each turn, then spreads. Climb walls, fall off ledges, shove rocks out from under people.</p>
     <p><b>Runes and sigils:</b> every face you resolve earns a rune of its kind of work into your <b>pouch</b> — Spiral for turning, Shard for breaking, Wheel for moving, Lattice for drawing. Once a turn, free, lay runes on your 4 × 4 board and <b>Bind</b>: every findable card has a <b>sigil</b>, a small shape of runes, and any sigil you have laid exactly as drawn — orientation matters — is <b>found</b> — its runes are spent and the card goes to your discard for the rest of the duel. Whatever is not bound goes back to the pouch; nothing stays on the board.</p>
     <p><b>The Spellbook</b> remembers every sigil you have ever bound, across all your duels, and hints at which runes the rest take — the shape is yours to figure out.</p>
-    <p class="dim">Camera: drag to orbit, wheel to zoom, right-drag to pan, <b>H</b> to go home. <b>Right-click</b> a table card to see it big. <b>Tab</b> hides the panels. <b>Esc</b> cancels.</p>
+    <p class="dim">Camera: drag to orbit, wheel to zoom, right-drag to pan; <b>WASD</b> or the arrows slide it, <b>Q</b>/<b>E</b> turn it, <b>H</b> to go home. <b>Right-click</b> a table card to see it big. <b>Tab</b> hides the panels. <b>Esc</b> cancels.</p>
     </div>
     <div class="mbtns"><button id="close" class="primary">Got it</button></div>`);
   $('#close').onclick = closeModal;
@@ -2376,7 +2422,7 @@ function boot() {
     if (e.key === 'h' || e.key === 'H') arena?.home();
     if (e.key === 'Enter' && humanToMove()) { if (S.phase === 'unit') endTurn(); else { const a = myActions().find((x) => x.type === 'pass'); if (a && !sel) act(a); } }
   });
-  window.addEventListener('resize', () => { updateViewport(); render(); });
+  window.addEventListener('resize', () => { render(); updateViewport(); });
   $('#peek').addEventListener('click', closePeek);
   $('#peek').addEventListener('contextmenu', (e) => { e.preventDefault(); closePeek(); });
   bootLobby();

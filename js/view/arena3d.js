@@ -87,6 +87,53 @@ export function createArena(host, state, handlers = {}) {
   controls.panSpeed = 0.6;
   controls.update();
 
+  // KEYBOARD CAMERA. WASD (or the arrows) slide the view across the ground
+  // relative to where the camera faces; Q and E swing it round the point it
+  // looks at. Keys are read by position (e.code), so AZERTY works too, and a
+  // key held with Cmd/Ctrl is left to the browser.
+  const CAM_KEYS = { KeyW: 'f', ArrowUp: 'f', KeyS: 'b', ArrowDown: 'b', KeyA: 'l', ArrowLeft: 'l', KeyD: 'r', ArrowRight: 'r', KeyQ: 'ccw', KeyE: 'cw' };
+  const camHeld = new Set();
+  const typing = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+  window.addEventListener('keydown', (e) => {
+    const k = CAM_KEYS[e.code];
+    if (!k || e.metaKey || e.ctrlKey || e.altKey || typing(e.target)) return;
+    if (document.getElementById('lobby') && !document.getElementById('lobby').hidden) return;
+    camHeld.add(k);
+    if (e.code.startsWith('Arrow')) e.preventDefault();
+  });
+  window.addEventListener('keyup', (e) => { const k = CAM_KEYS[e.code]; if (k) camHeld.delete(k); });
+  window.addEventListener('blur', () => camHeld.clear());
+  const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), camStep = new THREE.Vector3();
+  function keyCamera(dt) {
+    if (!camHeld.size) return;
+    const dist = camera.position.distanceTo(controls.target);
+    camFwd.subVectors(controls.target, camera.position).setY(0);
+    if (camFwd.lengthSq() < 1e-6) return;
+    camFwd.normalize();
+    camRight.set(-camFwd.z, 0, camFwd.x);
+    camStep.set(0, 0, 0);
+    if (camHeld.has('f')) camStep.add(camFwd);
+    if (camHeld.has('b')) camStep.sub(camFwd);
+    if (camHeld.has('r')) camStep.add(camRight);
+    if (camHeld.has('l')) camStep.sub(camRight);
+    if (camStep.lengthSq() > 0) {
+      // Faster when zoomed out, so a screen's worth of travel takes about the same time.
+      camStep.normalize().multiplyScalar(dt * (1.5 + dist * 0.17));
+      const before = controls.target.clone();
+      controls.target.add(camStep);
+      // Keep the look-at point over the arena.
+      controls.target.x = Math.min(W, Math.max(0, controls.target.x));
+      controls.target.z = Math.min(H, Math.max(0, controls.target.z));
+      camera.position.add(controls.target.clone().sub(before));
+    }
+    const spin = (camHeld.has('cw') ? 1 : 0) - (camHeld.has('ccw') ? 1 : 0);
+    if (spin) {
+      const off = camera.position.clone().sub(controls.target);
+      off.applyAxisAngle(THREE.Object3D.DEFAULT_UP, spin * dt * 1.2);
+      camera.position.copy(controls.target).add(off);
+    }
+  }
+
   const fx = createFx(scene, { quality });
   const rites = createMageRites(fx);   // a mage's death to dust and its forming again
 
@@ -1888,6 +1935,7 @@ export function createArena(host, state, handlers = {}) {
       f.el.style.opacity = String(1 - t * t);
     }
     spawnRings.forEach((r, i) => { r.rotation.z += dt * 0.15 * (i ? -1 : 1); });
+    keyCamera(dt);
     controls.update();
     fx.shakeOffset(shakeV);
     camera.position.add(shakeV);

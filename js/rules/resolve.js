@@ -37,7 +37,7 @@ import {
   livingUnits, unitsOf, enemiesOf, findUnit, findProp, propsOnBoard, rangeOrigins,
   mageOf, hasLos, surfaceAt,
 } from '../field/query.js';
-import { push, pushAwayFrom, pullToward, levitate, removeTerrain, smashProp, ignite, knockDown } from '../field/push.js';
+import { push, pushMany, pushAwayFrom, pullToward, levitate, removeTerrain, smashProp, ignite, knockDown } from '../field/push.js';
 import { propR, propOnBoard, propSpec, propBurnable, propBurning, FALL_SAFE } from '../field/arena.js';
 import { walk, placeBody, fallDamageFor, recheckSupport, resolveFalls } from '../field/move.js';
 import { setBurning } from './units.js';
@@ -334,6 +334,15 @@ export function makeCtx(state, spell, def, face, opts = {}) {
       if (!body) return { mm: 0 };
       const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
       return pushAwayFrom(state, body, fromX, fromY, pp.force, { byP: p, crush: pp.crush || !!o.crush, levitate: pp.levitate, ...o });
+    },
+    /** Push several bodies away from one point AT ONCE (field/push.js pushMany). */
+    pushAllFrom: (bodyIds, fromX, fromY, force) => {
+      const pp = applyKw(state, spell, 'push', { force, crush: false, levitate: false });
+      const list = bodyIds
+        .map((id) => (typeof id === 'number' ? findUnit(state, id) : findProp(state, id)))
+        .filter((b) => b && !(b.x === fromX && b.y === fromY))
+        .map((body) => ({ body, dir: bearing(fromX, fromY, body.x, body.y), force: pp.force }));
+      return pushMany(state, list, { byP: p, crush: pp.crush });
     },
     pullTo: (bodyId, toX, toY, force, o = {}) => {
       const body = typeof bodyId === 'number' ? findUnit(state, bodyId) : findProp(state, bodyId);

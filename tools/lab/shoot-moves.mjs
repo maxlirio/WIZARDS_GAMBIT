@@ -73,6 +73,8 @@ const PLAN = [
   { step: 'respawn', extra: 2600, cols: 6 },
   { step: 'wall', extra: 1400, cols: 6 },
   { step: 'blink', extra: 900, cols: 6 },
+  // Shift IV: every body leaves in the same frame (user: "push everything at the same time").
+  { step: 'repel', extra: 900, cols: 6 },
 ];
 const only = arg('only', '') ? arg('only', '').split(',') : null;
 const files = [];

@@ -484,6 +484,9 @@ crystal shard, ruined wall, floating rock, tree — has **mass**, **hit points**
   off; whatever stands on a sliding piece rides it.
 - **Falls** inside a push are real falls: a unit knocked over an edge takes the fall
   table's damage for the drop, credited to the pusher.
+- **"Push everything":** a face that pushes every body in an area (Shift IV, a quake)
+  throws them **all at once**, each straight away from the centre. They fly together
+  and can collide in flight; none is pushed first and left standing in another's way.
 - **Pulled:** "toward you" / "to you" means toward your living mage (or, with the
   mage down, your nearest range origin; with neither, nothing happens). A pull comes
   to rest **at your feet**: its travel is capped at the gap between the two bodies.

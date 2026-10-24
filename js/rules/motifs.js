@@ -447,12 +447,8 @@ export const repel = ({ force = 3, range = 3000, element = 'force', side = 'enem
   *effect(ctx) {
     const o = ctx.origin();
     if (!o) return;
-    const ids = pushables(ctx, side, range);
-    for (const id of ids) {
-      const b = typeof id === 'number' ? ctx.unit(id) : ctx.prop(id);
-      if (!b || (b.x === o.x && b.y === o.y)) continue;   // the caster stays put
-      ctx.pushFrom(id, o.x, o.y, force);
-    }
+    // Everything at once, in one throw (the caster, at the centre, stays put).
+    ctx.pushAllFrom(pushables(ctx, side, range), o.x, o.y, force);
     ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 0, force });
   },
 });
@@ -475,11 +471,8 @@ export const quake = ({ force = 3, range = 3000, element = 'force' } = {}) => ({
   *effect(ctx) {
     const o = ctx.origin();
     if (!o) return;
-    for (const id of ctx.anyUnits(range)) {
-      const u = ctx.unit(id);
-      if (!u || (u.x === o.x && u.y === o.y)) continue;   // the epicentre stays put
-      ctx.pushFrom(id, o.x, o.y, force);
-    }
+    // Every unit at once (the epicentre stays put).
+    ctx.pushAllFrom(ctx.anyUnits(range), o.x, o.y, force);
     // The ground heaves: standing stones crack, crystals shatter, and what
     // was standing on a boulder is on the ground now.
     ctx.sweep(o.x, o.y, ctx.range(range).mm, element, { amount: 2, force });

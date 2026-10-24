@@ -41,7 +41,8 @@
 <script type="module">
 import { createGame } from '../../js/engine.js';
 import { heightAt } from '../../js/field/arena.js';
-import { push, knockDown } from '../../js/field/push.js';
+import { push, pushMany, knockDown } from '../../js/field/push.js';
+import { bearing } from '../../js/field/fixed.js';
 import { doUnitAction, strike, respawnMage } from '../../js/rules/units.js';
 import { hurt } from '../../js/rules/combat.js';
 import { placeBody } from '../../js/field/move.js';
@@ -254,6 +255,13 @@ const PREP = {
   respawn() { put(mage, CX - 300, CY); put(foe, CX + 300, CY); arena.sync(S); const sp = S.arena.spawns[0]; view(`wide:${mage.x * MM}:${mage.y * MM}:${sp.x * MM}:${sp.y * MM}`); return [[mage.x, mage.y, mage.z], [foe.x, foe.y, foe.z], [sp.x, sp.y, heightAt(A, sp.x, sp.y)]]; },
   wall() { put(mage, CX - 1500, CY); put(foe, CX + 1500, CY); arena.sync(S); view('flat'); return [[mage.x, mage.y, mage.z], [foe.x, foe.y, foe.z]]; },
   blink() { put(mage, CX - 1500, CY); put(foe, CX + 2500, CY + 2500); arena.sync(S); view('flat'); return [[mage.x, mage.y, mage.z], [mage.x + 2600, mage.y, mage.z]]; },
+  repel() {
+    put(mage, CX, CY); put(foe, CX + 1300, CY + 200); put(wall, CX - 1200, CY - 300);
+    const rock = S.field.props.find((pr) => pr !== wall && !pr.destroyed);
+    if (rock) put(rock, CX + 200, CY - 1300);
+    arena.sync(S); look(CX * MM, 6.5, CY * MM + 7, CX * MM, 0.5, CY * MM);
+    return [[mage.x - 3500, mage.y, mage.z], [mage.x + 3500, mage.y, mage.z]];
+  },
 };
 /** A spell face resolving, as the engine notes it ahead of the damage it deals (resolve.js writes `resolveStart`); the lab deals the damage through combat.js hurt. */
 const casting = (p, def, numeral) => S.fx.push({ kind: 'resolveStart', uid: null, def, numeral, p });
@@ -323,6 +331,14 @@ const STEPS = {
       S.fx.push({ kind: 'relocate', id: mage.id, to: { x: mage.x, y: mage.y, z: mage.z }, from, blink: true });
       return { from, to: [mage.x, mage.y, mage.z] };
     }, 'teleport 2.5 m (blink)');
+  },
+  /** SHIFT IV: everything within 3 m thrown away from our mage AT ONCE -- one run, every body leaving together. */
+  repel() {
+    return run(() => {
+      const near = [foe, wall, ...S.field.props.filter((pr) => pr !== wall && !pr.destroyed)]
+        .filter((b) => (b.x - mage.x) ** 2 + (b.y - mage.y) ** 2 <= 3000 ** 2);
+      return pushMany(S, near.map((body) => ({ body, dir: bearing(mage.x, mage.y, body.x, body.y), force: 3 })), { byP: 0 }).mm;
+    }, 'Shift IV: everything within 3 m at once');
   },
   reset() { stage(); S.active = 0; arena.sync(S); view('flat'); return null; },
 };

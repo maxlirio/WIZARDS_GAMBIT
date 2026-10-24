@@ -34,7 +34,7 @@ import {
 } from './arena.js';
 import { findProp, findUnit, propsOnBoard, livingUnits, blockingProp, blockingUnit, surfaceAt } from './query.js';
 import { queueFall, resolveFalls, recheckSupport, isUnitBody } from './move.js';
-import { throwBody } from './dynamics.js';
+import { throwBody, throwMany } from './dynamics.js';
 import { hurt } from '../rules/combat.js';
 import { fx } from '../rules/ops.js';
 import { bump } from '../rules/ledger.js';
@@ -91,25 +91,52 @@ export function push(state, body, dir, force, {
   if (budget < STEP && lift <= 0) return { mm: 0, shortfall: 0, blockedBy: null, chain: log };
 
   const r = throwBody(state, body, dir, force, { byP, crush, mm, cap, lift: lift || (levitate ? 700 : 0), air: air || body.support === null });
-  const total = r.mm;
-  if (total > 0) {
-    log.push({ id: body.id, kind: body.body, mm: total, dir });
-    if (isUnitBody(body) && byP !== null) {
-      bump(state.players[byP].ledger, 'unitsPushed');
-      bump(state.players[byP].ledger, 'pushMm', total);
-    } else if (!isUnitBody(body) && byP !== null) {
-      bump(state.players[byP].ledger, 'terrainPushMm', total);
-    }
-    // Units a thrown piece of terrain struck: the Spellbook's "hit a unit with
-    // a thrown terrain piece".
-    if (!isUnitBody(body) && byP !== null) {
-      const struck = r.events.filter((e) => e.key === `p${body.id}` && e.kind === 'hit' && e.into[0] === 'u').length;
-      if (struck) bump(state.players[byP].ledger, 'terrainImpacts', struck);
-    }
-    // The nominal distance beside the realised one, for selfplay's instrument.
-    fx(state, 'pushResult', { id: body.id, want: budget, got: total, body: body.body });
+  credit(state, body, r.mm, budget, dir, r.events, byP, log);
+  return { mm: r.mm, shortfall: imax(0, budget - r.mm), blockedBy: r.blockedBy, chain: log };
+}
+
+/** What a push that moved a body writes: the chain log, the ledger, the pushResult note. */
+function credit(state, body, total, budget, dir, events, byP, log) {
+  if (total <= 0) return;
+  log.push({ id: body.id, kind: body.body, mm: total, dir });
+  if (isUnitBody(body) && byP !== null) {
+    bump(state.players[byP].ledger, 'unitsPushed');
+    bump(state.players[byP].ledger, 'pushMm', total);
+  } else if (!isUnitBody(body) && byP !== null) {
+    bump(state.players[byP].ledger, 'terrainPushMm', total);
   }
-  return { mm: total, shortfall: imax(0, budget - total), blockedBy: r.blockedBy, chain: log };
+  // Units a thrown piece of terrain struck: the Spellbook's "hit a unit with
+  // a thrown terrain piece".
+  if (!isUnitBody(body) && byP !== null) {
+    const struck = events.filter((e) => e.key === `p${body.id}` && e.kind === 'hit' && e.into[0] === 'u').length;
+    if (struck) bump(state.players[byP].ledger, 'terrainImpacts', struck);
+  }
+  // The nominal distance beside the realised one, for selfplay's instrument.
+  fx(state, 'pushResult', { id: body.id, want: budget, got: total, body: body.body });
+}
+
+/**
+ * Push several bodies AT ONCE, each along its own bearing: one simulation,
+ * everything launched in the same instant (dynamics.js throwMany). Each body
+ * gets the same rules as `push` -- a tall piece pushed hard enough topples, a
+ * fixed one stays -- and the same credit. `list` is [{ body, dir, force }].
+ */
+export function pushMany(state, list, { byP = null, crush = false } = {}) {
+  const log = [];
+  const items = [];
+  for (const { body, dir, force } of list) {
+    if (!body || body.dead || body.destroyed) continue;
+    const spec = isUnitBody(body) ? null : propSpec(body.kind);
+    if (spec && !spec.pushable) continue;
+    if (spec?.tippable && force >= spec.tipForce) { topple(state, body, dir, { byP }); continue; }
+    const budget = travelFor(force, bodyMass(state, body));
+    if (budget < STEP) continue;
+    items.push({ body, dir, travel: budget });
+  }
+  if (!items.length) return { chain: log, mm: [] };
+  const r = throwMany(state, items, { byP, crush });
+  items.forEach((it, i) => credit(state, it.body, r.mm[i], it.travel, it.dir, r.events, byP, log));
+  return { chain: log, mm: r.mm };
 }
 
 /** Slammed hard enough and a unit is winded: it loses its action this turn. */
