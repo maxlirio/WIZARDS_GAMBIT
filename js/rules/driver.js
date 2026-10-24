@@ -161,9 +161,13 @@ export const ask = {
   // `kind: 'dir'` is the drag-to-push question: `target` is what will be
   // pushed, `force` how hard, `preferred` the bearings a sensible player would
   // consider first (away from the caster). All plain data.
-  pick: (options, { prompt = '', labels = null, show = null, kind = 'pick', target = null, force = null, preferred = null } = {}) =>
-    ({ type: 'pick', kind: kind === 'pick' ? 'option' : kind, options, prompt, labels, show, required: true,
-       ...(target ? { target } : {}), ...(force !== null ? { force } : {}), ...(preferred ? { preferred } : {}) }),
+  // `area` + `points`: a pick over every spot WITHIN a distance (a teleport).
+  // The view draws `area` as a movement circle and answers with the index of
+  // the point nearest the click; `points[i]` is option i's position.
+  pick: (options, { prompt = '', labels = null, show = null, kind = 'pick', target = null, force = null, preferred = null, area = null, points = null } = {}) =>
+    ({ type: 'pick', kind: kind === 'pick' ? (area ? 'area' : 'option') : kind, options, prompt, labels, show, required: true,
+       ...(target ? { target } : {}), ...(force !== null ? { force } : {}), ...(preferred ? { preferred } : {}),
+       ...(area ? { area, points } : {}) }),
 
   /** Yes or no -- "you may". */
   confirm: (prompt = '') => ({ type: 'confirm', kind: 'confirm', prompt, required: false }),

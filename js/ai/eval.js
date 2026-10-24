@@ -17,7 +17,7 @@ import { runeAtCorner, findMatches } from '../rules/match.js';
 import { keywordsOf } from '../rules/keywords.js';
 import { gateProgress, gateMet } from '../rules/gates.js';
 import { objectiveVp } from '../rules/objectives.js';
-import { vpConfig } from '../rules/score.js';
+import { vpConfig, golemWorth } from '../rules/score.js';
 import { unitsOf, enemiesOf, livingUnits, mageOf, onHighGround, rangeOrigins } from '../field/query.js';
 import { dist3, isqrt, idiv } from '../field/fixed.js';
 import { heightAt, propR, propBurning, FIRE_REACH } from '../field/arena.js';
@@ -59,7 +59,7 @@ const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
  */
 export function matchPotential(state, p) {
   let score = 0;
-  const live = findMatches(state, p, []);
+  const live = findMatches(state, p, null);
   for (const h of live) score += WEIGHTS.matchLive + (h.interior ? WEIGHTS.matchInterior : 0);
 
   const liveSet = new Set(live.map((h) => h.site));
@@ -113,7 +113,7 @@ export function exposure(state, p) {
   const foes = enemiesOf(state, p);
   let vp = 0;
   for (const u of unitsOf(state, p)) {
-    const worth = u.kind === 'mage' ? cfg.mage : cfg.golemUnit;
+    const worth = u.kind === 'mage' ? cfg.mage : golemWorth(state, u);
     // Weighted by how reachable it is: a mage standing next to the enemy mage
     // is nearly a gift, one on the far side of the arena is not.
     let near = 0;

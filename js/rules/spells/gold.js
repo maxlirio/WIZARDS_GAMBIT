@@ -161,3 +161,18 @@ card({
          tag: 'move', cost: [{ id: 'destroyFriendly', n: 1 }],
          objective: { gate: { id: 'ledgerAtLeast', key: 'unitsPushed', n: 8, since: true }, vp: { k: 'flat', n: 2 } } },
 });
+
+card({
+  id: 'QUARRY', name: 'Quarry', school: 'gold',
+  // The battlefield as a mine: every stone you break is counted, and paid for.
+  runes: [SHARD, WHEEL, LATTICE, SHARD],
+  sigil: ['..L', '..W', 'HHW'],
+  I:   { text: 'Crack a terrain piece within 4m for 1.', ...M.crackTerrain({ amount: 1, range: 4000 }) },
+  II:  { text: 'If you broke 2 terrain pieces since this was played, discard a card and score 1 VP.',
+         tag: 'break', cost: [{ id: 'discard', n: 1 }],
+         objective: { gate: { id: 'ledgerAtLeast', key: 'propsBroken', n: 2, since: true }, vp: { k: 'flat', n: 1 } } },
+  III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'After you broke 4 terrain pieces since this was played, destroy a Spell you control and score 2 VP.',
+         tag: 'break', cost: [{ id: 'destroyFriendly', n: 1 }],
+         objective: { gate: { id: 'ledgerAtLeast', key: 'propsBroken', n: 4, since: true }, vp: { k: 'flat', n: 2 } } },
+});

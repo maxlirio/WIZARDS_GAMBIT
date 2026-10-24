@@ -434,7 +434,11 @@ function deflected(state, fxAt) {
 function judge(st, run, claim) {
   const { state, card, friend, foeCard, wardCard, outside, ally, mine } = st;
   const { before, after, offered } = run;
-  const allOptions = offered.flatMap((o) => o.options || []);
+  // Only questions whose options NAME something (a unit, a spell, a prop, a
+  // body). A pick over landing spots answers with plain indices, and once a
+  // teleport offered every spot within 6m those indices ran into the hundreds
+  // and collided with unit ids ("offered an enemy unit" for spot 31).
+  const allOptions = offered.filter((o) => !(o.meta?.area || o.area || o.points)).flatMap((o) => o.options || []);
   const touchedUnits = Object.keys(after.hp).filter((id) => after.hp[id] !== before.hp[id]).map(Number);
   const movedUnits = Object.keys(after.pos).filter((id) => after.pos[id] !== before.pos[id]).map(Number);
   const rotated = Object.keys(after.rots).filter((u) => after.rots[u] !== before.rots[u]).map(Number);

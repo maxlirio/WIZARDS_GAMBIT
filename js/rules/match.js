@@ -19,20 +19,25 @@
 // corner re-create their own match after every rotation, and a card that
 // rotates something else without matching anything (printed Defrinol Orb:
 // "after this Artifact is rotated, rotate a Spell left") can ping-pong
-// rotations indefinitely. So termination is PROVED, from two rules that are
-// both real rules a player can be taught, not from a loop guard.
+// rotations indefinitely. So termination is PROVED, from ONE rule a player can
+// be taught, not from a loop guard:
 //
-//   RULE A -- each junction resonates at most once per chain.
+//   EACH SPELL IS ROTATED AT MOST ONCE PER TURN.
 //
-//     A junction is a SITE: two orthogonally adjacent cells and one of the two
-//     corners that touch across their shared edge. There are exactly 24 on a
-//     3x3 (table.js). `spent` is append-only and grows by one on EVERY
-//     iteration -- including when the pair is locked, when the cost is
-//     declined, and when the gate is unmet and the face resolves inert. So a
-//     chain is at most 24 links BY CONSTRUCTION, whatever the effects do.
+//     User (2026-10-24): "each spell can only be rotated once per turn. Its
+//     faces can be resolved more times (like Fuse resolving its face that's
+//     active) but it can only be rotated once." Every rotation in the game --
+//     a match, a face that says "rotate a Spell", a trigger, the player's own
+//     action -- passes through ops.turn/setRot, which refuse a second one
+//     (ops.ROTATION_CAP). A chain link IS a rotation of the matched neighbour,
+//     so a chain is at most nine links a turn by construction, and a match
+//     whose neighbour has had its rotation simply does not fire. Resolving a
+//     face without turning (Fuse, Rewind, Echo) is unlimited.
 //
-//     Keyed by SITE, not by card, so a spell shifted mid-chain cannot
-//     resurrect a spent junction.
+//     This replaced two older bounds -- a junction resonating once per chain,
+//     and four rotations per action -- which together let a square of three-
+//     rune cards resolve five faces every turn (user: "isn't that an infinite
+//     combo?"). Now the same square turns each of its four cards once.
 //
 //   THE TRIGGER -- only a card that just changed sets off a match.
 //
@@ -41,27 +46,18 @@
 //     it is the OTHER card -- the matched neighbour -- that turns. Without this,
 //     two cards that matched three turns ago fire again on every action.
 //
-//   RULE B -- no spell is rotated more than four times per spell ACTION.
-//
-//     Four left turns return a card to where it started, so a fifth brings up a
-//     face that has already been up. This bounds ROTATIONS, which Rule A alone
-//     does not, since a rotation does not have to come from a match: at most
-//     9 x 4 = 36 an action. Scoped to the action rather than the chain because
-//     one action can start several chains -- a queued trigger that rotates
-//     something runs after the chain that queued it has ended. It counts
-//     rotation EVENTS, not quarter-turns; see ops.js.
-//
 // What makes this a proof rather than a hope is that progress depends on NO
-// player choice, NO cost being payable and NO effect succeeding. `state.guard`
-// below is an ASSERTION. If it ever fires, something above is wrong; it must
-// never be the thing that decides a game.
+// player choice, NO cost being payable and NO effect succeeding: every loop
+// iteration below turns a card that could still turn, and afterwards it
+// cannot. `state.guard` is an ASSERTION. If it ever fires, something above is
+// wrong; it must never be the thing that decides a game.
 
 import { ask } from './driver.js';
 import {
   MATCH_SITES, SITE, VERTEX_CARDS, INTERIOR_SITES, CORNER_OF,
 } from './table.js';
 import { activeIndex } from './orient.js';
-import { topOf, spellsOn, defOf, findSpell, turn, prohibited, fx, noteCards, REVOLUTION } from './ops.js';
+import { topOf, spellsOn, defOf, findSpell, turn, prohibited, fx, noteCards, ROTATION_CAP } from './ops.js';
 import { refresh } from './derive.js';
 import { runeAtCorner, runesMatch } from './corners.js';
 import { resonate, keywordsOf } from './keywords.js';
@@ -72,7 +68,7 @@ import { emit } from './triggers.js';
 /** A chain may not exceed this many links. An ASSERTION, never a rule. */
 export const CHAIN_ASSERT = 64;
 
-export { REVOLUTION };
+export { ROTATION_CAP };
 
 export { runeAtCorner, runesMatch, touching } from './corners.js';
 
@@ -86,12 +82,16 @@ export { runeAtCorner, runesMatch, touching } from './corners.js';
  * else on the table moves. `null` means "any pair" -- the AI's potential term
  * and the adversarial harness want that reading.
  *
+ * `live` says whether the match can FIRE: the card that would turn (the
+ * non-fresh one, or either when nothing is fresh) still has its one rotation
+ * this turn and is under no prohibition. A match that is not live is shown
+ * but never fires.
+ *
  * Returned in site order, never sorted by anything the state could vary.
  */
-export function findMatches(state, p, spent = [], fresh = null) {
+export function findMatches(state, p, fresh = null) {
   const out = [];
   for (const id of MATCH_SITES) {
-    if (spent.includes(id)) continue;
     const site = SITE[id];
     const a = topOf(state, p, site.cells[0]);
     const b = topOf(state, p, site.cells[1]);
@@ -100,25 +100,31 @@ export function findMatches(state, p, spent = [], fresh = null) {
     const ra = runeAtCorner(state, a, site.pos[0]);
     const rb = runeAtCorner(state, b, site.pos[1]);
     if (!runesMatch(ra, rb)) continue;
+    // The card that did NOT just change is the one the match turns. If both
+    // changed (an effect turned the neighbour of the card you played), or
+    // nothing is marked fresh, the player chooses.
+    const turners = fresh ? [a, b].filter((s) => !fresh.includes(s.uid)).map((s) => s.uid) : [];
+    const candidates = turners.length ? [a, b].filter((s) => turners.includes(s.uid)) : [a, b];
     out.push({
       site: id,
       vertex: site.vertex,
       uids: [a.uid, b.uid],
       cells: [a.cell, b.cell],
       interior: INTERIOR_SITES.includes(id),
-      // The card that did NOT just change is the one the match turns. If both
-      // changed (an effect turned the neighbour of the card you played), or
-      // nothing is marked fresh, the player chooses.
-      turners: fresh ? [a, b].filter((s) => !fresh.includes(s.uid)).map((s) => s.uid) : [],
+      turners,
+      live: candidates.some((s) => mayTurn(state, s)),
       locked: [a, b].every((s) => prohibited(state, s)),
     });
   }
   return out;
 }
 
+/** May a match still turn this card: no prohibition, and its rotation this turn unspent. */
+export const mayTurn = (state, sp) => !prohibited(state, sp) && (sp.turnsThisTurn | 0) < ROTATION_CAP;
+
 /** Does the acting player have a match waiting? Used by legalActions and the AI. */
 export const hasMatch = (state, p) =>
-  findMatches(state, p, state.chain?.spent || [], state.chain?.fresh ?? freshOf(state, p)).length > 0;
+  findMatches(state, p, freshOf(state, p)).some((h) => h.live);
 
 /** What has changed on this table since the last chain -- the match trigger set. */
 const freshOf = (state, p) => (state.fresh?.[p]?.length ? state.fresh[p] : null);
@@ -131,7 +137,8 @@ const freshOf = (state, p) => (state.fresh?.[p]?.length ? state.fresh[p] : null)
  * neighbour's, the NEIGHBOUR turns left, its new face resolves, and then THAT
  * card's own matches run to exhaustion before we come back here and look at
  * this card again (with whatever corners it shows now -- an effect may have
- * turned it meanwhile). A spent site never fires twice in one chain.
+ * turned it meanwhile). A neighbour that has had its one rotation this turn
+ * does not fire again, which is what ends the chain.
  *
  * A generator, because it asks questions, so it is parked on `state.pending`
  * and REPLAYED FROM A SNAPSHOT on every answer like any other effect. All of
@@ -144,17 +151,26 @@ export function* chainFrom(state, p, uid) {
   state.chain.active = uid;
   for (let guard = 0; ; ) {
     if (++guard > CHAIN_ASSERT) {
-      // Unreachable if Rule A holds. Recorded rather than thrown so the harness
-      // reports WHICH game did it instead of dying inside it.
+      // Unreachable while every link turns a card. Recorded rather than
+      // thrown so the harness reports WHICH game did it instead of dying inside it.
       state.chainOverflow = true;
-      fx(state, 'chainOverflow', { p, spent: [...state.chain.spent] });
+      fx(state, 'chainOverflow', { p, links: state.chain.links });
       break;
     }
     if (state.winner !== null) break;
     const sp = findSpell(state, uid);
     if (!sp || sp.cell === null || sp.owner !== p) break;
 
-    const hits = findMatches(state, p, state.chain.spent, [uid]);
+    // Only matches whose neighbour can still turn. A locked or spent
+    // neighbour is noted once for the log and otherwise ignored; it is the
+    // filter, not a spent list, that makes every iteration below a rotation.
+    const all = findMatches(state, p, [uid]);
+    for (const h of all) {
+      if (h.live || state.chain.noted.includes(h.site)) continue;
+      state.chain.noted.push(h.site);
+      fx(state, 'matchLocked', { vertex: h.vertex, site: h.site, uids: h.uids });
+    }
+    const hits = all.filter((h) => h.live);
     if (!hits.length) break;
 
     // Two or more NEIGHBOURS match this card: the order is the player's. One
@@ -177,22 +193,17 @@ export function* chainFrom(state, p, uid) {
     );
     const hit = (chosen !== null && firstOf(chosen)) || hits[0];
 
-    // PROGRESS, UNCONDITIONALLY, BEFORE anything is mutated. Everything below
-    // this line may fail, be declined, or do nothing, and the chain still
-    // shrinks its own bound. This single line is the termination proof.
-    state.chain.spent.push(hit.site);
     state.chain.links++;
     bump(state.players[p].ledger, 'chainLinks');
 
     // THE NEIGHBOUR TURNS. The card that changed is the trigger; the other
-    // card of the pair is what it sets off. Rule B: a card that has already
-    // come full circle this action, or sits under a prohibition, does not
-    // turn, and the site is spent regardless -- spending rather than skipping
-    // is what keeps the loop monotone.
+    // card of the pair is what it sets off. It is live (filtered above), so
+    // the turn below succeeds and spends its rotation for the turn -- THAT is
+    // the progress every iteration makes. If it somehow did not, stop rather
+    // than spin: the assertion above would catch the loop otherwise.
     const other = hit.uids.find((u) => u !== uid);
     const s2 = findSpell(state, other);
-    if (!s2 || prohibited(state, s2)) { fx(state, 'matchLocked', { vertex: hit.vertex, site: hit.site, uids: hit.uids }); continue; }
-    if (s2.turnsThisAction >= REVOLUTION) { fx(state, 'matchExhausted', { vertex: hit.vertex, site: hit.site, uids: hit.uids }); continue; }
+    if (!s2 || !mayTurn(state, s2)) { fx(state, 'matchLocked', { vertex: hit.vertex, site: hit.site, uids: hit.uids }); break; }
 
     // The corners as they MET, read before the turn changes them, so the
     // HUD can ring the two runes that agreed.
@@ -214,7 +225,7 @@ export function* chainFrom(state, p, uid) {
     // restrains the player, not the board. Only a printed prohibition does.
     // Not silent: the HUD plays every turn the chain makes (user: "sometimes
     // its hard to catch how fast it moves").
-    turn(state, other, { dir: 'left', forced: true });
+    if (!turn(state, other, { dir: 'left', forced: true })) break;
     bump(state.players[p].ledger, 'forcedRotations');
     refresh(state);
     emit(state, 'afterMatch', { vertex: hit.vertex, site: hit.site, uids: hit.uids, chosen: other, p });
@@ -250,15 +261,15 @@ function settled(state, p, uid) {
 }
 
 /**
- * Open a chain for this spell action, if one is not already running. Rule B's
- * counter is NOT cleared here: it is per spell ACTION, and one action can run
- * several chains (a queued trigger that rotates something runs after the
- * chain that queued it has ended). Returns whether this call opened it, so
- * the same caller closes it.
+ * Open a chain for this spell action, if one is not already running. The
+ * rotation budget is NOT touched here: it is per TURN (turn.js beginTurn),
+ * and one action can run several chains (a queued trigger that rotates
+ * something runs after the chain that queued it has ended). Returns whether
+ * this call opened it, so the same caller closes it.
  */
 export function beginChain(state, p, cause) {
   if (state.chain) return false;
-  state.chain = { p, cause, spent: [], resolutions: 0, links: 0, active: null };
+  state.chain = { p, cause, resolutions: 0, links: 0, active: null, noted: [] };
   return true;
 }
 

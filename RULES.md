@@ -14,7 +14,7 @@ First player to **15 Victory Points**.
 |---|---|
 | a gold spell's objective | as printed on the face |
 | killing the enemy mage | 2 — and the mage respawns |
-| killing an enemy golem unit | 1 |
+| killing an enemy golem unit | by tier: A 2, B 1, C 0 |
 
 **Only gold spells award objective VP.** Faces of other schools may carry gates, but
 never a payout. `def()` throws at load if a non-gold face declares an objective, so
@@ -204,31 +204,29 @@ chain can hurt you: you can be forced off a face you wanted.
 ### Chains
 
 Resolving a face can rotate or shift things, producing new matches. The chain
-continues as long as matches remain. Two rules bound it:
+continues as long as matches remain. One rule bounds it:
 
-> **Each junction resonates at most once per chain.**
+> **Each spell is rotated at most once per turn.**
 
-There are exactly 24 match sites (a corner touching a corner across a shared edge),
-and a chain spends one previously-unspent site per link **before** it mutates
-anything — including when nothing resolves. So a chain is **at most 24 links, by
-construction**, no matter what the effects do. This is a proof, not a safety guard;
-the engine's `guard` is an assertion that must never fire.
+Every rotation in the game — a match, a face that says "rotate a Spell", a trigger, your
+own spell action — passes through the same door, and a second rotation of the same card
+in one turn is refused. A chain link *is* a rotation of the matched neighbour, so a
+chain can turn at most the nine cards on the table and then it is over, by construction,
+no matter what the effects do. A match whose neighbour has already had its rotation this
+turn simply does not fire. **Faces may still be resolved as often as effects allow** —
+Fuse resolving its active face, Rewind resolving a I, Echo Bell resolving a neighbour —
+only the *rotation* is rationed. The engine's `guard` is an assertion that must never fire.
 
-> **No spell is rotated more than four times in one spell action.**
+It counts rotation **events**, not quarter-turns: printed `Precision` — *"rotate a Spell
+to any side"* — is one rotation however far it goes.
 
-Four left turns return a spell to where it started, so a fifth brings up a face that
-has already been up. This bounds *rotations*, which the link rule alone does not,
-since a rotation does not have to come from a match — printed `Defrinol Orb` rotates
-things without matching anything. At most 9 x 4 = 36 rotations an action.
+This replaced two earlier bounds: *each junction resonates at most once per chain* and
+*no spell is rotated more than four times in one spell action*. Together they let a
+square of four cards with three matching corners resolve five faces every turn; now the
+same square turns each of its four cards once a turn.
 
-It counts rotation **events**, not quarter-turns. Printed `Precision` I — *"rotate a
-Spell to any side"* — moves a card up to three quarter-turns at once, and counting
-quarter-turns let a card that had already turned twice reach five and blow the cap.
-Counting events is what bounds the loop anyway, since the loop is driven by how many
-times a trigger fires.
-
-If every card in a matched group is under a prohibition, the vertex is spent and
-nothing happens.
+If every card in a matched pair is under a prohibition, or has had its rotation, the
+match does not fire and nothing happens.
 
 ### Keywords on a match: resonance
 
@@ -415,7 +413,9 @@ battlefield. The card is the source, the units are the bodies.
 
 - Your mage summons a unit of a golem card adjacent to itself during the Unit Phase,
   up to that cap.
-- Killing a golem unit scores the killer **1 VP**.
+- Killing a golem unit scores the killer **2 VP for an A-tier, 1 for a B, nothing for a C**.
+  The swarm is not a farm: a C-tier body is worth having out (it fights, it blocks, it
+  carries your reach) and worth nothing to kill.
 - **A golem card that has been deployed at least once, and now has zero units on the
   battlefield, is destroyed and placed in your discard**, freeing its slot.
 
@@ -621,16 +621,15 @@ every turn, and a gold objective deliberately sends its own card to the discard
 every time it scores. The round trip through the discard **is** the VP throttle,
 so the discard has to come back around.
 
-### Rule B is per spell ACTION, not per chain, and counts events
+### One rotation per spell per TURN, and it counts events
 
-"No spell is rotated more than four times" is scoped to the whole spell action,
-because a rotation does not have to come from a chain. Two `Defrinol
-Orb`s — *"after this Artifact is rotated, rotate a Spell left"* — rotate each
-other through **queued triggers**, which run after a chain has already ended.
-Each individual chain is perfectly well bounded and the pair would still
-ping-pong forever. Scoped to the action, the fifth rotation of a card is refused
-by `ops.turn`, which is the one function every rotation in the game passes
-through.
+The rotation budget is scoped to the whole **turn**, not to a chain or an action,
+because a rotation does not have to come from a chain. Two `Defrinol Orb`s — *"after
+this Artifact is rotated, rotate a Spell left"* — rotate each other through **queued
+triggers**, which run after a chain has already ended; scoped to the turn, the second
+rotation of either orb is refused by `ops.turn`, which is the one function every
+rotation in the game passes through. The budget resets at the start of every turn for
+both tables, since your effects can turn your opponent's cards during your turn.
 
 ### A rotation from a queued trigger starts a NEW chain
 

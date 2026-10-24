@@ -13,7 +13,7 @@ import { everySpell, spellsOn, defOf } from '../js/rules/ops.js';
 import { KEYWORD_NAMES, MAX_KEYWORDS } from '../js/rules/keywords.js';
 import { LEDGER_KEYS } from '../js/rules/ledger.js';
 import { TIER_CAP, SLOTS, SLOT_TIER } from '../js/rules/golems.js';
-import { REVOLUTION } from '../js/rules/ops.js';
+import { ROTATION_CAP } from '../js/rules/ops.js';
 import { CHAIN_ASSERT } from '../js/rules/match.js';
 import { heightAt, inBounds, BODY_R } from '../js/field/arena.js';
 import { vpConfig } from '../js/rules/score.js';
@@ -57,8 +57,8 @@ export function invariants(state, where = '') {
 
         /* ------------------------------------------------------ rotation */
         if (![0, 1, 2, 3].includes(sp.rot)) say(`uid ${sp.uid} has rot ${sp.rot}`);
-        if (sp.turnsThisAction > REVOLUTION) {
-          say(`uid ${sp.uid} rotated ${sp.turnsThisAction} times in one action (cap ${REVOLUTION})`);
+        if (sp.turnsThisTurn > ROTATION_CAP) {
+          say(`uid ${sp.uid} rotated ${sp.turnsThisTurn} times in one turn (cap ${ROTATION_CAP})`);
         }
         // A spell on a mismatched colour is a legal STATE -- it got there by
         // being shifted. What is illegal is the voluntary TRANSITION, so what
@@ -135,11 +135,9 @@ export function invariants(state, where = '') {
   if (state.illegalRotations) say(`${state.illegalRotations} illegal rotations reached ops (legalActions disagrees with ops)`);
   if (!state.pending && state.chain !== null) say('a chain is live with no question outstanding');
   if (state.chain) {
-    const sp = state.chain.spent;
-    if (sp.length !== new Set(sp).size) say(`chain spent a vertex twice: ${sp.join(',')}`);
-    if (sp.some((v) => !MATCH_SITES.includes(v))) say(`chain spent a non-matchable vertex: ${sp.join(',')}`);
-    if (sp.length > MATCH_SITES.length) say(`chain is ${sp.length} links (bound ${MATCH_SITES.length})`);
-    if (state.chain.resolutions > MATCH_SITES.length) say(`chain resolved ${state.chain.resolutions} faces`);
+    // One rotation per spell per turn bounds a chain at the table's nine cards.
+    if (state.chain.links > 9) say(`chain has ${state.chain.links} links; nine cards can only turn nine times`);
+    if (state.chain.resolutions > state.chain.links) say(`chain resolved ${state.chain.resolutions} faces over ${state.chain.links} links`);
   }
 
   /* ------------------------------------------------------------ VP */

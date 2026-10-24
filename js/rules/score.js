@@ -14,7 +14,14 @@ import { emit } from './triggers.js';
 export const VP_DEFAULTS = Object.freeze({
   target: 15,
   mage: 2,          // killing the enemy mage
-  golemUnit: 1,     // killing an enemy golem unit
+  /**
+   * Killing an enemy golem unit, BY TIER. User (2026-10-24): "golems like
+   * clay hands are buns and the only reason you would ever play them is for
+   * your opponent to farm them." So the swarm is worth nothing to kill, a
+   * B-tier body is worth one, and the one giant is worth two -- a prize
+   * because it is dangerous, not because it was cheap to put out.
+   */
+  golemByTier: Object.freeze({ C: 0, B: 1, A: 2 }),
   /**
    * Diminishing returns on repeatedly killing the same mage.
    *
@@ -82,7 +89,7 @@ export function award(state, p, amount, source = {}) {
 }
 
 /** VP for a kill, with the mage's decay applied. Routed through `award`. */
-export function awardKill(state, killer, victimKind, victimOwner) {
+export function awardKill(state, killer, victimKind, victimOwner, victim = null) {
   const cfg = vpConfig(state);
   const L = state.players[victimOwner].ledger;
   if (victimKind === 'mage') {
@@ -92,5 +99,16 @@ export function awardKill(state, killer, victimKind, victimOwner) {
     return award(state, killer, amount, { kind: 'mage' });
   }
   bump(state.players[killer].ledger, 'golemsKilled');
-  return award(state, killer, cfg.golemUnit, { kind: 'golem' });
+  const amount = golemWorth(state, victim);
+  // A kill worth nothing is still a kill (the ledger counts it for Reckoning),
+  // but it writes no VP entry: the score log is for points that were scored.
+  if (amount <= 0) return 0;
+  return award(state, killer, amount, { kind: 'golem' });
+}
+
+/** What killing this golem unit pays, by its card's tier. */
+export function golemWorth(state, unit) {
+  const cfg = vpConfig(state);
+  const tier = unit?.def ? state.defs[unit.def]?.tier : null;
+  return cfg.golemByTier[tier] ?? 0;
 }

@@ -113,7 +113,7 @@ export function kill(state, unit, why = {}) {
   emit(state, 'afterKill', { id: unit.id, victim: unit.kind, p: victim, by: killer });
 
   if (killer !== null && killer !== undefined && killer !== victim) {
-    awardKill(state, killer, unit.kind === 'mage' ? 'mage' : 'golem', victim);
+    awardKill(state, killer, unit.kind === 'mage' ? 'mage' : 'golem', victim, unit);
   }
   if (unit.kind !== 'mage') checkGolemAttrition(state);
 }

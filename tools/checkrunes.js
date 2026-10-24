@@ -61,7 +61,7 @@ import { runeAgreement } from '../js/rules/schema.js';
 import { CELL_COLOR, HOME, MATCH_SITES, SITE, CELLS } from '../js/rules/table.js';
 import { indexAt } from '../js/rules/orient.js';
 import { seedRng, int, pick } from '../js/rules/rng.js';
-import { REVOLUTION } from '../js/rules/ops.js';
+import { ROTATION_CAP } from '../js/rules/ops.js';
 
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? Number(process.argv[i + 1]) : d; };
 const TABLES = arg('tables', 100000);
@@ -127,7 +127,10 @@ function deal(rng, deck, want) {
 }
 
 /**
- * Run one chain over a table, with both termination rules and nothing else.
+ * Run one chain over a table, with the termination rule and nothing else:
+ * each card is rotated at most once per turn (`fresh` was rotated by the
+ * action itself, so it has had its turn), and a site whose turner has had
+ * its rotation does not fire.
  *
  * The real rule: only ORTHOGONAL neighbours match, at the two corners that
  * touch across their shared edge, and only a site touching a FRESH card (the
@@ -135,15 +138,14 @@ function deal(rng, deck, want) {
  * matched neighbour turns.
  */
 function chain(rng, table, fresh) {
-  const spent = [];
   let links = 0;
-  for (const card of table) if (card) card.turns = 0;    // Rule B: per action
+  for (const card of table) if (card) card.turns = 0;    // a new turn
+  if (fresh && fresh.rotated) fresh.turns = 1;            // the action's own rotation
   const hot = new Set(fresh ? [fresh] : table.filter(Boolean));
 
   for (let guard = 0; guard < 64; guard++) {
     const live = [];
     for (const id of MATCH_SITES) {
-      if (spent.includes(id)) continue;
       const s = SITE[id];
       const a = table[s.cells[0]], b = table[s.cells[1]];
       if (!a || !b) continue;
@@ -151,20 +153,19 @@ function chain(rng, table, fresh) {
       const ra = runeAt(a, s.pos[0]), rb = runeAt(b, s.pos[1]);
       if (ra !== rb && ra !== 'WILD' && rb !== 'WILD') continue;
       const turners = [a, b].filter((c) => !hot.has(c));
-      live.push({ id, pair: turners.length ? turners : [a, b] });
+      const eligible = (turners.length ? turners : [a, b]).filter((c) => c.turns < ROTATION_CAP);
+      if (!eligible.length) continue;                  // its turner has had its rotation
+      live.push({ id, pair: eligible });
     }
     if (!live.length) break;
     const chosen = live[int(rng, live.length)];
-    spent.push(chosen.id);                             // Rule A: unconditional
-    const eligible = chosen.pair.filter((c) => c.turns < REVOLUTION);
-    if (!eligible.length) continue;
-    const c = eligible[int(rng, eligible.length)];
+    const c = chosen.pair[int(rng, chosen.pair.length)];
     c.rot = (c.rot + 1) & 3;                           // a left turn
     c.turns++;
     hot.add(c);
     links++;
   }
-  return { links, spent: spent.length };
+  return { links };
 }
 
 /** What a player's own spell action does to the table. Returns the card it changed. */
@@ -178,9 +179,10 @@ function perturb(rng, table) {
     const c = table[i];
     const to = [i - 3, i + 3, i % 3 !== 0 ? i - 1 : -1, i % 3 !== 2 ? i + 1 : -1]
       .filter((n) => n >= 0 && n < CELLS && !table[n]);
-    if (to.length) { const t = to[int(rng, to.length)]; table[t] = c; c.cell = t; table[i] = null; return c; }
+    if (to.length) { const t = to[int(rng, to.length)]; table[t] = c; c.cell = t; table[i] = null; c.rotated = false; return c; }
   }
   table[i].rot = (table[i].rot + 1) & 3;
+  table[i].rotated = true;                             // the action spent this card's rotation
   return table[i];
 }
 
@@ -202,7 +204,7 @@ function measure(occupancy, tables) {
       sum += r.links;
       n++;
       if (r.links > maxLen) maxLen = r.links;
-      if (r.spent > MATCH_SITES.length) overflow++;
+      if (r.links > CELLS) overflow++;
     }
   }
   return { hist, mean: sum / n, maxLen, overflow, n };
@@ -227,8 +229,8 @@ for (let occ = 2; occ <= CELLS; occ++) {
   const two = ((m.n - m.hist[0] - m.hist[1]) * 100) / m.n;
   const mark = PLAY_OCCUPANCY.includes(occ) ? ' <- real play' : '';
   console.log(`  ${String(occ).padStart(5)}   ${m.mean.toFixed(2).padStart(4)}   ${zero.toFixed(0).padStart(6)}%   ${two.toFixed(0).padStart(7)}%   ${String(m.maxLen).padStart(7)}${mark}`);
-  ok(m.overflow === 0, `${m.overflow} chains at ${occ} cards spent more than ${MATCH_SITES.length} vertices`);
-  ok(m.maxLen <= MATCH_SITES.length, `a chain at ${occ} cards reached ${m.maxLen} links (bound ${MATCH_SITES.length})`);
+  ok(m.overflow === 0, `${m.overflow} chains at ${occ} cards made more than ${CELLS} links`);
+  ok(m.maxLen <= CELLS, `a chain at ${occ} cards reached ${m.maxLen} links (bound ${CELLS}: one rotation per card per turn)`);
 }
 
 const histLen = new Array(14).fill(0);
@@ -249,7 +251,7 @@ for (let i = 0; i < histLen.length; i++) {
   console.log(`  ${String(i).padStart(2)} links  ${String(histLen[i]).padStart(7)}  ${share.toFixed(2)}%  ${'#'.repeat(Math.round(share / 2))}`);
 }
 const mean = sum / TOTAL;
-console.log(`mean ${mean.toFixed(2)} links, longest ${maxLen}, bound ${MATCH_SITES.length}`);
+console.log(`mean ${mean.toFixed(2)} links, longest ${maxLen}, bound ${CELLS}`);
 
 // The design band. A mean below 1 means the chain mechanic almost never fires
 // and the game is just one action a turn; above 4 and every action is a
@@ -259,7 +261,10 @@ console.log(`mean ${mean.toFixed(2)} links, longest ${maxLen}, bound ${MATCH_SIT
 // Lowered from 0.5 when matching became orthogonal-only and fresh-card-only
 // (2026-10-18): a chain now needs the card you just moved to line up with a
 // neighbour, so it fires on about a quarter of actions at real occupancy.
-ok(mean >= 0.4 && mean <= 3.0, `mean chain length ${mean.toFixed(2)} is outside the intended band 0.4-3.0`);
+// The band dropped from 0.4 when one rotation per card per turn replaced the
+// four-per-action cap (2026-10-24): a neighbour now turns once, not up to
+// four times, so the mean at three or four cards fell from about 0.8 to 0.4.
+ok(mean >= 0.3 && mean <= 3.0, `mean chain length ${mean.toFixed(2)} is outside the intended band 0.3-3.0`);
 const zero = (histLen[0] * 100) / TOTAL;
 const combo = ((TOTAL - histLen[0] - histLen[1]) * 100) / TOTAL;
 console.log(`no match at all      ${zero.toFixed(1)}%`);

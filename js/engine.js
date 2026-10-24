@@ -267,11 +267,6 @@ export function apply(state, action) {
     throw new Error(`illegal action: ${JSON.stringify(action)}`);
   }
   const p = state.active;
-  // Rule B's budget is per action, so it is reset here -- the one place an
-  // action begins.
-  for (let q = 0; q < 2; q++) {
-    for (const stack of state.players[q].table) for (const sp of stack) sp.turnsThisAction = 0;
-  }
 
   if (action.type === 'unit') {
     state.queue.push({ kind: 'unit', action, seq: ++state.actionSeq });
@@ -543,7 +538,7 @@ export function hashState(state) {
   const parts = [`t${state.turn}a${state.active}p${state.phase}s${state.spellActionUsed ? 1 : 0}b${state.bindUsed ? 1 : 0}`];
   parts.push(`vp${state.vp[0]}/${state.vp[1]}`, `log${state.scoreLog.length}`);
   parts.push(`w${state.winner}`, `rng${saveRng(state.rng).join('.')}`);
-  parts.push(`chain${state.chain ? state.chain.spent.join('-') + ':' + state.chain.resolutions : 'x'}`);
+  parts.push(`chain${state.chain ? state.chain.links + ':' + state.chain.resolutions : 'x'}`);
   parts.push(`fresh${(state.fresh || [[], []]).map((f) => f.join('.')).join('|')}`);
   parts.push(`q${state.queue.map((w) => `${w.kind}${w.uid ?? ''}${w.event ?? ''}`).join(',')}`);
   parts.push(`pend${state.pending ? state.pending.request.type + state.pending.answers.length : 'x'}`);

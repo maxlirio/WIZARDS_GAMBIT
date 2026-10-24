@@ -93,6 +93,35 @@ export function ringPoints(state, from, mmDist, { samples = 16, forId = null } =
   return out;
 }
 
+/**
+ * Every standable spot WITHIN `mmDist` of `from`, on a fixed `grid`, nearest
+ * first (ties by y then x, never by iteration order). User (2026-10-24):
+ * teleports "have yellow circles in random places, when in reality they
+ * should have like a movement circle, because it says WITHIN". ringPoints
+ * offered sixteen spots at exactly the full distance; this is the whole disc,
+ * fine enough that the view can draw a circle and snap a click to the nearest.
+ * The grid is anchored on the arena, not on the unit, so the same spot has
+ * the same coordinates whoever is asking.
+ */
+export function areaPoints(state, from, mmDist, { grid = 250, forId = null, minMm = 300 } = {}) {
+  const out = [];
+  const r2 = mmDist * mmDist, min2 = minMm * minMm;
+  const x0 = idiv(from.x - mmDist, grid) * grid, y0 = idiv(from.y - mmDist, grid) * grid;
+  for (let y = y0; y <= from.y + mmDist; y += grid) {
+    for (let x = x0; x <= from.x + mmDist; x += grid) {
+      const d2 = dist2(x, y, from.x, from.y);
+      if (d2 > r2 || d2 < min2) continue;
+      if (!inBounds(state.arena, x, y)) continue;
+      const s = surfaceAt(state, x, y);
+      if (!walkable(state, x, y, s.z, { ignore: forId })) continue;
+      out.push({ x, y, z: s.z, dir: bearing(from.x, from.y, x, y), d2 });
+    }
+  }
+  out.sort((a, b) => (a.d2 - b.d2) || (a.y - b.y) || (a.x - b.x));
+  for (const pt of out) delete pt.d2;
+  return out;
+}
+
 /** The highest standable point on the ring. Printed Levitation IV's "closest elevated position". */
 export function elevatedNear(state, body, mmDist) {
   const pts = [

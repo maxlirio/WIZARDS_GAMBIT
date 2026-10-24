@@ -27,6 +27,9 @@ export function beginTurn(state) {
   state.bindUsed = false;
   state.tableDirty = [false, false];
   state.fresh = [[], []];
+  // Every spell may be rotated once per TURN (ops.ROTATION_CAP); the budget
+  // is for both players' tables, since your effects can turn their cards.
+  for (let q = 0; q < 2; q++) for (const stack of state.players[q].table) for (const sp of stack) sp.turnsThisTurn = 0;
 
   const pl = state.players[p];
   // "the mage respawns at its owner's own starting circle at the start of that

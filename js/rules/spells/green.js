@@ -154,3 +154,14 @@ card({
   III: { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
   IV:  { text: 'Rotate up to two Spells you control right, one after the other.', ...M.turnSeveral({ n: 2, dir: 'right' }) },
 });
+
+card({
+  id: 'GRAVEROOT', name: 'Graveroot', school: 'green',
+  // What was lost grows back: cards from the discard, a spell back on the table.
+  runes: [LATTICE, SPIRAL, LATTICE, LATTICE],
+  sigil: ['.S', '.L', 'LL'],
+  I:   { text: 'Draw a card, then discard a card.', ...M.drawThenDiscard({ draw: 1, discard: 1 }) },
+  II:  { text: 'Return a card from your discard to your hand.', ...M.recall() },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Return a Spell from your discard to an empty cell of its colour.', ...M.reanimate() },
+});

@@ -265,13 +265,17 @@ export const relocate = ({ mm = 3000, range = 4000, side = 'friendly' } = {}) =>
     if (!ids.length) return;
     const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Relocate which unit?', kind: 'unit' });
     if (id === null) return;
-    const pts = ctx.landingPoints(id, mm);
-    if (!pts.length) return;
+    // Anywhere WITHIN the distance, not sixteen spots on its edge: the view
+    // draws `area` as a movement circle and snaps a click to the nearest
+    // option. `blink` tells it this is a teleport -- vanish, reappear.
+    const u = ctx.unit(id);
+    const pts = ctx.areaPoints(id, mm);
+    if (!pts.length || !u) return;
     const i = yield ctx.ask.pick(pts.map((_, k) => k), {
-      prompt: 'Where?', labels: pts.map((pt) => `${ctx.dirLabel(pt.dir)} (${pt.x},${pt.y}) z${pt.z}`),
-      show: pts.map(({ x, y, z }) => ({ x, y, z })),
+      prompt: 'Teleport where?', labels: pts.map((pt) => `${ctx.dirLabel(pt.dir)} (${pt.x},${pt.y}) z${pt.z}`),
+      area: { x: u.x, y: u.y, z: u.z, r: mm, id }, points: pts.map(({ x, y, z }) => ({ x, y, z })),
     });
-    ctx.relocate(id, pts[i ?? 0]);
+    ctx.relocate(id, pts[i ?? 0], { blink: true });
   },
 });
 
@@ -890,11 +894,11 @@ export const dashMage = ({ mm = 2000 } = {}) => ({
   *effect(ctx) {
     const m = ctx.mage();
     if (!m || m.dead) return;
-    const pts = ctx.landingPoints(m.id, mm);
+    const pts = ctx.areaPoints(m.id, mm);
     if (!pts.length) return;
     const i = pts.length === 1 ? 0 : yield ctx.ask.pick(pts.map((_, k) => k), {
       prompt: 'Dash where?', labels: pts.map((pt) => `${ctx.dirLabel(pt.dir)} z${pt.z}`),
-      show: pts.map(({ x, y, z }) => ({ x, y, z })),
+      area: { x: m.x, y: m.y, z: m.z, r: mm, id: m.id }, points: pts.map(({ x, y, z }) => ({ x, y, z })),
     });
     if (i === null) return;
     ctx.relocate(m.id, pts[i]);

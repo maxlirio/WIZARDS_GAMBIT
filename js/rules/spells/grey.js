@@ -135,3 +135,25 @@ card({
   III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   IV:  { text: 'Push everything within 2m away from your mage with force 2.', ...M.repel({ force: 2, range: 2000, side: 'anything' }) },
 });
+
+card({
+  id: 'WAR_DRUM', name: 'War Drum', school: 'grey', kind: 'artifact',
+  // A beat your units march to: further, harder, and something to show for a kill.
+  runes: [LATTICE, SHARD, WHEEL, LATTICE],
+  sigil: ['LH', 'L.', 'L.'],
+  I:   { text: 'Your units move 1m further.', ...M.passiveUnitMove({ mm: 1000 }) },
+  II:  { text: 'After you kill a unit, draw a card.', ...M.onKillDraw({ n: 1 }) },
+  III: { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
+  IV:  { text: 'Your damage is increased by 1.', ...M.passiveDamage({ n: 1 }) },
+});
+
+card({
+  id: 'HEARTSTONE', name: 'Heartstone', school: 'grey', kind: 'artifact',
+  // A second heart for the mage.
+  runes: [LATTICE, SPIRAL, LATTICE, WHEEL],
+  sigil: ['SL', 'L.', 'W.'],
+  I:   { text: 'Your mage regains 1 life.', ...M.mend({ n: 1 }) },
+  II:  { text: 'Your mage has +2 life.', ...M.passiveMageLife({ n: 2 }) },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Your units take 1 less damage, to a minimum of 1.', ...M.passiveShield({ n: 1 }) },
+});

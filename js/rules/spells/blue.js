@@ -168,3 +168,25 @@ card({
   III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
   IV:  { text: 'Push everything within 4m away from your mage with force 4.', ...M.repel({ force: 4, range: 4000, side: 'anything' }) },
 });
+
+card({
+  id: 'EARTHSHAKER', name: 'Earthshaker', school: 'blue',
+  // The ground as a weapon: crack it, raise a wall, then shake everyone off it.
+  runes: [WHEEL, SHARD, WHEEL, WHEEL],
+  sigil: ['.H', 'HW', '.W'],
+  I:   { text: 'Crack a terrain piece within 4m for 1.', ...M.crackTerrain({ amount: 1, range: 4000 }) },
+  II:  { text: 'Raise a stone wall within 2m of your mage.', ...M.raiseWall({ mm: 2000 }) },
+  III: { text: 'Push a terrain piece within 4m with force 3.', ...M.shoveTerrain({ force: 3, range: 4000 }) },
+  IV:  { text: 'Quake: push every unit within 3m away from your mage with force 3, friend or foe.', ...M.quake({ force: 3, range: 3000 }) },
+});
+
+card({
+  id: 'CATAPULT', name: 'Catapult', school: 'blue',
+  // Stone thrown at people, and people thrown into the air.
+  runes: [WHEEL, WHEEL, SHARD, WHEEL],
+  sigil: ['.W', 'HH', '.W'],
+  I:   { text: 'Raise a terrain piece within 4m by 1m.', ...M.liftTerrain({ mm: 1000, range: 4000 }) },
+  II:  { text: 'Fire a terrain piece within 3m at the enemy nearest it with force 6.', ...M.cannonade({ force: 6, range: 3000 }) },
+  III: { text: 'Draw a card, then discard a card.', ...M.drawThenDiscard({ draw: 1, discard: 1 }) },
+  IV:  { text: 'Hurl an enemy unit within 4m three metres into the air. It falls.', ...M.hurl({ mm: 3000, range: 4000 }) },
+});

@@ -67,3 +67,19 @@ card({
   text: 'Tier C. [Stun]. 3 hit points, 2.2m move, 1 damage.',
   sigil: ['SWS', '.WL'],
 });
+
+card({
+  id: 'GRANITE_RAM', name: 'Granite Ram', school: 'golem', kind: 'golem', tier: 'B',
+  unit: { hp: 5, move: 2200, atk: 2, reach: 1000 },
+  keywords: ['Impact'],
+  text: 'Tier B. [Impact]. 5 hit points, 2.2m move, 2 damage.',
+  sigil: ['WW.', 'LLL'],
+});
+
+card({
+  id: 'OBSIDIAN_TITAN', name: 'Obsidian Titan', school: 'golem', kind: 'golem', tier: 'A',
+  unit: { hp: 8, move: 1800, atk: 3, reach: 1100 },
+  keywords: ['Channel', 'Absorb'],
+  text: 'Tier A. One only. [Channel] [Absorb]. 8 hit points, 1.8m move, 3 damage.',
+  sigil: ['W.', 'SW', 'LS'],
+});

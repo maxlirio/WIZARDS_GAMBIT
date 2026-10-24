@@ -37,7 +37,7 @@ import { holdUnit } from './units.js';
 import { findUnit, mageOf, unitsOf, livingUnits, rangeOrigins, propsOnBoard, surfaceAt } from '../field/query.js';
 import { pushAwayFrom, pullToward, smashProp } from '../field/push.js';
 import { propSpec, propR, BODY_R } from '../field/arena.js';
-import { bearing, dist2, within, idiv, DIR64, DIR_SCALE } from '../field/fixed.js';
+import { bearing, dist2, within, idiv, isqrt, DIR64, DIR_SCALE } from '../field/fixed.js';
 
 /**
  * Damage that counts as "an enemy Spell would deal damage". A strike is a
@@ -73,8 +73,26 @@ export function earthWallSpot(state, victim, source) {
     for (const pr of propsOnBoard(state)) if (dist2(pr.x, pr.y, x, y) <= (r + propR(pr)) ** 2) return false;
     return true;
   };
+  // ON THE LINE FIRST, at every distance out to halfway to the caster, and
+  // only then a little to either side. Searching sideways before further out
+  // put the wall beside the victim whenever a rock sat in the first spot
+  // (user: "most of the time it isn't even in the way. It should LITERALLY
+  // block the fireballs").
+  const span = isqrt(dist2(victim.x, victim.y, source.x, source.y));
+  const dists = [];
+  for (let d = WALL_STANDOFF; d <= Math.max(WALL_STANDOFF, idiv(span, 2)) && dists.length < 8; d += 300) dists.push(d);
+  for (const off of [0, 3, -3, 6, -6]) {
+    for (const dist of dists) {
+      const [ux, uy] = DIR64[(d0 + off + 64) & 63];
+      const x = victim.x + idiv(ux * dist, DIR_SCALE), y = victim.y + idiv(uy * dist, DIR_SCALE);
+      if (free(x, y)) return { x, y };
+    }
+  }
+  // Point blank -- the caster is too close for a wall to fit between them on
+  // the line -- so the nearest free spot further out and to the side, which
+  // still takes the hit for the unit.
   for (const dist of [WALL_STANDOFF, WALL_STANDOFF + 300, WALL_STANDOFF + 600]) {
-    for (const off of [0, 6, -6, 12, -12]) {
+    for (const off of [9, -9, 12, -12]) {
       const [ux, uy] = DIR64[(d0 + off + 64) & 63];
       const x = victim.x + idiv(ux * dist, DIR_SCALE), y = victim.y + idiv(uy * dist, DIR_SCALE);
       if (free(x, y)) return { x, y };
@@ -84,7 +102,7 @@ export function earthWallSpot(state, victim, source) {
 }
 
 /** Heave a wall of earth out of the ground at a point. Named, so it can be smashed. */
-export function raiseEarthWall(state, x, y, { byP = null } = {}) {
+export function raiseEarthWall(state, x, y, { byP = null, from = null, shields = null } = {}) {
   const f = state.field;
   f.nextPropId = (f.nextPropId ?? f.props.length) + 1;
   const s = surfaceAt(state, x, y);
@@ -94,7 +112,9 @@ export function raiseEarthWall(state, x, y, { byP = null } = {}) {
     hp: propSpec('earthwall').hp, burning: null, litBy: null, destroyed: false,
   };
   f.props.push(pr);
-  fx(state, 'raiseWall', { id: pr.id, at: { x, y, z: s.z }, prop: 'earthwall', p: byP });
+  // `from` is the source the wall faces and `shields` the unit behind it, so
+  // the view can fly the bolt into the wall rather than through it.
+  fx(state, 'raiseWall', { id: pr.id, at: { x, y, z: s.z }, prop: 'earthwall', p: byP, from, shields });
   return pr;
 }
 
@@ -112,10 +132,20 @@ export const trapEarthWall = () => ({
       // Sprung first, so the wall's own consequences (a shatter, a fall) see a
       // table without the trap on it and cannot spring it twice.
       springTrap(state, spell.uid);
-      const source = rangeOrigins(state, 1 - p)[0] || mageOf(state, 1 - p);
-      const spot = source && !source.dead ? earthWallSpot(state, victim, source) : null;
+      // The NEAREST of the caster's range origins is the line of fire the
+      // wall must sit on. The first origin in the list was the mage even
+      // when the bolt came from a [Channel] golem on the other side, so the
+      // wall rose on the wrong side of the victim (user: "most of the time
+      // it isn't even in the way").
+      let source = null, best = Infinity;
+      for (const o of [...rangeOrigins(state, 1 - p), mageOf(state, 1 - p)]) {
+        if (!o || o.dead) continue;
+        const d = dist2(o.x, o.y, victim.x, victim.y);
+        if (d < best) { best = d; source = o; }
+      }
+      const spot = source ? earthWallSpot(state, victim, source) : null;
       if (spot) {
-        const wall = raiseEarthWall(state, spot.x, spot.y, { byP: p });
+        const wall = raiseEarthWall(state, spot.x, spot.y, { byP: p, from: { x: source.x, y: source.y, id: source.id }, shields: victim.id });
         smashProp(state, wall, payload.amount, { byP: payload.byP, cause: 'spell' });
       }
       return null;              // the unit takes nothing

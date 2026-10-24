@@ -281,3 +281,26 @@ card({
   III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   IV:  { text: 'Deal 2 damage to every burning enemy unit within 4m.', ...M.stokeBurning({ amount: 2, range: 4000 }) },
 });
+
+card({
+  id: 'STORM_CALLER', name: 'Storm Caller', school: 'red',
+  // Lightning that jumps: a spark, an arc, and a thunderclap at your feet.
+  runes: [SHARD, SHARD, LATTICE, SHARD],
+  sigil: ['LL.', '.HH'],
+  I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
+  II:  { text: 'Deal 1 damage to an enemy unit within 4m. It arcs to one more enemy near it.',
+         ...M.chainLightning({ amount: 1, jumps: 1, hop: 2500, range: 4000 }) },
+  III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Deal 2 damage to each enemy unit within 2m and knock each of them down.', ...M.thunderclap({ amount: 2, range: 2000 }) },
+});
+
+card({
+  id: 'BLOODLETTER', name: 'Bloodletter', school: 'red',
+  // Venom and the life it buys back.
+  runes: [SHARD, LATTICE, SHARD, SHARD],
+  sigil: ['.H', '.H', 'LH'],
+  I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
+  II:  { text: 'Your mage regains 1 life.', ...M.mend({ n: 1 }) },
+  III: { text: 'Deal 2 damage to an enemy unit within 5m and poison it twice.', ...M.envenom({ amount: 2, poison: 2, range: 5000 }) },
+  IV:  { text: 'Deal 3 damage to an enemy unit within 4m. Your mage regains what it dealt.', ...M.drain({ amount: 3, range: 4000 }) },
+});

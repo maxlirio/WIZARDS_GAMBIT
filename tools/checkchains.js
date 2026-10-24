@@ -13,15 +13,17 @@
 //
 // What is asserted, and why each one is a real failure mode:
 //
-//   MONOTONE PROGRESS. `spent` grows by exactly one on every iteration,
-//   including when the group is locked, the cost is declined, or the gate is
-//   unmet and the face resolves inert. That single property IS the termination
-//   proof; everything else about the chain can be wrong and it will still halt.
+//   MONOTONE PROGRESS. Every link is a rotation of a card that could still
+//   turn, and afterwards it cannot (ops.ROTATION_CAP: one rotation per spell
+//   per TURN -- user: "each spell can only be rotated once per turn"). So the
+//   link count climbs by one per iteration and never past the nine cards of
+//   a table, whatever the costs, gates and effects do. That single property IS
+//   the termination proof.
 //
-//   THE REVOLUTION CAP, scoped to the spell ACTION rather than the chain. Two
-//   Defrinol Orbs rotate each other through QUEUED TRIGGERS, which run after a
-//   chain has ended, so every individual chain can be perfectly bounded while
-//   the pair ping-pongs forever.
+//   THE CAP IS PER TURN, not per chain. Two Defrinol Orbs rotate each other
+//   through QUEUED TRIGGERS, which run after a chain has ended, so every
+//   individual chain can be perfectly bounded while the pair ping-pongs
+//   forever -- unless the budget outlives the chain, which it does.
 //
 //   REPLAY IDENTITY. A chain parked on a question is replayed from a snapshot on
 //   every answer. Feeding the same answers to a cold clone must produce a
@@ -36,8 +38,8 @@ import { CARDS } from '../js/rules/spells/index.js';
 import { makeDef } from '../js/rules/schema.js';
 import { SPIRAL, SHARD, WHEEL, LATTICE } from '../js/rules/runes.js';
 import { findMatches, runeAtCorner, CHAIN_ASSERT } from '../js/rules/match.js';
-import { MATCH_SITES, HOME, CELL_COLOR } from '../js/rules/table.js';
-import { makeCard, place, spellsOn, findSpell, REVOLUTION } from '../js/rules/ops.js';
+import { MATCH_SITES, HOME, CELL_COLOR, CELLS } from '../js/rules/table.js';
+import { makeCard, place, spellsOn, findSpell, ROTATION_CAP } from '../js/rules/ops.js';
 import { refresh } from '../js/rules/derive.js';
 import { seedRng, int } from '../js/rules/rng.js';
 import * as M from '../js/rules/motifs.js';
@@ -108,8 +110,8 @@ addAdv({
   IV: { text: 'This Spell may not be rotated.', ...M.passiveLocked() },
 });
 
-// Shifts a card out from under a junction mid-chain, which is what Rule A's
-// keying by VERTEX rather than by card exists to survive.
+// Shifts a card out from under a junction mid-chain: the card keeps its
+// spent rotation wherever it lands, so a shift can never buy a second turn.
 addAdv({
   id: 'XX_SHIFTER', name: 'Shifter', school: 'blue',
   runes: [SPIRAL, SPIRAL, SPIRAL, LATTICE],
@@ -196,7 +198,7 @@ function runChainBy(state, policy, cap = 400) {
   const { pump } = pumpOf();
   pump(state);
   for (let i = 0; i < cap && state.pending; i++) {
-    if (state.chain) spentLog.push([...state.chain.spent]);
+    if (state.chain) spentLog.push(state.chain.links);
     const r = state.pending.request;
     choose(state, policy(r, answers++));
   }
@@ -218,42 +220,35 @@ const rrPolicy = (n) => (r, i) => (r.type === 'confirm' ? (i % 2 === 0) : r.type
  *
  * ONE SPELL ACTION CAN START SEVERAL CHAINS. A queued trigger that rotates
  * something runs after the chain that queued it has ended, and the new match
- * needs a new chain -- which begins with `spent` empty again. Checking
- * monotonicity across the whole log therefore reports a violation on any table
- * that triggers twice, which is what the real corpus did on its first run.
- *
- * A segment boundary is `spent` getting SHORTER, which only a new chain can do.
+ * needs a new chain -- which begins with `links` at zero again. A segment
+ * boundary is the link count getting SMALLER, which only a new chain can do.
  */
-function segments(spentLog) {
+function segments(linksLog) {
   const out = [];
   let cur = [];
-  for (const obs of spentLog) {
-    if (cur.length && obs.length < cur[cur.length - 1].length) { out.push(cur); cur = []; }
+  for (const obs of linksLog) {
+    if (cur.length && obs < cur[cur.length - 1]) { out.push(cur); cur = []; }
     cur.push(obs);
   }
   if (cur.length) out.push(cur);
   return out;
 }
 
-function checkMonotone(label, spentLog) {
-  const segs = segments(spentLog);
+/**
+ * Every link is a rotation and every spell rotates at most once a turn, so
+ * a chain's link count climbs by at most one per observation and never
+ * beyond the nine cards a table holds.
+ */
+function checkMonotone(label, linksLog) {
+  const segs = segments(linksLog);
   for (let si = 0; si < segs.length; si++) {
     const seg = segs[si];
     const tag = segs.length === 1 ? label : `${label} chain ${si + 1}/${segs.length}`;
     let good = true;
-    for (let i = 1; i < seg.length; i++) {
-      const prev = seg[i - 1], cur = seg[i];
-      // Every observation must be an extension of the one before: same prefix,
-      // and never shorter. A chain that re-scanned and lost a vertex is a chain
-      // that is not making progress, and the bound stops holding.
-      if (cur.length < prev.length) { good = false; break; }
-      for (let k = 0; k < prev.length; k++) if (cur[k] !== prev[k]) { good = false; break; }
-    }
-    ok(good, `${tag}: spent is not monotone (${seg.map((x) => x.join('.')).join(' -> ')})`);
-    const last = seg[seg.length - 1] || [];
-    ok(last.length === new Set(last).size, `${tag}: a vertex was spent twice (${last.join(',')})`);
-    ok(last.every((v) => MATCH_SITES.includes(v)), `${tag}: a non-matchable vertex was spent (${last.join(',')})`);
-    ok(last.length <= MATCH_SITES.length, `${tag}: ${last.length} links exceeds the bound of ${MATCH_SITES.length}`);
+    for (let i = 1; i < seg.length; i++) if (seg[i] < seg[i - 1]) { good = false; break; }
+    ok(good, `${tag}: links are not monotone (${seg.join(' -> ')})`);
+    const last = seg[seg.length - 1] || 0;
+    ok(last <= CELLS, `${tag}: ${last} links exceeds the bound of ${CELLS} (one rotation per card per turn)`);
   }
 }
 
@@ -264,7 +259,7 @@ function checkState(label, state) {
   ok(!state.chainOverflow, `${label}: chainOverflow fired`);
   ok(!state.pumpOverflow, `${label}: pumpOverflow fired`);
   for (const sp of spellsOn(state, 0)) {
-    ok(sp.turnsThisAction <= REVOLUTION, `${label}: ${sp.def} rotated ${sp.turnsThisAction} times in one action`);
+    ok(sp.turnsThisTurn <= ROTATION_CAP, `${label}: ${sp.def} rotated ${sp.turnsThisTurn} times in one turn`);
   }
 }
 
@@ -324,8 +319,8 @@ for (const [label, layout] of CASES) {
   // plus a wildcard, must produce a match -- and without the wildcard, must not.
   const noMatch = staged([[1, 'XX_LOCKED', 0], [3, 'XX_GATED', 1]]);
   const withWild = staged([[1, 'XX_LOCKED', 0], [3, 'XX_GATED', 1], [0, 'XX_WILD', 0]]);
-  const before = findMatches(noMatch, 0, []);
-  const after = findMatches(withWild, 0, []);
+  const before = findMatches(noMatch, 0, null);
+  const after = findMatches(withWild, 0, null);
   ok(after.length > before.length, `the wildcard created no match (${before.length} -> ${after.length})`);
   const wild = spellsOn(withWild, 0).find((s) => s.def === 'XX_WILD');
   ok(runeAtCorner(withWild, wild, 0) === 'WILD', 'runeAtCorner does not report the wildcard');
@@ -389,15 +384,15 @@ for (const [label, layout] of CASES) {
         if (req.type === 'some') return req.options.slice(0, req.count);
         return req.options.length ? req.options[int(rng, req.options.length)] : null;
       });
-      // Per CHAIN and per ACTION are different numbers and only the first one
-      // is bounded by the twelve junctions: one spell action can start several
-      // chains, because a queued trigger that rotates something runs after the
-      // chain that queued it has ended and the new match needs a new chain.
-      // Conflating them reported a 13-link chain against a bound of 12.
-      const perChain = Math.max(0, ...segments(r.spentLog).map((seg) => (seg[seg.length - 1] || []).length));
+      // Per CHAIN and per ACTION are different numbers: one spell action can
+      // start several chains (a queued trigger that rotates something runs
+      // after the chain that queued it has ended). Both are bounded by the
+      // nine cards, since every link is a rotation and each card gets one a turn.
+      const perChain = Math.max(0, ...segments(r.spentLog).map((seg) => seg[seg.length - 1] || 0));
       worstChain = Math.max(worstChain, perChain);
       worstAction = Math.max(worstAction, state.players[0].ledger.chainLinks);
-      if (perChain > MATCH_SITES.length) { broken++; console.log(`  FAIL fuzz ${i}: a single chain spent ${perChain} vertices`); }
+      if (perChain > CELLS) { broken++; console.log(`  FAIL fuzz ${i}: a single chain made ${perChain} links`); }
+      if (state.players[0].ledger.chainLinks > CELLS) { broken++; console.log(`  FAIL fuzz ${i}: ${state.players[0].ledger.chainLinks} rotations in one turn`); }
       if (r.overflow) { broken++; console.log(`  FAIL fuzz ${i}: overflow`); }
       const bad = invariants(state, `fuzz ${i}`);
       if (bad.length) { broken++; for (const b of bad.slice(0, 3)) console.log(`  FAIL fuzz ${i}: ${b}`); }

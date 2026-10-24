@@ -49,7 +49,16 @@ import { keywordsOf, applyFor } from './keywords.js';
  * but the chain is not the only caller and a bound that only the chain honours
  * is not a bound.
  */
-export const REVOLUTION = 4;
+/**
+ * How many times one spell may be ROTATED in one game turn. User (2026-10-24):
+ * "make it that each spell can only be rotated once per turn. Its faces can be
+ * resolved more times (like Fuse resolving its face that's active) but it can
+ * only be rotated once." This replaced the two older bounds (a junction once
+ * per chain, four rotations per action): every rotation in the game passes
+ * through `turn`/`setRot`, so a chain can turn at most nine cards a turn and
+ * ends by construction. Counts rotation EVENTS: a "rotate to any side" is one.
+ */
+export const ROTATION_CAP = 1;
 
 /* ------------------------------------------------------------ view notes */
 
@@ -185,6 +194,7 @@ export function prohibited(state, spell) {
  */
 export function canTurn(state, spell) {
   if (prohibited(state, spell)) return false;
+  if (spell.turnsThisTurn >= ROTATION_CAP) return false;
   if (ensureFresh(state)?.freeTurn?.has(spell.uid)) return true;
   // Through the keyword funnel as well, not only the derived bucket. [Spell
   // Mastery] registers the `turnLock` hook and nothing called it, so the
@@ -214,7 +224,7 @@ export function makeCard(state, defId, owner) {
     plays: 0,                // how many times this very card has been played
     keywords: [],            // COPIED keywords only. Printed ones live on the def.
     noTurnUntil: null,
-    turnsThisAction: 0,
+    turnsThisTurn: 0,
     concealed: false,        // a trap on the table is face down; see playFromHand
   };
 }
@@ -284,7 +294,7 @@ export function playFromHand(state, p, uid, cell) {
   if (defOf(state, card).kind === 'golem') throw new Error('golem cards go to slots -- use deployGolem');
   card.rot = 0;                 // every spell lands showing side I
   card.playedTo = cell;
-  card.turnsThisAction = 0;
+  card.turnsThisTurn = 0;
   card.plays = (card.plays || 0) + 1;
   card.keywords = [];
   // What the owner's counters read at this moment, so a gold objective can ask
@@ -327,9 +337,9 @@ export function turn(state, uid, { dir = 'left', steps = 1, forced = false, sile
     if (!forced) state.illegalRotations = (state.illegalRotations || 0) + 1;
     return false;
   }
-  if (sp.turnsThisAction >= REVOLUTION) { fx(state, 'revolutionSpent', { uid }); return false; }
+  if (sp.turnsThisTurn >= ROTATION_CAP) { fx(state, 'revolutionSpent', { uid }); return false; }
   sp.rot = turned(sp.rot, dir, steps);
-  sp.turnsThisAction++;
+  sp.turnsThisTurn++;
   state.players[sp.owner].ledger.rotations++;
   markDirty(state, sp.owner, uid);
   if (!silent) fx(state, 'rotate', { uid, dir, rot: sp.rot });
@@ -345,9 +355,9 @@ export function setRot(state, uid, rot, { forced = false, quiet = false } = {}) 
     if (!forced) state.illegalRotations = (state.illegalRotations || 0) + 1;
     return false;
   }
-  if (sp.turnsThisAction >= REVOLUTION) { fx(state, 'revolutionSpent', { uid }); return false; }
+  if (sp.turnsThisTurn >= ROTATION_CAP) { fx(state, 'revolutionSpent', { uid }); return false; }
   sp.rot = rot & 3;
-  sp.turnsThisAction++;
+  sp.turnsThisTurn++;
   state.players[sp.owner].ledger.rotations++;
   // `quiet` is printed Precision: "trigger no effects from it". No match
   // check, no listener. The table is still marked derived-stale.
@@ -392,7 +402,7 @@ export function destroy(state, uid, { by = null, byP = null } = {}) {
   card.rot = 0;
   card.keywords = [];        // copied keywords do not survive leaving the table
   card.noTurnUntil = null;
-  card.turnsThisAction = 0;
+  card.turnsThisTurn = 0;
   card.concealed = false;    // a trap destroyed unsprung is revealed in the discard
   state.players[card.owner].discard.push(card);
   state.players[card.owner].ledger.spellsDestroyed++;
@@ -423,7 +433,7 @@ export function sweepTable(state, p) {
     while (stack.length) {
       const card = stack.shift();
       card.cell = null; card.rot = 0; card.keywords = []; card.noTurnUntil = null;
-      card.turnsThisAction = 0; card.concealed = false;
+      card.turnsThisTurn = 0; card.concealed = false;
       pl.discard.push(card);
       uids.push(card.uid);
     }
@@ -455,7 +465,7 @@ export function springTrap(state, uid) {
   card.rot = 0;
   card.keywords = [];
   card.noTurnUntil = null;
-  card.turnsThisAction = 0;
+  card.turnsThisTurn = 0;
   card.concealed = false;
   state.players[card.owner].discard.push(card);
   // The corner is empty now; nothing on it is fresh.

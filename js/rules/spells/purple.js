@@ -132,3 +132,14 @@ card({
   III: { text: 'Deal 1 damage per Keyword on this Spell, up to 5, to an enemy unit within 4m.', ...M.keywordBolt({ per: 1, cap: 5, range: 4000 }) },
   IV:  { text: "Every other Spell you control gains this Spell's Keywords.", ...M.spreadKeywords() },
 });
+
+card({
+  id: 'CHOIR', name: 'Choir', school: 'purple',
+  // Many voices: resolve faces in place, then the whole table at once.
+  runes: [LATTICE, SPIRAL, LATTICE, SPIRAL],
+  sigil: ['.S', 'LL', 'S.'],
+  I:   { text: 'Grant a Spell [Impact].', ...M.grantKeyword({ kw: 'Impact' }) },
+  II:  { text: "Resolve two friendly Spells' faces, adding adjacent Keywords to each.", ...M.spliceMany({ n: 2 }) },
+  III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Resolve the face of each other Spell you control.', ...M.resolveAll() },
+});

@@ -43,7 +43,7 @@ import { walk, placeBody, fallDamageFor, recheckSupport, resolveFalls } from '..
 import { setBurning } from './units.js';
 import { bearing, isqrt, dist2, clamp, imax, DIR64, DIR_SCALE } from '../field/fixed.js';
 import { turnAndResolve } from './match.js';
-import { pushDirs, pushPreferred, ringPoints, elevatedNear, unitTargets, terrainTargets, bodyTargets, dirLabel } from '../field/candidates.js';
+import { pushDirs, pushPreferred, ringPoints, elevatedNear, unitTargets, terrainTargets, bodyTargets, dirLabel, areaPoints } from '../field/candidates.js';
 
 /**
  * How deep one face may reach into another.
@@ -293,16 +293,22 @@ export function makeCtx(state, spell, def, face, opts = {}) {
         labels: dirs.map(dirLabel),
       });
     },
-    relocate: (unitId, point) => {
+    relocate: (unitId, point, o = {}) => {
       const u = findUnit(state, unitId);
       if (!u || !point) return false;
+      const from = { x: u.x, y: u.y, z: u.z };
       placeBody(state, u, point.x, point.y);
-      fx(state, 'relocate', { id: unitId, to: point });
+      fx(state, 'relocate', { id: unitId, to: point, from, blink: !!o.blink });
       return true;
     },
     landingPoints: (unitId, mmDist) => {
       const u = findUnit(state, unitId);
       return u ? ringPoints(state, u, mmDist, { forId: unitId }) : [];
+    },
+    /** Every standable spot within `mmDist` of a unit -- a teleport's disc. */
+    areaPoints: (unitId, mmDist) => {
+      const u = findUnit(state, unitId);
+      return u ? areaPoints(state, u, mmDist, { forId: unitId }) : [];
     },
     elevatedNear: (unitId, mmDist) => {
       const u = findUnit(state, unitId);

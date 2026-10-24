@@ -156,10 +156,10 @@ js/rules/
   motifs.js            parameterised face behaviours; most faces are one line
   turn.js units.js     the turn structure; the unit phase
   combat.js golems.js  damage and death; the tier table and the attrition rule
-  sigils.js learn.js   the Spellbook: the rune pouch, the bind action and the 75 sigils that find cards
+  sigils.js learn.js   the Spellbook: the rune pouch, the bind action and the 86 sigils that find cards
   shop.js              coins paid by a finished duel, and the packs that buy a sigil into the Spellbook
   spells/rarity.js     every findable card's power tier, measured by tools/ratecards.js
-  spells/              the corpus, one file per school (84 cards, 293 faces)
+  spells/              the corpus, one file per school (95 cards, 329 faces)
 js/field/
   fixed.js             integer millimetres. THE ONLY FILE ALLOWED Math.*
   arena.js             seeded heightfield + terrain pieces
@@ -221,12 +221,12 @@ effect and then its resting state, and the right place for a passive.
 from that snapshot on every answer — like any card. All of its bookkeeping is
 therefore plain serialisable data on `state.chain`.
 
-**Termination is structural, not a guard.** Two real rules, each teachable in a
-sentence: *each junction resonates at most once per chain* (24 corner-contact
-sites between orthogonal neighbours, and a chain spends one **before** it mutates
-anything, so 24 links by construction),
-and *no spell is rotated more than four times in one spell action*. The engine's
-`guard` is an assertion that must never fire.
+**Termination is structural, not a guard.** One real rule, teachable in a
+sentence: *each spell is rotated at most once per turn*. Every rotation passes
+through `ops.turn`/`setRot`, which refuse a second one; a chain link is a
+rotation of the matched neighbour, so a chain is at most nine links by
+construction and faces can still be resolved as often as effects allow. The
+engine's `guard` is an assertion that must never fire.
 
 **`resolveSide` takes the INDEX, not the orientation.** The printed corpus forces
 it: `Rewind` II resolves *"the I of a friendly Spell, regardless of
