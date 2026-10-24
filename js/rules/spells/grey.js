@@ -123,3 +123,15 @@ card({
   III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
   IV:  { text: 'Push an enemy unit within 3m away with force 3.', ...M.pushAway({ force: 3, range: 3000 }) },
 });
+
+card({
+  id: 'ANCHOR_STONE', name: 'Anchor Stone', school: 'grey', kind: 'artifact',
+  // A weight on a chain in a corner of the table: it hardens your units,
+  // hauls an enemy in, and heaves everything back out.
+  runes: [LATTICE, WHEEL, SPIRAL, WHEEL],
+  sigil: ['.L', '.L', 'SW'],
+  I:   { text: 'Your units take 1 less damage, to a minimum of 1.', ...M.passiveShield({ n: 1 }) },
+  II:  { text: 'Pull an enemy unit within 3m toward you with force 2.', ...M.pull({ force: 2, range: 3000 }) },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Push everything within 2m away from your mage with force 2.', ...M.repel({ force: 2, range: 2000, side: 'anything' }) },
+});

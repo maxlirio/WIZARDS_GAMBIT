@@ -257,3 +257,27 @@ card({
   IV:  { text: 'Lift an enemy unit within 4m 2m up and throw it with force 4. The fall hurts.',
          ...M.skyfall({ up: 2000, force: 4, range: 4000 }) },
 });
+
+card({
+  id: 'LODESTONE', name: 'Lodestone', school: 'red',
+  // Red's pull: iron in the blood. The hook does the hurting.
+  runes: [SHARD, WHEEL, SHARD, WHEEL],
+  sigil: ['H.', 'WW', 'H.'],
+  I:   { text: 'Deal 1 damage to an enemy unit within 3m.', ...M.damage({ amount: 1, range: 3000 }) },
+  II:  { text: 'Pull an enemy unit within 4m toward you with force 2. Deal 1 damage to it.', ...M.hookPull({ force: 2, range: 4000, amount: 1 }) },
+  III: { text: 'Discard a card. Deal 2 damage to an enemy unit within 3m.',
+         cost: [{ id: 'discard', n: 1 }], ...M.damage({ amount: 2, range: 3000 }) },
+  IV:  { text: 'Pull an enemy unit within 5m toward you with force 3. Deal 3 damage to it.', ...M.hookPull({ force: 3, range: 5000, amount: 3 }) },
+});
+
+card({
+  id: 'BRIMSTONE', name: 'Brimstone', school: 'red',
+  // Fire that wants company: light the wood, burn what stands near it, and
+  // let the grove finish the job.
+  runes: [SHARD, SHARD, SPIRAL, SHARD],
+  sigil: ['SHH', 'H..'],
+  I:   { text: 'Ignite a burnable terrain piece within 3m.', ...M.igniteTerrain({ range: 3000 }) },
+  II:  { text: 'Deal 1 damage to an enemy unit within 3m and set it burning for 2 turns.', ...M.immolate({ amount: 1, burn: 2, range: 3000 }) },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Deal 2 damage to every burning enemy unit within 4m.', ...M.stokeBurning({ amount: 2, range: 4000 }) },
+});

@@ -131,3 +131,26 @@ card({
          gate: { id: 'spellsAtMost', n: 2 }, ...M.drawCards({ n: 2 }) },
   IV:  { text: 'Return a Spell from your discard to an empty cell of its colour.', ...M.reanimate() },
 });
+
+card({
+  id: 'MIRROR_GLASS', name: 'Mirror Glass', school: 'green',
+  // Turning the table by reflection: right where others go left, a shift, and
+  // a face that sets any card to any side without a sound.
+  runes: [SPIRAL, SPIRAL, LATTICE, SPIRAL],
+  sigil: ['.S', '.L', 'SL'],
+  I:   { text: 'Rotate a Spell you control right.', ...M.turnASpell({ dir: 'right' }) },
+  II:  { text: 'Shift a Spell you control to an adjacent cell.', ...M.shiftASpell() },
+  III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Rotate a Spell to any side. Trigger no effects from it.', ...M.setSideFreely() },
+});
+
+card({
+  id: 'PENDULUM', name: 'Pendulum', school: 'green',
+  // Back and forth until the whole table swings at once.
+  runes: [SPIRAL, SPIRAL, SHARD, SPIRAL],
+  sigil: ['SHS', '.S.'],
+  I:   { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  II:  { text: 'Rotate up to two Spells you control left, one after the other.', ...M.turnSeveral({ n: 2, dir: 'left' }) },
+  III: { text: 'Destroy a Spell you control. Draw a card.', ...M.destroyASpell({ side: 'friendly', then: 'draw' }) },
+  IV:  { text: 'Rotate up to two Spells you control right, one after the other.', ...M.turnSeveral({ n: 2, dir: 'right' }) },
+});

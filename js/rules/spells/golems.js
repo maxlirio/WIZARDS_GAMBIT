@@ -59,3 +59,11 @@ card({
   text: 'Tier C. [Unstable] [Swift]. 2 hit points, 2.8m move, 2 damage.',
   sigil: ['SL.', 'WLS'],
 });
+
+card({
+  id: 'BOG_CRAWLER', name: 'Bog Crawler', school: 'golem', kind: 'golem', tier: 'C',
+  unit: { hp: 3, move: 2200, atk: 1, reach: 900 },
+  keywords: ['Stun'],
+  text: 'Tier C. [Stun]. 3 hit points, 2.2m move, 1 damage.',
+  sigil: ['SWS', '.WL'],
+});

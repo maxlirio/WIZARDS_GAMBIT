@@ -35,7 +35,7 @@ import { fx, springTrap } from './ops.js';
 import { hurt } from './combat.js';
 import { holdUnit } from './units.js';
 import { findUnit, mageOf, unitsOf, livingUnits, rangeOrigins, propsOnBoard, surfaceAt } from '../field/query.js';
-import { pushAwayFrom, smashProp } from '../field/push.js';
+import { pushAwayFrom, pullToward, smashProp } from '../field/push.js';
 import { propSpec, propR, BODY_R } from '../field/arena.js';
 import { bearing, dist2, within, idiv, DIR64, DIR_SCALE } from '../field/fixed.js';
 
@@ -202,6 +202,32 @@ export const trapSpring = ({ range = 1500, force = 4 } = {}) => ({
       springTrap(state, ctx.spell.uid);
       fx(state, 'sprung', { id: mover.id, from: near.id, p });
       pushAwayFrom(state, mover, near.x, near.y, force, { byP: p });
+    },
+  },
+});
+
+/**
+ * The spring trap's mirror: an enemy that ends a move near one of your units is
+ * DRAGGED to it -- off its ledge, out of its cover, into your reach. The
+ * nearest of your units is the anchor, ties by id, so there is no question.
+ */
+export const trapDragLine = ({ range = 3000, force = 3 } = {}) => ({
+  tag: 'move',
+  on: {
+    afterMove: function* (ctx, payload) {
+      const { state, p } = ctx;
+      if (!enemyActing(state, p, payload.p)) return;
+      const mover = findUnit(state, payload.id);
+      if (!mover || mover.dead || mover.owner !== 1 - p) return;
+      let near = null, best = range * range + 1;
+      for (const u of unitsOf(state, p)) {
+        const d = dist2(u.x, u.y, mover.x, mover.y);
+        if (d <= range * range && d < best) { near = u; best = d; }
+      }
+      if (!near) return;
+      springTrap(state, ctx.spell.uid);
+      fx(state, 'sprung', { id: mover.id, from: near.id, p });
+      pullToward(state, mover, near.x, near.y, force, { byP: p });
     },
   },
 });

@@ -131,3 +131,40 @@ card({
          cost: [{ id: 'destroyFriendly', n: 1 }], ...M.liftTerrain({ mm: 3000, range: 5000 }) },
   IV:  { text: 'Move a friendly unit to the nearest high ground within 6m.', ...M.toHighGround({ mm: 6000, range: 6000 }) },
 });
+
+card({
+  id: 'GRAPPLE_CHAIN', name: 'Grapple Chain', school: 'blue',
+  // The pull card (user: "One I really want to see is a pull card"). A hook on
+  // a chain: it hauls stone, then people, and the last face hauls somebody in
+  // and puts them on the ground at your feet.
+  runes: [WHEEL, WHEEL, LATTICE, WHEEL],
+  sigil: ['L.', 'WL', 'W.'],
+  I:   { text: 'Pull a terrain piece within 5m to you with force 3.', ...M.pullTerrain({ force: 3, range: 5000 }) },
+  II:  { text: 'Pull an enemy unit within 5m toward you with force 3. Deal 1 damage to it.', ...M.hookPull({ force: 3, range: 5000, amount: 1 }) },
+  III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Pull an enemy unit within 6m toward you with force 5 and knock it down.', ...M.hookPull({ force: 5, range: 6000, knock: true }) },
+});
+
+card({
+  id: 'TETHER', name: 'Tether', school: 'blue',
+  // A line between two bodies: reel one in, trade places, and finally reel
+  // one in hard enough to hurt.
+  runes: [WHEEL, WHEEL, SPIRAL, WHEEL],
+  sigil: ['W.', 'WS', '.W'],
+  I:   { text: 'Pull an enemy unit within 3m toward you with force 2.', ...M.pull({ force: 2, range: 3000 }) },
+  II:  { text: 'Swap the places of any two units within 5m.', ...M.swapUnits({ range: 5000 }) },
+  III: { text: 'Rotate a Spell you control left.', ...M.turnASpell({ dir: 'left' }) },
+  IV:  { text: 'Pull an enemy unit within 5m toward you with force 3. Deal 2 damage to it.', ...M.hookPull({ force: 3, range: 5000, amount: 2 }) },
+});
+
+card({
+  id: 'WAVE_BREAK', name: 'Wave Break', school: 'blue',
+  // In, then out: a current that drags the enemy to you and a breaker that
+  // throws everything back.
+  runes: [WHEEL, WHEEL, LATTICE, WHEEL],
+  sigil: ['L..', 'WWL'],
+  I:   { text: 'Push anything within 3m with force 2.', ...M.push({ force: 2, range: 3000, side: 'anything' }) },
+  II:  { text: 'Pull every enemy unit within 4m toward your mage with force 2.', ...M.vortex({ force: 2, range: 4000 }) },
+  III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'Push everything within 4m away from your mage with force 4.', ...M.repel({ force: 4, range: 4000, side: 'anything' }) },
+});

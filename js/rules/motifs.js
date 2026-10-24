@@ -237,6 +237,27 @@ export const pull = ({ force = 3, range = 4000 } = {}) => ({
   },
 });
 
+/**
+ * A HOOK: pull one enemy in, then hurt it, or floor it, or both. User (2026-10-24):
+ * "One I really want to see is a pull card." Undertow pulls; this is the pull
+ * with teeth -- the damage lands whether or not the pull travelled, because the
+ * hook is in before the line is hauled.
+ */
+export const hookPull = ({ force = 3, range = 4000, amount = 0, knock = false } = {}) => ({
+  tag: 'move', reach: range,
+  *effect(ctx) {
+    const ids = ctx.enemyUnits(range);
+    if (!ids.length) return;
+    const id = ids.length === 1 ? ids[0] : yield ctx.ask.one(ids, { prompt: 'Hook which unit?', kind: 'unit' });
+    if (id === null) return;
+    ctx.pullIn(id, force);
+    const u = ctx.unit(id);
+    if (!u || u.dead) return;
+    if (amount > 0) ctx.hit(id, amount);
+    if (knock && !ctx.unit(id)?.dead) ctx.knockdown(id);
+  },
+});
+
 export const relocate = ({ mm = 3000, range = 4000, side = 'friendly' } = {}) => ({
   tag: 'move', reach: range,
   *effect(ctx) {

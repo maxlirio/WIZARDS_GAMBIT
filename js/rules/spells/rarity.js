@@ -7,69 +7,81 @@
 // prior). The top fifth are rare, the next three tenths uncommon, the rest
 // common. User: "there are different power tiers. Some are better than
 // others" -- so the shop's packs, which hold every kind of card, pay out by
-// this table (js/rules/shop.js). Measured 2026-10-23.
+// this table (js/rules/shop.js). Measured 2026-10-24.
 export const RARITY = Object.freeze({
-  VENOM_DART: 'rare',          // 0.622 in 162 decks  Venom Dart
-  ARCHIVE: 'rare',             // 0.584 in 229 decks  Archive
-  RESONANCE: 'rare',           // 0.572 in 261 decks  Resonance
-  BLOOD_TITHE: 'rare',         // 0.557 in 251 decks  Blood Tithe
-  TITHE_BELL: 'rare',          // 0.551 in 224 decks  Tithe Bell
-  GLASS_SENTINEL: 'rare',      // 0.550 in 241 decks  Glass Sentinel
-  SEED_OF_ORDER: 'rare',       // 0.543 in 221 decks  Seed of Order
-  HIGH_SEAT: 'rare',           // 0.543 in 233 decks  High Seat
-  SIEGE_BRAND: 'rare',         // 0.540 in 151 decks  Storm Brand
-  CHORUS: 'rare',              // 0.535 in 233 decks  Chorus
-  ASH_WRAITH: 'rare',          // 0.535 in 162 decks  Ash Wraith
-  TIDE_CALLER: 'rare',         // 0.530 in 236 decks  Tide Caller
-  RESONIS_ORB: 'rare',         // 0.525 in 265 decks  Resonis Orb
-  HOLLOW_RITE: 'uncommon',         // 0.520 in 214 decks  Hollow Rite
-  UNDERTOW: 'uncommon',            // 0.520 in 239 decks  Undertow
-  FIRST_LIGHT: 'uncommon',         // 0.519 in 231 decks  First Light
-  LEVITATION: 'uncommon',          // 0.515 in 254 decks  Levitation
-  SPARK_WISP: 'uncommon',          // 0.513 in 261 decks  Spark Wisp
-  PRECISION: 'uncommon',           // 0.513 in 224 decks  Precision
-  STONE_WARDEN: 'uncommon',        // 0.511 in 254 decks  Stone Warden
-  CINDER_RAIN: 'uncommon',         // 0.509 in 149 decks  Cinder Rain
-  KEYSTONE: 'uncommon',            // 0.509 in 264 decks  Keystone
-  WEAVER: 'uncommon',              // 0.507 in 212 decks  Weaver
-  GRAVE_WELL: 'uncommon',          // 0.506 in 230 decks  Grave Well
-  SPRING_TRAP: 'uncommon',         // 0.506 in 79 decks  Spring Trap
-  CONFLUENCE: 'uncommon',          // 0.506 in 258 decks  Confluence
-  IRON_COLOSSUS: 'uncommon',       // 0.505 in 273 decks  Iron Colossus
-  WIND_STEP: 'uncommon',           // 0.504 in 224 decks  Wind Step
-  LINK: 'uncommon',                // 0.504 in 259 decks  Link
-  HAMMER_FALL: 'uncommon',         // 0.500 in 166 decks  Hammer Fall
-  SNARE: 'uncommon',               // 0.500 in 79 decks  Snare
-  WARD_LANTERN: 'uncommon',        // 0.498 in 236 decks  Ward Lantern
-  STONEBURST: 'common',          // 0.497 in 155 decks  Stoneburst
-  AEGIS_SIGIL: 'common',         // 0.496 in 246 decks  Aegis Sigil
-  FULCRUM: 'common',             // 0.496 in 224 decks  Fulcrum
-  GROVE_KEEPER: 'common',        // 0.495 in 209 decks  Grove Keeper
-  BLAZING_CHARGE: 'common',      // 0.495 in 178 decks  Blazing Charge
-  SPLINTER_WARD: 'common',       // 0.493 in 143 decks  Thornwall
-  STONE_TIDE: 'common',          // 0.492 in 254 decks  Stone Tide
-  FIREBRAND: 'common',           // 0.492 in 179 decks  Firebrand
-  BLOOD_PACT: 'common',          // 0.491 in 164 decks  Blood Pact
-  SPELL_SPLICE: 'common',        // 0.491 in 258 decks  Spell Splice
-  UNRAVEL: 'common',             // 0.490 in 231 decks  Unravel
-  BACKLASH: 'common',            // 0.489 in 85 decks  Backlash
-  PRISM: 'common',               // 0.487 in 289 decks  Prism
-  WARDEN_SEAL: 'common',         // 0.484 in 248 decks  Warden Seal
-  METEOR_CALL: 'common',         // 0.484 in 172 decks  Meteor Call
-  ECHO_BELL: 'common',           // 0.483 in 225 decks  Echo Bell
-  SKYFALL: 'common',             // 0.482 in 161 decks  Skyfall
-  SEALSTONE: 'common',           // 0.482 in 242 decks  Sealstone
-  SPIRE_WARD: 'common',          // 0.480 in 192 decks  Spire Ward
-  DEFRINOL_ORB: 'common',        // 0.477 in 252 decks  Defrinol Orb
-  IMMOLATE: 'common',            // 0.474 in 163 decks  Immolate
-  LAST_GAMBIT: 'common',         // 0.474 in 237 decks  Last Gambit
-  REWIND: 'common',              // 0.468 in 237 decks  Time Warp
-  EMBER_HOUND: 'common',         // 0.460 in 293 decks  Ember Hound
-  SKY_ANCHOR: 'common',          // 0.458 in 251 decks  Sky Anchor
-  CANNONADE: 'common',           // 0.458 in 143 decks  Cannonade
-  SPELL_DRAIN: 'common',         // 0.451 in 236 decks  Spell Drain
-  THUNDERCLAP: 'common',         // 0.449 in 175 decks  Thunderclap
-  LEDGER_OF_ASH: 'common',       // 0.440 in 250 decks  Ledger of Ash
-  FLAME_LINE: 'common',          // 0.438 in 167 decks  Flame Line
-  KEY_OF_MANY: 'common',         // 0.400 in 276 decks  Key of Many
+  FIRST_LIGHT: 'rare',         // 0.611 in 192 decks  First Light
+  VENOM_DART: 'rare',          // 0.606 in 136 decks  Venom Dart
+  HARMONIC: 'rare',            // 0.587 in 238 decks  Harmonic
+  RESONANCE: 'rare',           // 0.585 in 248 decks  Resonance
+  ARCHIVE: 'rare',             // 0.577 in 198 decks  Archive
+  SIEGE_BRAND: 'rare',         // 0.575 in 143 decks  Storm Brand
+  TIDE_CALLER: 'rare',         // 0.568 in 197 decks  Tide Caller
+  PENDULUM: 'rare',            // 0.560 in 214 decks  Pendulum
+  BLOOD_TITHE: 'rare',         // 0.559 in 228 decks  Blood Tithe
+  GRAVE_WELL: 'rare',          // 0.557 in 201 decks  Grave Well
+  GLASS_SENTINEL: 'rare',      // 0.556 in 222 decks  Glass Sentinel
+  UNDERTOW: 'rare',            // 0.555 in 163 decks  Undertow
+  LODESTONE: 'rare',           // 0.554 in 146 decks  Lodestone
+  WARD_LANTERN: 'rare',        // 0.554 in 202 decks  Ward Lantern
+  TETHER: 'rare',              // 0.541 in 210 decks  Tether
+  SPLINTER_WARD: 'uncommon',       // 0.535 in 120 decks  Thornwall
+  SEED_OF_ORDER: 'uncommon',       // 0.534 in 181 decks  Seed of Order
+  SPARK_WISP: 'uncommon',          // 0.532 in 226 decks  Spark Wisp
+  ASH_WRAITH: 'uncommon',          // 0.529 in 145 decks  Ash Wraith
+  SNARE: 'uncommon',               // 0.527 in 64 decks  Snare
+  FIREBRAND: 'uncommon',           // 0.518 in 157 decks  Firebrand
+  PRISM: 'uncommon',               // 0.518 in 245 decks  Prism
+  WEAVER: 'uncommon',              // 0.514 in 172 decks  Weaver
+  ECHO_BELL: 'uncommon',           // 0.513 in 229 decks  Echo Bell
+  TITHE_BELL: 'uncommon',          // 0.512 in 205 decks  Tithe Bell
+  RESONIS_ORB: 'uncommon',         // 0.511 in 208 decks  Resonis Orb
+  SPIRE_WARD: 'uncommon',          // 0.511 in 167 decks  Spire Ward
+  GRAPPLE_CHAIN: 'uncommon',       // 0.511 in 177 decks  Grapple Chain
+  LINK: 'uncommon',                // 0.510 in 234 decks  Link
+  AEGIS_SIGIL: 'uncommon',         // 0.509 in 221 decks  Aegis Sigil
+  STONEBURST: 'uncommon',          // 0.506 in 144 decks  Stoneburst
+  MIRROR_GLASS: 'uncommon',        // 0.505 in 186 decks  Mirror Glass
+  HIGH_SEAT: 'uncommon',           // 0.504 in 219 decks  High Seat
+  ANCHOR_STONE: 'uncommon',        // 0.502 in 219 decks  Anchor Stone
+  BLOOD_PACT: 'uncommon',          // 0.497 in 145 decks  Blood Pact
+  KEYSTONE: 'uncommon',            // 0.496 in 240 decks  Keystone
+  GROVE_KEEPER: 'uncommon',        // 0.495 in 189 decks  Grove Keeper
+  BACKLASH: 'uncommon',            // 0.494 in 77 decks  Backlash
+  BLAZING_CHARGE: 'common',      // 0.494 in 156 decks  Blazing Charge
+  HAMMER_FALL: 'common',         // 0.490 in 140 decks  Hammer Fall
+  BRIMSTONE: 'common',           // 0.489 in 124 decks  Brimstone
+  METEOR_CALL: 'common',         // 0.487 in 149 decks  Meteor Call
+  EMBER_HOUND: 'common',         // 0.487 in 215 decks  Ember Hound
+  RIPTIDE: 'common',             // 0.487 in 213 decks  Riptide
+  WARDEN_SEAL: 'common',         // 0.486 in 232 decks  Warden Seal
+  FLAME_LINE: 'common',          // 0.485 in 156 decks  Flame Line
+  SPELL_SPLICE: 'common',        // 0.485 in 216 decks  Spell Splice
+  PRECISION: 'common',           // 0.484 in 208 decks  Precision
+  HOLLOW_RITE: 'common',         // 0.483 in 170 decks  Hollow Rite
+  CINDER_RAIN: 'common',         // 0.483 in 138 decks  Cinder Rain
+  STONE_WARDEN: 'common',        // 0.483 in 220 decks  Stone Warden
+  SKYFALL: 'common',             // 0.482 in 132 decks  Skyfall
+  LEVITATION: 'common',          // 0.482 in 181 decks  Levitation
+  DRAG_LINE: 'common',           // 0.479 in 63 decks  Drag Line
+  FULCRUM: 'common',             // 0.476 in 178 decks  Fulcrum
+  CANNONADE: 'common',           // 0.476 in 136 decks  Cannonade
+  STONE_TIDE: 'common',          // 0.475 in 191 decks  Stone Tide
+  SEALSTONE: 'common',           // 0.474 in 223 decks  Sealstone
+  BOG_CRAWLER: 'common',         // 0.472 in 244 decks  Bog Crawler
+  IMMOLATE: 'common',            // 0.466 in 150 decks  Immolate
+  WAVE_BREAK: 'common',          // 0.465 in 205 decks  Wave Break
+  REWIND: 'common',              // 0.461 in 220 decks  Time Warp
+  IRON_COLOSSUS: 'common',       // 0.460 in 227 decks  Iron Colossus
+  SKY_ANCHOR: 'common',          // 0.456 in 207 decks  Sky Anchor
+  CHORUS: 'common',              // 0.456 in 204 decks  Chorus
+  LEDGER_OF_ASH: 'common',       // 0.445 in 234 decks  Ledger of Ash
+  SPRING_TRAP: 'common',         // 0.440 in 74 decks  Spring Trap
+  WIND_STEP: 'common',           // 0.439 in 178 decks  Wind Step
+  SPELL_DRAIN: 'common',         // 0.436 in 186 decks  Spell Drain
+  LAST_GAMBIT: 'common',         // 0.435 in 182 decks  Last Gambit
+  CONFLUENCE: 'common',          // 0.433 in 221 decks  Confluence
+  DEFRINOL_ORB: 'common',        // 0.423 in 203 decks  Defrinol Orb
+  UNRAVEL: 'common',             // 0.411 in 192 decks  Unravel
+  THUNDERCLAP: 'common',         // 0.403 in 155 decks  Thunderclap
+  KEY_OF_MANY: 'common',         // 0.402 in 245 decks  Key of Many
 });

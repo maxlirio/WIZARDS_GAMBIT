@@ -120,3 +120,15 @@ card({
   IV:  { text: 'If this chain has resolved 3 links, deal 4 damage to an enemy unit within 5m.',
          gate: { id: 'chainAtLeast', n: 3 }, ...M.damage({ amount: 4, range: 5000 }) },
 });
+
+card({
+  id: 'HARMONIC', name: 'Harmonic', school: 'purple',
+  // Keywords as ammunition: reach to gather them, a bolt that counts them,
+  // and a chord that gives them to everyone.
+  runes: [LATTICE, LATTICE, SHARD, LATTICE],
+  sigil: ['HL', 'L.', 'L.'],
+  I:   { text: 'Grant a Spell [Reach].', ...M.grantKeyword({ kw: 'Reach' }) },
+  II:  { text: 'Gather every Keyword on your table onto one Spell you control.', ...M.gatherKeywords() },
+  III: { text: 'Deal 1 damage per Keyword on this Spell, up to 5, to an enemy unit within 4m.', ...M.keywordBolt({ per: 1, cap: 5, range: 4000 }) },
+  IV:  { text: "Every other Spell you control gains this Spell's Keywords.", ...M.spreadKeywords() },
+});

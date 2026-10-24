@@ -145,3 +145,19 @@ card({
   IV:  { text: 'After 20 rotations since this was played, score 1 VP per 7 of them, up to 3.',
          tag: 'turn', objective: { gate: { id: 'ledgerAtLeast', key: 'rotations', n: 20, since: true }, vp: { k: 'perLedger', key: 'rotations', div: 7, per: 1, cap: 3, since: true } } },
 });
+
+card({
+  id: 'RIPTIDE', name: 'Riptide', school: 'gold',
+  // The gold card for the pulling player: every unit you drag or throw is a
+  // mark in the ledger, and the ledger pays.
+  runes: [WHEEL, WHEEL, LATTICE, WHEEL],
+  sigil: ['WWWW', '.L..'],
+  I:   { text: 'Pull an enemy unit within 3m toward you with force 2.', ...M.pull({ force: 2, range: 3000 }) },
+  II:  { text: 'If 4 units were pushed since this was played, discard a card and score 1 VP.',
+         tag: 'move', cost: [{ id: 'discard', n: 1 }],
+         objective: { gate: { id: 'ledgerAtLeast', key: 'unitsPushed', n: 4, since: true }, vp: { k: 'flat', n: 1 } } },
+  III: { text: 'Draw a card.', ...M.drawCards({ n: 1 }) },
+  IV:  { text: 'After 8 units were pushed since this was played, destroy a Spell you control and score 2 VP.',
+         tag: 'move', cost: [{ id: 'destroyFriendly', n: 1 }],
+         objective: { gate: { id: 'ledgerAtLeast', key: 'unitsPushed', n: 8, since: true }, vp: { k: 'flat', n: 2 } } },
+});

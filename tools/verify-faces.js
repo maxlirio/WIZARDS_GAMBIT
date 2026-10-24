@@ -1154,6 +1154,16 @@ const TRAP_REACTION = {
     if (now - was > 4 * FORCE_MM + 150) return [FAIL, `force 4 buys ${4 * FORCE_MM}mm but the mover travelled ${Math.round(now - was)}`];
     return [PASS, ''];
   },
+  DRAG_LINE: (st, before) => {
+    // The spring trap's mirror: the mover must end NEARER the owner's unit,
+    // and no further than its force buys. It started 1.2 m away, so a drag
+    // of up to 3 m stops at the body it is dragged to.
+    const was = Math.hypot(before.theirsX - st.mine.x, before.theirsY - st.mine.y);
+    const now = Math.hypot(st.theirs.x - st.mine.x, st.theirs.y - st.mine.y);
+    if (now >= was - 150) return [FAIL, `prints "dragged toward it" but the mover is ${Math.round(now)}mm away, was ${Math.round(was)}`];
+    if (was - now > 3 * FORCE_MM + 150) return [FAIL, `force 3 buys ${3 * FORCE_MM}mm but the mover travelled ${Math.round(was - now)}`];
+    return [PASS, ''];
+  },
 };
 
 function verifyTraps(defs) {

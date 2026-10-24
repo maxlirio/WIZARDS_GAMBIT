@@ -40,3 +40,10 @@ card({
   I: { text: 'TRAP: an enemy unit ending a move within 1.5m of your unit is flung away from it with force 4.',
        ...T.trapSpring({ range: 1500, force: 4 }) },
 });
+
+card({
+  id: 'DRAG_LINE', name: 'Drag Line', school: 'grey', kind: 'trap',
+  sigil: ['L', 'S', 'W', 'H'],
+  I: { text: 'TRAP: an enemy unit ending a move within 2m of your unit is dragged toward it with force 3.',
+       ...T.trapDragLine({ range: 2000, force: 3 }) },
+});

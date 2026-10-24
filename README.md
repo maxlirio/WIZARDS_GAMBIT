@@ -40,7 +40,7 @@ throw, crack or set alight (see `RULES.md` §9). **Traps** (`RULES.md` §12) are
 grey cards set face down into a corner that spring on their own during the
 opponent's turn — an Earth Wall heaves dirt up in front of your mage and takes
 the fireball instead. URL options: `?seed=N`,
-`?watch` (two AIs), `?pool` (random 60-card decks), `?ai=greedy|random`,
+`?watch` (two AIs), `?pool` (random decks from the whole corpus), `?ai=greedy|random`,
 `?fast` (no pauses between enemy steps), `?room=CODE` (join an online room).
 Graphics quality is in the New-duel dialog.
 
@@ -156,10 +156,10 @@ js/rules/
   motifs.js            parameterised face behaviours; most faces are one line
   turn.js units.js     the turn structure; the unit phase
   combat.js golems.js  damage and death; the tier table and the attrition rule
-  sigils.js learn.js   the Spellbook: the rune pouch, the bind action and the 63 sigils that find cards
+  sigils.js learn.js   the Spellbook: the rune pouch, the bind action and the 75 sigils that find cards
   shop.js              coins paid by a finished duel, and the packs that buy a sigil into the Spellbook
   spells/rarity.js     every findable card's power tier, measured by tools/ratecards.js
-  spells/              the corpus, one file per school (60 cards, 216 faces)
+  spells/              the corpus, one file per school (84 cards, 293 faces)
 js/field/
   fixed.js             integer millimetres. THE ONLY FILE ALLOWED Math.*
   arena.js             seeded heightfield + terrain pieces
