@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Photograph bodies IN MOTION in the moves lab with headless Chrome: a mage
 // walking off a plateau, one being struck, one slammed into a wall, one
-// knocked down, and a self-cast dash beside an enemy shove -- every scene a
-// real engine call, played through the view's cues as main.js plays them.
+// knocked down, a self-cast dash beside an enemy shove, a spell bolt, a
+// killing strike, the respawn after it and an Earth Wall taking a bolt --
+// every scene a real engine call, played through the view's cues as main.js
+// plays them.
 // Each scene is shot every STEP ms for its whole length, and the frames are
 // laid out on one contact sheet per scene (drawn by the page itself), so a
 // whole motion can be judged at a glance, adjacent frames for pops.
@@ -62,6 +64,15 @@ const PLAN = [
   { step: 'slam', extra: 1400, cols: 6 },
   { step: 'knockdown', extra: 1600, cols: 6 },
   { step: 'dash', extra: 1200, cols: 6 },
+  // The ORDER tranche (user: "the animations sometimes play before something
+  // happens"): the pips must still be full while the bolt flies, the number
+  // and the drop come together at the impact, a fall comes after, a kill is
+  // a death and a respawn a materialisation, and an earth wall blocks.
+  { step: 'bolt', extra: 1400, cols: 6 },
+  { step: 'kill', extra: 3600, cols: 6 },
+  { step: 'respawn', extra: 2600, cols: 6 },
+  { step: 'wall', extra: 1400, cols: 6 },
+  { step: 'blink', extra: 900, cols: 6 },
 ];
 const only = arg('only', '') ? arg('only', '').split(',') : null;
 const files = [];

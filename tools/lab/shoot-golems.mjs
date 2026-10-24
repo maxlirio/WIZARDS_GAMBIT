@@ -64,7 +64,7 @@ try {
   for (let k = 0; k < 150; k++) { if (await ev('!!(window.LAB && LAB.ready)')) break; await sleep(200); }
   if (!(await ev('!!(window.LAB && LAB.ready)'))) throw new Error('lab never became ready');
   const ids = await ev('LAB.ids');
-  const strikeDur = { CLAY_HAND: 0.8, STONE_WARDEN: 0.9, IRON_COLOSSUS: 1.3, SPARK_WISP: 0.6, GLASS_SENTINEL: 0.8, EMBER_HOUND: 0.7 };
+  const strikeDur = { CLAY_HAND: 0.8, STONE_WARDEN: 0.9, IRON_COLOSSUS: 1.3, SPARK_WISP: 0.6, GLASS_SENTINEL: 0.8, EMBER_HOUND: 0.7, BOG_CRAWLER: 0.7, GRANITE_RAM: 0.9, OBSIDIAN_TITAN: 1.3 };
   // Everyone faces the camera, settles into idle, and the line-up is photographed wide.
   await ev(`LAB.set('all', { moving: false, facing: 0 })`);
   await adv(1500);

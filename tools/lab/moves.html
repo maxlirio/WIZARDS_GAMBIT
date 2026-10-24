@@ -7,11 +7,16 @@
      mage walking off a plateau (js/rules/units.js doUnitAction, a `move`), a
      strike against it (units.js strike), a slam into a wall and a self-cast
      dash (js/field/push.js push, the `dyn` note, enemy- and self-thrown side
-     by side) and an outright knockdown (push.js knockDown) -- each played
-     through the view's cues the way js/view/main.js's flushFx schedules them
-     (a walk as long as the walk, a run on its own clock). window.LAB drives
-     it from tools/lab/shoot-moves.mjs, which photographs every 100 ms.
-     ?seed=N picks the arena (it needs a plateau: 3 has a 2.5 m one). -->
+     by side), an outright knockdown (push.js knockDown), a spell bolt
+     (combat.js hurt, cause 'spell'), a strike that KILLS and the respawn
+     after it (units.js respawnMage), and an Earth Wall trap taking a bolt
+     (traps.js trapEarthWall) -- each played through the view's cues the way
+     js/view/main.js's flushFx schedules them (a walk as long as the walk, a
+     run on its own clock, every pip/number/fall at its cue in emitted
+     order). `play` below MIRRORS flushFx for these kinds: change one, change
+     the other. window.LAB drives it from tools/lab/shoot-moves.mjs, which
+     photographs every 100 ms. ?seed=N picks the arena (it needs a plateau:
+     3 has a 2.5 m one). -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Inter:wght@400;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../../css/style.css">
@@ -37,8 +42,13 @@
 import { createGame } from '../../js/engine.js';
 import { heightAt } from '../../js/field/arena.js';
 import { push, knockDown } from '../../js/field/push.js';
-import { doUnitAction, strike } from '../../js/rules/units.js';
-import { createArena } from '../../js/view/arena3d.js';
+import { doUnitAction, strike, respawnMage } from '../../js/rules/units.js';
+import { hurt } from '../../js/rules/combat.js';
+import { placeBody } from '../../js/field/move.js';
+import { makeCard, place } from '../../js/rules/ops.js';
+import { CARDS } from '../../js/rules/spells/index.js';
+import { NUMERALS } from '../../js/rules/orient.js';
+import { createArena, SCHOOL_HEX } from '../../js/view/arena3d.js';
 
 const Q = new URLSearchParams(location.search);
 const S = createGame({ seed: +(Q.get('seed') || 3) });
@@ -87,6 +97,14 @@ function view(kind) {
   if (kind === 'game') arena.home();
   else if (kind === 'flat') look(cx, 3.0, cy + 6.5, cx, 0.9, cy);
   else if (kind === 'pair') look(cx - 0.6, 2.8, cy + 7.5, cx - 0.6, 0.8, cy - 0.2);
+  else if (kind.startsWith('wide')) {
+    // Two points in metres, both in shot: from the side of the line between them, far enough back for the longer of them.
+    const [, ax, ay, bx, by] = kind.split(':').map(Number);
+    const mx = (ax + bx) / 2, my = (ay + by) / 2, L = Math.hypot(bx - ax, by - ay);
+    const nx = -(by - ay) / (L || 1), ny = (bx - ax) / (L || 1);
+    const back = Math.max(6, L * 0.75);
+    look(mx + nx * back, 2.2 + back * 0.3, my + ny * back, mx, 0.8, my);
+  }
   else if (kind.startsWith('plateau')) {
     const [, dx, dy, tx, ty, h] = kind.split(':').map(Number);   // the walk from (dx,dy) to (tx,ty) in metres, the top at h
     const mx = (dx + tx) / 2, my = (dy + ty) / 2;
@@ -100,7 +118,7 @@ function view(kind) {
 }
 view('flat');
 
-/* ---- the view's playback, the way main.js's flushFx schedules it */
+/* ---- the view's playback, the way main.js's flushFx schedules it (a mirror: keep them the same) */
 let timers = [];
 let last = null;
 function play(notes, { label = '' } = {}) {
@@ -109,6 +127,10 @@ function play(notes, { label = '' } = {}) {
   const cues = arena.cues;
   let t = 0;
   let dynStart = null, dynNote = null, dynUsed = null, lastDynT = null;
+  let castCtx = null;
+  const consumed = new Set();
+  const respawns = [];
+  const deathEnds = new Map();
   const DYN_EVENTS = new Set(['hit', 'crumple', 'wall', 'ward', 'land']);
   const later = (ms, fn) => timers.push(setTimeout(fn, ms));
   const timeOf = (f) => {
@@ -122,25 +144,81 @@ function play(notes, { label = '' } = {}) {
     return null;
   };
   const lines = [];
-  for (const f of notes) {
+  const say = (ms, what) => lines.push(`${String(Math.round(ms)).padStart(5)}ms ${what}`);
+  notes.forEach((f, i) => {
+    if (consumed.has(i)) return;
     const at = timeOf(f);
     const keep = t;
     if (at !== null) t = at;
     lastDynT = at;
     const t0 = t;
+    let shown = t0;
     switch (f.kind) {
+      case 'resolveStart': {
+        const d = CARDS[f.def];
+        const face = d?.faces?.[NUMERALS.indexOf(f.numeral)];
+        const p = f.p ?? S.active;
+        castCtx = { p, element: face?.element || null, big: f.numeral === 'IV', face, def: d };
+        later(t, () => cues.cast(p, SCHOOL_HEX[d?.school] ?? 0xc98bff, { big: f.numeral === 'IV' }));
+        t += 300; break;
+      }
       case 'move': { const { id, to, mm } = f; cues.moveHold?.(id, to); later(t, () => cues.move?.(id, to)); t += arena.walkMs?.(id, to, mm) ?? 120; break; }
-      case 'damage': { const { id, amount, cause } = f; if (cause === 'strike') { later(t + 320, () => cues.hit(id, amount, cause)); t += 200; } else { later(t, () => cues.hit(id, amount, cause)); t += 160; } break; }
-      case 'strike': { const { from, to } = f; later(t - 200, () => cues.strike(from, to)); t += 300; break; }
-      case 'kill': { const id = f.id; later(t + 150, () => cues.kill(id)); t += 500; break; }
+      case 'damage': {
+        const { id, amount, cause } = f;
+        const ctx = castCtx;
+        cues.holdHp(id, amount);
+        let hitAt;
+        if ((cause === 'spell' || cause === 'unstable') && ctx) {
+          const el = ctx.element || 'arcane', big = ctx.big;
+          const flight = el === 'lightning' ? 0 : big ? 550 : 400;
+          later(t, () => cues.bolt(ctx.p, id, { element: el, big, onArrive: () => cues.hit(id, amount, el === 'lightning' || el === 'fire' ? el : cause) }));
+          say(t, `bolt launches (${el})`);
+          hitAt = t + flight; t = hitAt + (el === 'lightning' ? 220 : 60);
+        } else if (cause === 'strike') {
+          const j = notes.findIndex((g, k) => k > i && g.kind === 'strike' && g.to === id && !consumed.has(k));
+          const swing = t;
+          if (j >= 0) { consumed.add(j); const from = notes[j].from; later(swing, () => cues.strike(from, id)); say(swing, 'strike swing (note pulled forward)'); }
+          hitAt = swing + 320; later(hitAt, () => cues.hit(id, amount, cause)); t = hitAt + 200;
+        } else { hitAt = t; later(hitAt, () => cues.hit(id, amount, cause)); t = hitAt + 160; }
+        shown = hitAt;
+        break;
+      }
+      case 'strike': { const { from, to } = f; later(t, () => cues.strike(from, to)); t += 500; break; }
+      case 'kill': { const id = f.id; cues.dying(id); shown = t + 150; later(shown, () => cues.kill(id)); deathEnds.set(id, shown + arena.ritesMs(id)); t += 500; break; }
+      case 'score': { const { p, amount } = f; later(t, () => cues.score(p, amount)); t += 500; break; }
       case 'dyn': { dynStart = t; dynNote = f; dynUsed = new Set(); cues.dynHold(f); later(t, () => cues.dyn(f)); t += (f.ms || 0) + 150; break; }
-      case 'knockdown': { const { id, dir } = f; later(t, () => cues.knockdown(id, dir)); t += 1200; break; }
+      case 'knockdown': { const { id, dir } = f; shown = t + 100; later(shown, () => cues.knockdown(id, dir)); t += 1300; break; }
       case 'propHit': { const id = f.id; later(t, () => cues.propHit(id, f.amount)); t += 120; break; }
+      case 'heal': { const { id, amount } = f; cues.holdHp(id, -amount); later(t, () => cues.heal(id, amount)); t += 250; break; }
+      case 'trapSpring': if (!notes.some((g, k) => k > i && g.kind === 'raiseWall')) t += 350; break;   // the table overlay (main.js revealTrap) runs beside it
+      case 'raiseWall': {
+        const { id, shields } = f;
+        const ctx = castCtx;
+        cues.wallHold(id);
+        const riseAt = ctx ? t + 150 : t;
+        later(riseAt, () => cues.raiseWall(id));
+        const jHit = notes.findIndex((g, k) => k > i && g.kind === 'propHit' && g.id === id && !consumed.has(k));
+        const jAbs = shields !== undefined && shields !== null ? notes.findIndex((g, k) => k > i && g.kind === 'absorb' && g.id === shields && !consumed.has(k)) : -1;
+        if (ctx && jHit >= 0) {
+          consumed.add(jHit); if (jAbs >= 0) consumed.add(jAbs);
+          const hit = notes[jHit];
+          const el = ctx.element || 'arcane';
+          const launch = riseAt - 150, flight = el === 'lightning' ? 0 : 600;
+          later(launch, () => cues.bolt(ctx.p, shields, { element: el, big: ctx.big, prop: id, dur: 0.6, onArrive: () => { cues.propHit(id, hit.amount); cues.wallDone(id); } }));
+          say(launch, `bolt launches at the WALL (${el})`); say(launch + flight, `propHit ${hit.amount} on the wall + absorb (consumed)`);
+          t = launch + flight + 200;
+        } else { later(riseAt + 500, () => cues.wallDone(id)); t += 500; }
+        break;
+      }
+      case 'relocate': { const { id, from, to, blink } = f; if (blink && from) { cues.blinkHold(id); later(t, () => cues.blink(id, from, to)); t += 950; } else { cues.moveHold?.(id, to); later(t, () => cues.move?.(id, to)); t += arena.walkMs?.(id, to, 0) ?? 400; } break; }
+      case 'respawn': { const m = S.field.units.find((u) => u.owner === f.p && u.kind === 'mage'); if (m) { cues.respawnHold(m.id); respawns.push(m.id); } break; }
+      case 'turnStart': { t += 250; for (const id of respawns.splice(0)) { t = Math.max(t, deathEnds.get(id) ?? 0); say(t, 'respawn cue (gather + materialise)'); later(t, () => cues.respawn(id)); t += 1700; } break; }
       default: break;
     }
-    lines.push(`${String(Math.round(t0)).padStart(5)}ms ${f.kind}${f.cause ? ' ' + f.cause : ''}${f.amount !== undefined ? ' ' + f.amount : ''}${f.dynMs !== undefined ? ' @' + f.dynMs : ''}`);
+    say(shown, `${f.kind}${f.cause ? ' ' + f.cause : ''}${f.amount !== undefined ? ' ' + f.amount : ''}${f.dynMs !== undefined ? ' @' + f.dynMs : ''}${shown !== t0 ? ` (read at ${Math.round(t0)})` : ''}`);
     if (at !== null) t = Math.max(keep, t);
-  }
+  });
+  for (const id of respawns.splice(0)) { later(t, () => cues.respawn(id)); t += 1700; }
   arena.sync(S);
   last = { ms: Math.round(t), notes: notes.map((f) => f.kind), lines, label };
   info.textContent = `${label}\n${lines.join('\n')}`;
@@ -171,7 +249,14 @@ const PREP = {
   slam() { put(mage, CX - 1200, CY); put(wall, CX + 300, CY); put(foe, CX + 1500, CY + 1500); arena.sync(S); view('flat'); return [[mage.x, mage.y, mage.z], [wall.x, wall.y, wall.z]]; },
   knockdown() { put(mage, CX, CY); put(foe, CX + 1500, CY + 1500); arena.sync(S); view('flat'); return [[mage.x - 800, mage.y, mage.z], [mage.x + 800, mage.y, mage.z]]; },
   dash() { put(mage, CX - 2300, CY + 450); put(foe, CX - 600, CY - 450); arena.sync(S); view('pair'); return [[mage.x, mage.y, mage.z], [foe.x, foe.y, foe.z], [mage.x + 2600, mage.y, mage.z], [foe.x + 2600, foe.y, foe.z]]; },
+  bolt() { put(mage, CX - 1500, CY); put(foe, CX + 1500, CY); arena.sync(S); view('flat'); return [[mage.x, mage.y, mage.z], [foe.x, foe.y, foe.z]]; },
+  kill() { put(mage, CX - 300, CY); put(foe, CX + 300, CY); arena.sync(S); view('flat'); return [[mage.x, mage.y, mage.z], [foe.x, foe.y, foe.z]]; },
+  respawn() { put(mage, CX - 300, CY); put(foe, CX + 300, CY); arena.sync(S); const sp = S.arena.spawns[0]; view(`wide:${mage.x * MM}:${mage.y * MM}:${sp.x * MM}:${sp.y * MM}`); return [[mage.x, mage.y, mage.z], [foe.x, foe.y, foe.z], [sp.x, sp.y, heightAt(A, sp.x, sp.y)]]; },
+  wall() { put(mage, CX - 1500, CY); put(foe, CX + 1500, CY); arena.sync(S); view('flat'); return [[mage.x, mage.y, mage.z], [foe.x, foe.y, foe.z]]; },
+  blink() { put(mage, CX - 1500, CY); put(foe, CX + 2500, CY + 2500); arena.sync(S); view('flat'); return [[mage.x, mage.y, mage.z], [mage.x + 2600, mage.y, mage.z]]; },
 };
+/** A spell face resolving, as the engine notes it ahead of the damage it deals (resolve.js writes `resolveStart`); the lab deals the damage through combat.js hurt. */
+const casting = (p, def, numeral) => S.fx.push({ kind: 'resolveStart', uid: null, def, numeral, p });
 const STEPS = {
   /**
    * OFF THE PLATEAU: the mage on top walks to a point below, along the
@@ -208,7 +293,38 @@ const STEPS = {
     info.textContent = `${last.label}\n${last.lines.join('\n')}`;
     return last;
   },
-  reset() { stage(); arena.sync(S); view('flat'); return null; },
+  /** A BOLT: the enemy mage resolves Ember Lash II at ours, 3 m away. The pips must hold until the fireball lands; the number and the drop come together. */
+  bolt() { return run(() => { S.active = 1; casting(1, 'EMBER_LASH', 'II'); return hurt(S, mage, 2, { cause: 'spell', byP: 1 }); }, 'bolt: Ember Lash II, 2 damage'); },
+  /** A KILL: the enemy strikes ours at its last hit points. Swing, hit + number + pips to zero, THEN the fall and the rites, then +2 VP. */
+  kill() { return run(() => { mage.hp = foe.atk; S.active = 1; return strike(S, foe, mage); }, 'kill: a strike at the last hit points'); },
+  /** The RESPAWN after a kill, in one timeline (the kill at the end of the enemy's turn, our turn starting): the body dies where it stood, then MATERIALISES on our circle -- never walks there. */
+  respawn() {
+    return run(() => {
+      mage.hp = foe.atk; S.active = 1; strike(S, foe, mage);
+      S.active = 0; respawnMage(S, 0); S.fx.push({ kind: 'turnStart', p: 0, turn: S.turn });
+      return { at: [mage.x, mage.y] };
+    }, 'kill, then the respawn at our circle');
+  },
+  /** EARTH WALL: our trap on our table; the enemy's Ember Lash at our mage. The wall heaves up in the bolt's path and the bolt bursts on it; our mage takes nothing. */
+  wall() {
+    return run(() => {
+      if (!S.players[0].table[2].length) { const c = makeCard(S, 'EARTH_WALL', 0); c.playedTo = 2; c.plays = 1; c.concealed = true; place(S, 0, c, 2); }
+      S.active = 1; casting(1, 'EMBER_LASH', 'II');
+      const dealt = hurt(S, mage, 2, { cause: 'spell', byP: 1 });
+      const w = S.field.props.filter((pr) => pr.kind === 'earthwall').pop();
+      return { dealt, hp: mage.hp, wall: w ? [w.id, w.hp, w.x, w.y] : null };
+    }, 'Earth Wall trap vs Ember Lash II');
+  },
+  /** A TELEPORT (Wind Step / Sky Anchor's relocate, blink): our mage 2.5 m east, the note exactly as resolve.js writes it. It must vanish, then appear -- never walk. */
+  blink() {
+    return run(() => {
+      const from = { x: mage.x, y: mage.y, z: mage.z };
+      placeBody(S, mage, mage.x + 2500, mage.y);
+      S.fx.push({ kind: 'relocate', id: mage.id, to: { x: mage.x, y: mage.y, z: mage.z }, from, blink: true });
+      return { from, to: [mage.x, mage.y, mage.z] };
+    }, 'teleport 2.5 m (blink)');
+  },
+  reset() { stage(); S.active = 0; arena.sync(S); view('flat'); return null; },
 };
 function DIR(d) { const a = (d / 64) * Math.PI * 2; return [Math.cos(a), Math.sin(a)]; }
 /** Where a 3 m move along heading d from the top would end (a dry run on a copy of the mage). */

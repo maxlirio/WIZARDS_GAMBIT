@@ -32,7 +32,7 @@ const q = new URLSearchParams(location.search);
 const anim = q.get('anim') || 'idle';
 const manual = q.has('manual');
 const team = q.get('team') === '1' ? 0xff5d5d : 0x4fd2ff;
-const IDS = ['CLAY_HAND', 'STONE_WARDEN', 'IRON_COLOSSUS', 'SPARK_WISP', 'GLASS_SENTINEL', 'EMBER_HOUND'];
+const IDS = ['CLAY_HAND', 'STONE_WARDEN', 'IRON_COLOSSUS', 'SPARK_WISP', 'GLASS_SENTINEL', 'EMBER_HOUND', 'BOG_CRAWLER', 'GRANITE_RAM', 'OBSIDIAN_TITAN'];
 const only = q.get('only');
 const ids = only ? [only] : IDS;
 

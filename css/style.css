@@ -238,6 +238,7 @@ nav button { padding: 6px 10px; white-space: nowrap; font-size: 12px; }
 .float3d { position: absolute; left: 0; top: 0; font: 900 24px Cinzel, serif; white-space: nowrap; text-shadow: 0 0 6px #000, 0 0 2px #000; }
 .float3d.dmg { color: #ff6a52; } .float3d.dmg.fire { color: #ffa040; } .float3d.kill { color: #fff; font-size: 28px; text-shadow: 0 0 14px #f00; } .float3d.fall { color: #ffd27a; font-size: 16px; }
 .float3d.heal { color: #5ee68f; }
+.float3d.vp { color: #ffcf5a; font-size: 26px; text-shadow: 0 0 12px #c9801a, 0 0 2px #000; }
 .rlabel { position: absolute; left: 0; top: 0; font: 600 10.5px Inter; color: #ffe7a6; background: #2a1e05d8; border: 1px solid #ffcf5a77; padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
 
 /* #banner.banner, not .banner: `#hud > *` turns pointer events back on, and an invisible banner must never eat the click under it. */

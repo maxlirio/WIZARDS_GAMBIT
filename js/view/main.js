@@ -65,6 +65,13 @@ let NET = null;          // the connection when playing online; the other seat i
 let LOBBY = false;       // the lobby is up: the HUD is gone and no AI drives
 let IDLE = false;        // the match on the field is the lobby's backdrop, nobody is playing it
 let learnedNow = 0;      // sigils this duel wrote into the Spellbook (they go in as they are found, so the end count must be kept here)
+// PRESENTED state the HUD shows instead of the engine's until the cue that
+// changes it has played (the arena keeps its own for the pips over the
+// bodies): points not yet awarded on screen, deaths not yet shown.
+let pendingVp = [0, 0];
+const pendingDead = new Set();
+let lastPlan = [];       // the last flush's schedule, for tools: [{at, kind, id}]
+const deathEnds = new Map();   // unit id -> performance.now() ms when its death rites are over (a respawn waits for it)
 
 /**
  * `idle` deals a duel for the LOBBY'S BACKDROP: the arena and the state are
@@ -87,6 +94,7 @@ function newMatch({ seed = Math.floor(Math.random() * 1e6), watch = false, pool 
   fxSeen = 0; sel = null; someChosen = []; matchOver = false; learnedNow = 0;
   angles.clear();
   pendingTurns.clear();
+  pendingVp = [0, 0]; pendingDead.clear(); lastPlan = []; deathEnds.clear();
   scratch.fill(null); picked = null;
   for (const p of [0, 1]) for (const el of document.querySelectorAll(`#table${p} .cell`)) el.dataset.uid = '';
   $('#log').innerHTML = '';
@@ -393,9 +401,26 @@ const propName = (id) => { const pr = S.field.props.find((x) => x.id === id); re
  * AI's pause can match it.
  */
 function flushFx() {
-  let t = 0;
+  // Nothing presents before its cause: a flush starts where the last one's
+  // cues end, so an action taken while the previous one still plays (a
+  // strike straight after a walk, End turn straight after a kill) queues
+  // behind it instead of landing on top of it.
+  let t = FAST ? 0 : cuesLeft();
   const flash = new Map();
   const later = (ms, fn) => { const my = gameId; timers.push(setTimeout(() => { if (my === gameId && arena) fn(); }, FAST ? 0 : ms)); };
+  // HUD output (a log line, a toast, the banner) needs no arena, and it is
+  // presented at its cue too (user: "then it says -2 damage" -- after the
+  // fall). Lines keep the engine's order: never earlier than the last one.
+  const hud = (ms, fn) => { const my = gameId; timers.push(setTimeout(() => { if (my === gameId) fn(); }, FAST ? 0 : ms)); };
+  let logT = t;
+  const logAt = (ms, line, kind) => { logT = Math.max(logT, ms); hud(logT, () => logLine(line, kind)); };
+  const now = (fn) => { if (arena) fn(); };
+  const consumed = new Set();  // notes whose presentation another note's cue carries (a strike's swing, a wall's hit)
+  const respawns = [];         // mages brought back this flush, to materialise after the turn banner
+  // The body forms on the circle only once the one that died has gone to
+  // dust: never a corpse yanked to base mid-fall.
+  const respawnAt = (id) => { const end = deathEnds.get(id); deathEnds.delete(id); return FAST || end === undefined ? t : Math.max(t, end - performance.now()); };
+  const plan = [];
   let castCtx = null;        // the face resolving right now: {p, element, big, face}
   let holdDamage = 0;        // ms to delay the next damage cue (a rock still falling)
   let tMeteor = 0;           // when the last meteor strikes, so its boulder appears then
@@ -426,14 +451,16 @@ function flushFx() {
     return null;
   };
   const fresh = S.fx.slice(fxSeen);
-  fresh.forEach((f) => {
+  fresh.forEach((f, i) => {
+    if (consumed.has(i)) return;
     const line = narrate(f);
-    if (line) logLine(line, f.kind);
     // Inside a run: the note's own moment, and the cursor is put back after.
     const at = dynTimeOf(f);
     const keep = t;
     if (at !== null) t = at;
     lastDynT = at;
+    let logMs = t;             // when this note's line goes into the log: its cue, unless the case says otherwise
+    let logged = false;
     switch (f.kind) {
       case 'match': t += 350; for (const u of f.uids) flash.set(u, 'match'); break;
       case 'resolveStart': {
@@ -467,22 +494,58 @@ function flushFx() {
         const ctx = castCtx;
         const delay = t + holdDamage;
         holdDamage = 0;
+        // The pips over the body keep the OLD count until the hit lands.
+        now(() => cues().holdHp(id, amount));
+        let hitAt;
         if ((cause === 'spell' || cause === 'unstable') && ctx) {
           const el = ctx.element || 'arcane';
           const big = ctx.big;
+          const flight = el === 'lightning' ? 0 : big ? 550 : 400;   // cues.bolt's flight times
           later(delay, () => cues().bolt(ctx.p, id, { element: el, big, onArrive: () => cues().hit(id, amount, el === 'lightning' || el === 'fire' ? el : cause) }));
-          t += el === 'lightning' ? 220 : 450;
+          hitAt = delay + flight;
+          t = hitAt + (el === 'lightning' ? 220 : 60);
         } else if (cause === 'strike') {
-          later(delay + 320, () => cues().hit(id, amount, cause));
-          t += 200;
+          // The engine writes the strike note AFTER the damage it dealt
+          // (units.js strike: hurt, then fx 'strike'), and a kill in
+          // between put the swing after the death on screen. The swing is
+          // pulled forward here, the blow lands 320 ms into it, and the
+          // strike note is spent.
+          const j = fresh.findIndex((g, k) => k > i && g.kind === 'strike' && g.to === id && !consumed.has(k));
+          const swing = delay;
+          if (j >= 0) {
+            consumed.add(j);
+            const from = fresh[j].from ?? fresh[j].id;
+            later(swing, () => cues().strike(from, id));
+            const l2 = narrate(fresh[j]);
+            if (l2) logAt(swing, l2, 'strike');
+          }
+          hitAt = swing + 320;
+          later(hitAt, () => cues().hit(id, amount, cause));
+          t = hitAt + 200;
         } else {
-          later(delay, () => cues().hit(id, amount, cause));
-          t += 160;
+          hitAt = delay;
+          later(hitAt, () => cues().hit(id, amount, cause));
+          t = hitAt + 160;
         }
+        logMs = hitAt;
         break;
       }
-      case 'strike': { const { from, to } = f; later(t - 200, () => cues().strike(from ?? f.id, to)); t += 300; break; }
-      case 'kill': { const id = f.id; later(t + 150, () => cues().kill(id)); t += 500; break; }
+      // A strike whose damage note did not spend it: the blow was absorbed. The swing alone.
+      case 'strike': { const { from, to } = f; later(t, () => cues().strike(from ?? f.id, to)); t += 500; break; }
+      // The body stays on its feet until the cue (cues.dying): the fatal
+      // hit lands and shows its number first, then the fall, then the rites.
+      case 'kill': {
+        const id = f.id;
+        now(() => cues().dying(id));
+        pendingDead.add(id);
+        const dieAt = t + 150;
+        later(dieAt, () => cues().kill(id));
+        deathEnds.set(id, performance.now() + (FAST ? 0 : dieAt + (arena?.ritesMs(id) || 0)));
+        hud(dieAt, () => { pendingDead.delete(id); renderTop(); });
+        logMs = dieAt;
+        t += 500;
+        break;
+      }
       // A rigid-body run: held at its first frame NOW (the sync has already
       // moved the engine's targets), played at its turn, and the cursor
       // jumps past it. The notes it caused follow, stamped with their moment.
@@ -507,17 +570,63 @@ function flushFx() {
         t += 1150;
         break;
       }
-      case 'knockdown': { const { id, dir } = f; later(t, () => cues().knockdown(id, dir)); t += 1200; break; }
+      // A beat after the hit that caused it (they share a `dynMs` stamp), so
+      // the number and the pips are seen before the body goes down.
+      case 'knockdown': { const { id, dir } = f; later(t + 100, () => cues().knockdown(id, dir)); t += 1300; break; }
       case 'falls': for (const l of f.landed || []) if (l.key[0] === 'u' && l.drop > 0) { const id = Number(l.key.slice(1)), drop = l.drop; later(t + 250, () => cues().fall(id, drop)); } t += 350; break;
       case 'hurl': { const { id, mm } = f; later(t, () => cues().hurl(id, mm)); holdDamage = 900; t += 1000; break; }
       case 'dropRock': { const { id, from, to, onto } = f; later(t, () => cues().dropRock(id, from, to, onto)); holdDamage = 1050; t += 1200; break; }
       case 'swap': { const { a, b } = f; later(t, () => cues().swap(a, b)); t += 500; break; }
-      case 'raiseWall': t += 500; break;
       // A TRAP SPRINGS: the cell flashes, the real card is shown for a
       // moment, then it leaves for the discard. Everything after waits.
-      case 'trapSpring': { const note = f; later(t, () => revealTrap(note)); t += 1700; break; }
+      // The overlay runs beside what the trap does, not ahead of it: the
+      // wall it raises and the bolt it stops are what the player must see.
+      case 'trapSpring': {
+        const note = f;
+        hud(t, () => revealTrap(note));
+        // A wall that follows is part of THIS moment: the bolt must not
+        // wait on the card reveal, or the wall is up before it is cast.
+        const wallNext = fresh.some((g, k) => k > i && g.kind === 'raiseWall');
+        if (!wallNext) t += 350;
+        break;
+      }
+      // AN EARTH WALL heaves up IN THE BOLT'S PATH, and the bolt bursts on
+      // it. The engine's propHit on the wall and the absorb for the unit
+      // behind it follow this note; both are presented by the bolt's
+      // arrival, and the wall only comes out of the ground at its cue
+      // (user: "it comes out of the ground before the attack even happens
+      // ... It should LITERALLY block the fireballs and stuff").
+      case 'raiseWall': {
+        const { id, shields } = f;
+        const ctx = castCtx;
+        now(() => cues().wallHold(id));
+        // The bolt leaves at its cast moment and the wall heaves up 150 ms
+        // into its flight, standing by the time the bolt arrives -- it rises
+        // DURING the projectile's flight, not before the attack.
+        const launch = t;
+        const riseAt = ctx ? launch + 150 : t;
+        later(riseAt, () => cues().raiseWall(id));
+        if (line) { logAt(riseAt, line, f.kind); logged = true; }
+        const jHit = fresh.findIndex((g, k) => k > i && g.kind === 'propHit' && g.id === id && !consumed.has(k));
+        const jAbs = shields !== undefined && shields !== null ? fresh.findIndex((g, k) => k > i && g.kind === 'absorb' && g.id === shields && !consumed.has(k)) : -1;
+        if (ctx && jHit >= 0) {
+          consumed.add(jHit);
+          if (jAbs >= 0) consumed.add(jAbs);
+          const hit = fresh[jHit];
+          const el = ctx.element || 'arcane';
+          const flight = el === 'lightning' ? 0 : 600;
+          later(launch, () => cues().bolt(ctx.p, shields, { element: el, big: ctx.big, prop: id, dur: 0.6, onArrive: () => { cues().propHit(id, hit.amount); cues().wallDone(id); } }));
+          const l2 = narrate(hit);
+          if (l2) logAt(launch + flight, l2, 'propHit');
+          t = launch + flight + 200;
+        } else {
+          later(riseAt + 500, () => cues().wallDone(id));
+          t += 500;
+        }
+        break;
+      }
       case 'snared': case 'sprung': case 'backlash': t += 150; break;
-      case 'heal': { const { id, amount } = f; later(t, () => cues().heal(id, amount)); t += 250; break; }
+      case 'heal': { const { id, amount } = f; now(() => cues().holdHp(id, -amount)); later(t, () => cues().heal(id, amount)); t += 250; break; }
       case 'poisoned': { const id = f.id; later(t, () => cues().poison(id)); t += 150; break; }
       case 'levitate': { const id = f.id; later(t, () => cues().levitate(id, f.mm)); t += 400; break; }
       case 'terrainRemoved': { const id = f.id; later(t, () => cues().terrainRemoved(id)); t += 300; break; }
@@ -538,7 +647,15 @@ function flushFx() {
       case 'propHit': { const id = f.id; later(t, () => cues().propHit(id, f.amount)); t += 120; break; }
       case 'shatter': t += 400; break;
       case 'summon': { const id = f.id; later(t + 60, () => cues().summon(id)); t += 500; break; }
-      case 'score': { const p = f.p; later(t, () => cues().score(p)); toast(`${pName(f.p)} +${f.amount} VP — ${SOURCE[f.source] || esc(f.source)}`, f.p === HUMAN ? 'good' : HUMAN === null ? 'good' : 'bad'); t += 500; break; }
+      case 'score': {
+        const { p, amount } = f;
+        pendingVp[p] += amount;
+        const msg = `${pName(p)} +${amount} VP — ${SOURCE[f.source] || esc(f.source)}`, cls = p === HUMAN ? 'good' : HUMAN === null ? 'good' : 'bad';
+        later(t, () => cues().score(p, amount));
+        hud(t, () => { pendingVp[p] = Math.max(0, pendingVp[p] - amount); renderTop(); toast(msg, cls); });
+        t += 500;
+        break;
+      }
       // A rune earned: its chip in the owner's pouch flares.
       case 'rune': { const { p, rune } = f; later(t, () => flashChip(p, rune)); t += 120; break; }
       // A BIND: the engine has already spent the hit runes and queued the
@@ -555,7 +672,7 @@ function flushFx() {
       }
       case 'sigil': {
         const { p, defId } = f;
-        toast(`✶ ${p === HUMAN ? 'Your' : HUMAN === null ? `${pName(p)}'s` : `${FOE()}'s`} sigil completes — <b>${esc(CARDS[defId]?.name || defId)}</b>`, p === HUMAN || HUMAN === null ? 'good' : 'bad');
+        { const msg = `✶ ${p === HUMAN ? 'Your' : HUMAN === null ? `${pName(p)}'s` : `${FOE()}'s`} sigil completes — <b>${esc(CARDS[defId]?.name || defId)}</b>`, cls = p === HUMAN || HUMAN === null ? 'good' : 'bad'; hud(t, () => toast(msg, cls)); }
         t += 300; break;
       }
       case 'found':
@@ -563,11 +680,38 @@ function flushFx() {
           // Into the Spellbook NOW, not at the end of the match -- a player
           // who opens the book mid-duel should see what they just learned.
           if (profile.learn(f.defId, f.why)) learnedNow++;
-          toast(`Learned <b>${esc(CARDS[f.defId]?.name || f.defId)}</b> — ${f.taken === false ? 'written in your Spellbook, not taken' : 'it goes to your discard'}`, 'learn');
+          { const msg = `Learned <b>${esc(CARDS[f.defId]?.name || f.defId)}</b> — ${f.taken === false ? 'written in your Spellbook, not taken' : 'it goes to your discard'}`; hud(t, () => toast(msg, 'learn')); }
         }
         t += 300; break;
-      case 'turnStart': banner(f.p); break;
-      case 'respawn': t += 400; break;
+      case 'turnStart': {
+        const p = f.p;
+        hud(t, () => banner(p));
+        t += 250;
+        // A mage the engine brought back at this turn's start MATERIALISES
+        // on its circle after the banner: the rites' gather and the body
+        // forming, never a walk from where it died.
+        for (const id of respawns.splice(0)) { t = respawnAt(id); later(t, () => cues().respawn(id)); t += 1700; }
+        break;
+      }
+      // The engine writes this ahead of turnStart (turn.js beginTurn); the
+      // body is held as it is until the cue after the banner plays it.
+      case 'respawn': {
+        const m = S.field.units.find((u) => u.owner === f.p && u.kind === 'mage');
+        if (m) { now(() => cues().respawnHold(m.id)); respawns.push(m.id); }
+        break;
+      }
+      // A TELEPORT (blink): the body stays where it is until the cue, then
+      // vanishes there and reappears at `to`. Never a walk. Any other
+      // relocate is a walk to the new spot, as before.
+      case 'relocate': {
+        const { id, from, to, blink } = f;
+        if (blink && from) {
+          now(() => cues().blinkHold(id));
+          later(t, () => cues().blink(id, from, to));
+          t += 950;
+        } else { now(() => cues().moveHold?.(id, to)); later(t, () => cues().move?.(id, to)); t += arena?.walkMs?.(id, to, 0) ?? 400; }
+        break;
+      }
       case 'swept': t += 600; break;
       case 'win': { const p = f.p; later(t + 300, () => cues().cheer(p)); break; }
       // A WALK takes as long as the body takes to walk it (and to step off a
@@ -584,10 +728,15 @@ function flushFx() {
       }
       default: break;
     }
+    if (line && !logged) logAt(logMs, line, f.kind);
+    plan.push({ at: Math.round(logMs), kind: f.kind, id: f.id ?? f.uid ?? f.p ?? null });
     if (at !== null) t = Math.max(keep, t);
   });
+  // A respawn with no turnStart behind it in this flush (it should not happen; the engine writes them together).
+  for (const id of respawns.splice(0)) { t = respawnAt(id); later(t, () => cues().respawn(id)); t += 1700; }
   fxSeen = S.fx.length;
   pendingFlash = flash;
+  lastPlan = plan;
   tlEnd = Math.max(tlEnd, performance.now() + (FAST ? 0 : t));
   return t;
 }
@@ -634,8 +783,7 @@ function narrate(f) {
     case 'shift': return `⇄ ${N(f.uid)} shifts from cell ${f.from} to ${f.to}`;
     case 'destroy': return `✕ ${N(f.uid)} is destroyed`;
     case 'match': return `<span class="gold">✦ MATCH</span> — ${f.uids.map(N).join(' + ')}`;
-    case 'matchLocked': return `<i>a match is locked — nothing there may turn</i>`;
-    case 'matchExhausted': return `<i>a match has nothing left that may turn</i>`;
+    case 'matchLocked': return `<i>a match is locked — the neighbour cannot turn (prohibited, or already turned this turn)</i>`;
     case 'resolveStart': {
       const d = CARDS[f.def];
       const face = d?.faces?.[NUMERALS.indexOf(f.numeral)];
@@ -902,7 +1050,7 @@ function renderBonds(p) {
   if (!layer) return;
   const focus = S.chain && S.chain.p === p && S.chain.active !== null && S.chain.active !== undefined
     ? [S.chain.active] : (S.fresh?.[p] || []);
-  const live = focus.length ? findMatches(S, p, S.chain?.spent || [], focus) : [];
+  const live = focus.length ? findMatches(S, p, focus) : [];
   if (!live.length) { if (layer.childElementCount) layer.innerHTML = ''; return; }
   const tb = table.getBoundingClientRect();
   const cells = table.querySelectorAll('.cell');
@@ -917,7 +1065,9 @@ function renderBonds(p) {
     const dx = pts[1][0] - pts[0][0], dy = pts[1][1] - pts[0][1];
     const len = Math.hypot(dx, dy), ang = Math.atan2(dy, dx) * 180 / Math.PI;
     const cx = (pts[0][0] + pts[1][0]) / 2, cy = (pts[0][1] + pts[1][1]) / 2;
-    const cls = 'bond';
+    // A match that cannot fire again this turn (every spell turns once per
+    // turn) is drawn dimmer: it is a bond, not a promise.
+    const cls = h.live === false ? 'bond spent' : 'bond';
     html += `<div class="${cls}" style="left:${pts[0][0]}px;top:${pts[0][1]}px;width:${len}px;transform:rotate(${ang}deg)"></div><div class="${cls} knot" style="left:${cx}px;top:${cy}px"></div>`;
   }
   if (layer.innerHTML !== html) layer.innerHTML = html;
@@ -1271,7 +1421,7 @@ function inspectUnit(u) {
   $('#inspector').innerHTML = `
     <div class="ihead ${pCls(u.owner)}">${esc(unitName(u.id))}</div>
     <div class="ustats">
-      <div><b>${u.hp}</b>/${u.maxHp} hp</div><div>move <b>${(u.move / 1000).toFixed(1)}m</b></div>
+      <div><b>${arena?.shownHp(u.id) ?? u.hp}</b>/${u.maxHp} hp</div><div>move <b>${(u.move / 1000).toFixed(1)}m</b></div>
       <div>strike <b>${u.atk}</b></div><div>reach <b>${(u.reach / 1000).toFixed(1)}m</b></div>
       <div>height <b>${(u.z / 1000).toFixed(2)}m</b></div>${u.poison ? `<div class="red">poison ${u.poison}</div>` : ''}
     </div>
@@ -1363,8 +1513,9 @@ function onPickProp(id, hit) {
     if ((r.kind === 'prop' || r.kind === 'body') && r.options.includes(id)) promptPick(id);
     return;
   }
-  // A climbable rock is somewhere to stand: a click on it is a move there.
-  if (hit && movingUnit()) onPickGround(hit.x, hit.y);
+  // A climbable rock is somewhere to stand: a click on it is a move there
+  // (or a teleport there).
+  if (hit && (movingUnit() || areaRequest())) onPickGround(hit.x, hit.y);
 }
 
 function movingUnit() {
@@ -1375,6 +1526,12 @@ function movingUnit() {
 
 let lastPreview = 0, previewKey = '';
 function previewMove(x, y) {
+  const ar = areaRequest();
+  if (ar) {
+    const i = nearestAreaPoint(ar, x, y);
+    arena.showGhost(i >= 0 ? ar.points[i] : null, i >= 0 ? ar.area : null);
+    return;
+  }
   const u = movingUnit();
   if (!u || !canMoveTo(S, u, x, y)) { arena.showGhost(null); return; }
   const now = performance.now();
@@ -1387,7 +1544,33 @@ function previewMove(x, y) {
   arena.showGhost(v ? { x: v.x, y: v.y, z: v.z } : null, u);
 }
 
+/**
+ * A pick over every spot WITHIN a distance (a teleport): the request's
+ * `points[i]` is option i. The spot answered is the one nearest the ground
+ * the player pointed at, if that ground is inside the circle (user: "it
+ * says WITHIN").
+ */
+function areaRequest() {
+  const r = humanToAnswer() ? S.pending.request : null;
+  return r && r.kind === 'area' && r.area && r.points?.length ? r : null;
+}
+function nearestAreaPoint(r, x, y) {
+  const a = r.area;
+  if ((x - a.x) ** 2 + (y - a.y) ** 2 > (a.r + 150) ** 2) return -1;
+  let best = -1, bd = Infinity;
+  r.points.forEach((p, i) => { const d = (p.x - x) ** 2 + (p.y - y) ** 2; if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+
 function onPickGround(x, y) {
+  const ar = areaRequest();
+  if (ar) {
+    const i = nearestAreaPoint(ar, x, y);
+    if (i < 0) { toast('Out of reach — click inside the blue circle.'); return; }
+    arena.showGhost(null);
+    promptPick(ar.options[i]);
+    return;
+  }
   const u = movingUnit();
   if (!u) return;
   if (!canMoveTo(S, u, x, y)) { toast('Out of reach — click inside the blue circle.'); return; }
@@ -1451,10 +1634,12 @@ function renderPrompt() {
       : r.kind === 'hand' ? `Click ${r.count > 1 ? `${r.count} cards` : 'a card'} in your hand, or pick below.`
       : r.kind === 'prop' ? 'Click a marked terrain piece, or pick below.'
       : r.kind === 'body' ? 'Click a glowing unit or a marked terrain piece, or pick below.'
+      : r.kind === 'area' ? 'Click anywhere inside the blue circle.'
       : r.show?.[0] && r.show[0].x !== undefined ? 'Click a marker on the field, or pick below.' : '';
     if (hint) html += `<div class="phint">${hint}</div>`;
     html += '<div class="pbtns">';
-    r.options.forEach((o, i) => {
+    // An area pick has hundreds of options: the circle is the choice, not a wall of buttons.
+    if (r.kind !== 'area') r.options.forEach((o, i) => {
       html += `<button data-i="${i}" class="${someChosen.includes(o) ? 'chosen' : ''}">${esc(optionLabel(r, o, i))}</button>`;
     });
     if (r.allowNone) html += `<button data-v="none" class="ghost">Decline</button>`;
@@ -1685,6 +1870,11 @@ function renderHighlights() {
   if (humanToAnswer()) {
     const r = S.pending.request;
     if (r.kind === 'target') r.options.forEach((u) => markCell(u, 'askable'));
+    // WITHIN a distance: drawn as a movement circle, not a scatter of markers.
+    if (r.kind === 'area' && r.area) {
+      arena.setMoveCircle({ x: r.area.x, y: r.area.y, r: r.area.r });
+      if (typeof r.area.id === 'number') arena.highlightUnits({ [r.area.id]: 0xffffff });
+    }
     if (r.kind === 'unit' || r.kind === 'body') {
       arena.highlightUnits(Object.fromEntries(r.options.filter((id) => typeof id === 'number').map((id) => [id, 0xffe066])));
     }
@@ -1774,14 +1964,16 @@ function rangePreview() {
 /* ================================================================ top bar */
 
 function renderTop() {
+  // Points the timeline has not awarded yet stay off the bar (flushFx `score`).
   const vp = (p) => {
-    const pct = Math.min(100, (S.vp[p] / 15) * 100);
-    return `<div class="vp ${pCls(p)}"><span class="vpn">${pName(p)}</span><div class="vpbar"><i style="width:${pct}%"></i>${Array.from({ length: 14 }, (_, k) => `<s style="left:${((k + 1) / 15) * 100}%"></s>`).join('')}</div><b>${S.vp[p]}</b></div>`;
+    const shown = Math.max(0, S.vp[p] - (pendingVp[p] || 0));
+    const pct = Math.min(100, (shown / 15) * 100);
+    return `<div class="vp ${pCls(p)}"><span class="vpn">${pName(p)}</span><div class="vpbar"><i style="width:${pct}%"></i>${Array.from({ length: 14 }, (_, k) => `<s style="left:${((k + 1) / 15) * 100}%"></s>`).join('')}</div><b>${shown}</b></div>`;
   };
   $('#vps').innerHTML = vp(0) + vp(1);
   for (const p of [0, 1]) {
     const m = S.field.units.find((u) => u.owner === p && u.kind === 'mage');
-    const dead = !m || m.dead;
+    const dead = !m || (m.dead && !pendingDead.has(m.id));
     $(`#mage${p}`).innerHTML = dead ? `<span class="red">mage slain — returns turn ${S.players[p].mage.respawnOnTurn ?? '?'}</span>` : '';
   }
   renderFlow();
@@ -1949,11 +2141,11 @@ function openRules() {
   const R = (r) => runeGlyphInline(r, '#e8dcc0');
   modal(`<h2>How to play</h2>
     <div class="rules">
-    <p><b>Goal:</b> first to <b>15 VP</b>. Gold spells score by completing hard objectives (scoring sends the gold spell to your discard). Killing a mage is worth 2 VP; a golem, 1.</p>
+    <p><b>Goal:</b> first to <b>15 VP</b>. Gold spells score by completing hard objectives (scoring sends the gold spell to your discard). Killing a mage is worth 2 VP; a golem, 2 for an A-tier, 1 for a B, nothing for a C.</p>
     <p><b>Your turn</b> runs along the strip at the top: draw a card, take one <b>spell action</b>, then move your <b>units</b>, then end the turn.</p>
     <p><b>Spell actions</b> (pick one): play a card from your hand onto its colour · click one of your spells and <b>rotate</b> it — <b>its new top face resolves</b> · shift it to an adjacent cell · destroy it · or skip. Artifacts go on the grey corners; golem cards go in the slots beneath.</p>
     <p><b>The top face is active.</b> Cards land showing side I and resolve it as they are played; each left turn brings up the next face and resolves that. <b>Side IV is every card's payoff</b>; sides I–III build toward it, and most make you pay something to get there. Selecting a spell draws the range of the face it would turn to. You can only rotate a spell yourself while it sits on its own colour.</p>
-    <p><b>Matches:</b> wherever two of your cards meet at a corner showing the <b>same rune</b>, they match. You must choose one of them; it rotates left and its new top face <b>resolves</b>. That can set off another match, and another — a chain. Each junction resonates once per chain, and a spell turns at most four times per action. A chain is mandatory, so it can hurt you.</p>
+    <p><b>Matches:</b> wherever two of your cards meet at a corner showing the <b>same rune</b>, they match. You must choose one of them; it rotates left and its new top face <b>resolves</b>. That can set off another match, and another — a chain. Each spell can be rotated only once per turn; its faces can still be resolved as often as effects allow. A chain is mandatory, so it can hurt you.</p>
     <p class="runes">${R('SPIRAL')} Spiral — turning &amp; shifting &nbsp; ${R('SHARD')} Shard — destruction &amp; damage &nbsp; ${R('WHEEL')} Wheel — pushing &amp; terrain &nbsp; ${R('LATTICE')} Lattice — cards, keywords, scoring</p>
     <p><b>[Keywords]</b> resonate: on a match, each card's Keywords cross onto the other by themselves and stay there <b>as long as those corners match</b> — put [Ignore Height] on a push, [Poison] on a fireball. A card's own Keywords are printed in <span class="kw own">gold</span>; the ones resonating from a neighbour in <span class="kw">purple</span>, and they fade when the corners part.</p>
     <p><b>Units:</b> click a unit, then anywhere inside its blue circle to walk there; click a red-ringed enemy to strike; the mage can summon a golem beside itself. Mages have 5 life unless a passive raises it. Golem tiers cap how many are out at once: C three, B two, A one. A golem card that has deployed and then lost every unit is spent.</p>
@@ -2150,6 +2342,8 @@ window.WG = {
   get arena() { return arena; },
   /** Test hook: play the trap-springing reveal on a cell (tools/lab/shoot-traps.mjs). */
   revealTrap, render,
+  /** Test hooks: schedule the notes the engine has left since the last flush, and the schedule it produced ([{at, kind, id}], ms from the flush). */
+  flush: flushFx, get plan() { return lastPlan; }, cuesLeft,
 };
 
 function boot() {

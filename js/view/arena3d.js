@@ -26,7 +26,7 @@ import { buildWorld, menhir } from './world.js';
 import { createPropFactory } from './props.js';
 import { createFx } from './fx.js';
 import { makeMageActor } from './mage.js';
-import { createMageRites } from './mage-rites.js';
+import { createMageRites, DEATH_STILL, DEATH_DISSOLVE } from './mage-rites.js';
 import { makeGolemActor } from './golems.js';
 
 const MM = 1 / 1000;
@@ -233,24 +233,24 @@ export function createArena(host, state, handlers = {}) {
     const seen = new Set();
     for (const u of s.field.units) {
       let rec = actors.get(u.id);
+      // The engine has already brought this mage back to its circle, but the
+      // timeline has not reached that moment (cues.respawnHold): the body
+      // stays as it is -- still standing before its death cue, or lying
+      // dead -- and is never walked to the circle (user: "it just sends them
+      // back to their base and they just walk back instead of dying").
+      if (respawnPending.has(u.id)) { if (rec) seen.add(u.id); continue; }
       if (u.dead) {
-        if (rec && !rec.actor.dead) {
-          dynRelease(rec);
-          if (rec.burning) { rec.burning = false; fx.unburn(`u${u.id}`); }
-          rec.actor.die();
-          const kept = rec;
-          actors.delete(u.id);
-          dying.push({ rec: kept, t: 0 });
-          kept.label.classList.add('gone');
-          if (u.kind === 'mage') fallen.add(u.id);
-        }
+        // A death the timeline owes (cues.dying): the body stays on its feet
+        // with its last hit still to land, and cues.kill fells it.
+        if (rec && !rec.actor.dead && killPending.has(u.id)) { seen.add(u.id); rec.unit = u; continue; }
+        if (rec && !rec.actor.dead) bury(rec, u);
         continue;
       }
       seen.add(u.id);
       if (!rec) {
         // A dead actor coming back is a respawn; a brand-new one a summon.
         const back = dying.find((d) => d.rec.unit.id === u.id);
-        if (back) { dying.splice(dying.indexOf(back), 1); rec = back.rec; rec.actor.root.position.set(u.x * MM, u.z * MM, u.y * MM); rec.actor.root.rotation.x = 0; }
+        if (back) { dying.splice(dying.indexOf(back), 1); rec = back.rec; rec.actor.root.position.set(u.x * MM, u.z * MM, u.y * MM); rec.actor.root.rotation.x = 0; rec.label.style.display = ''; rec.target.set(u.x * MM, u.z * MM, u.y * MM); rec.walk = null; }
         else rec = makeUnitActor(u);
         if (u.kind === 'mage' && (back || fallen.has(u.id))) {
           // A mage's respawn, whether its dust is still blowing or long gone:
@@ -269,12 +269,10 @@ export function createArena(host, state, handlers = {}) {
       // A walk the timeline has not reached yet (cues.moveHold) keeps the
       // target it was given; the sync would otherwise walk the body to where
       // the engine left it before the cues ahead of it had played.
-      if (!rec.walk) rec.target.set(u.x * MM, u.z * MM, u.y * MM);
-      const name = handlers.unitLabel ? handlers.unitLabel(u) : u.kind === 'mage' ? 'Mage' : (s.defs[u.def]?.name || 'Golem');
-      const pips = Array.from({ length: u.maxHp }, (_, i) => `<i class="${i < u.hp ? 'f' : ''}"></i>`).join('');
-      const html = `<b>${name}</b><span class="hp">${pips}</span>${u.poison ? `<em class="poi">☠${u.poison}</em>` : ''}${u.burn > 0 ? `<em class="poi" style="color:#ff9a3a">🔥${u.burn}</em>` : ''}${u.acted && s.active === u.owner && s.phase === 'unit' ? '<em>done</em>' : ''}`;
-      if (rec.label.innerHTML !== html) rec.label.innerHTML = html;
-      rec.label.classList.toggle('acted', !!u.acted && s.active === u.owner);
+      // A teleport the timeline owes (cues.blinkHold) keeps the body where
+      // it stands until it vanishes there; it never walks to the far spot.
+      if (!rec.walk && !rec.blink) rec.target.set(u.x * MM, u.z * MM, u.y * MM);
+      relabel(rec);
       // A burning UNIT (Immolate): small flames ride on the body while the
       // status lasts, driven off the state like a burning tree's.
       const alight = u.burn > 0;
@@ -294,14 +292,18 @@ export function createArena(host, state, handlers = {}) {
         scene.add(m);
         propMeshes.set(pr.id, m);
         m.position.set(pr.x * MM, pr.z * MM, pr.y * MM);
-        if (pr.raised) { m.scale.y = 0.01; fx.tween(0.7, (t) => { m.scale.y = 0.01 + fx.ease.out(t) * 0.99; }); fx.dust(pr.x * MM, pr.z * MM, pr.y * MM, { n: 30, size: 0.8 }); fx.shake(0.05, 0.4); }
-        // Earth heaving up throws clods and a darker dust than stone does.
-        if (pr.raised && pr.kind === 'earthwall') { fx.debris(pr.x * MM, pr.z * MM + 0.3, pr.y * MM, { n: 8, colour: 0x4a3a28, size: 0.1, spread: m.userData.r * 1.1, up: 3.5 }); fx.dust(pr.x * MM, pr.z * MM, pr.y * MM, { n: 36, size: 0.9, colour: 0x5a4a36, spread: 0.6, up: 1.6 }); fx.shake(0.08, 0.5); }
+        // A wall the timeline owes a rise (cues.wallHold) waits in the
+        // ground for its cue; any other raised piece comes up now.
+        if (pr.raised && wallPending.has(pr.id)) m.scale.y = 0.01;
+        else if (pr.raised) rise(m, pr);
       }
       m.userData.target = new THREE.Vector3(pr.x * MM, pr.z * MM, pr.y * MM);
       // The engine has already written the piece off, but its fall has not
       // played yet: it stays up, whole and unburst, until the topple cue ends.
       if (topplePending.has(pr.id)) continue;
+      // An earth wall whose bolt is still in the air: whole, uncracked and
+      // standing (or still in the ground) until the bolt bursts on it.
+      if (wallPending.has(pr.id)) continue;
       // A meteor's boulder is on the engine's field before its streak has
       // played: it stays out of sight until the cue puts it down.
       if (meteorPending.has(pr.id)) { m.visible = false; continue; }
@@ -343,9 +345,68 @@ export function createArena(host, state, handlers = {}) {
       }
     }
   }
+  /** A raised piece comes up out of the ground: the heave, the dust, the clods when it is earth. */
+  function rise(m, pr) {
+    const x = pr.x * MM, y = pr.z * MM, z = pr.y * MM;
+    m.scale.y = 0.01;
+    fx.tween(pr.kind === 'earthwall' ? 0.45 : 0.7, (t) => { m.scale.y = 0.01 + fx.ease.out(t) * 0.99; }, () => { m.scale.y = 1; });
+    fx.dust(x, y, z, { n: 30, size: 0.8 });
+    fx.shake(0.05, 0.4);
+    // Earth heaving up throws clods and a darker dust than stone does.
+    if (pr.kind === 'earthwall') { fx.debris(x, y + 0.3, z, { n: 8, colour: 0x4a3a28, size: 0.1, spread: m.userData.r * 1.1, up: 3.5 }); fx.dust(x, y, z, { n: 36, size: 0.9, colour: 0x5a4a36, spread: 0.6, up: 1.6 }); fx.shake(0.08, 0.5); }
+  }
   const stumps = [];
   const topplePending = new Set();   // prop ids whose topple cue is scheduled but not finished
   const meteorPending = new Set();   // boulder ids whose meteor streak has not landed yet
+  const wallPending = new Set();     // earth walls the engine has raised whose rise cue has not played
+
+  /* ---------------------------------------------------------- presented state */
+  // The engine's state is final the moment an action is applied; what the
+  // player sees must not be. Every consequence here is HELD until its cue
+  // plays, in the order the engine emitted them (user: "the animations
+  // sometimes play before something happens. Like you attack an enemy, their
+  // health bar drops down two, they fall on the ground, then a fire ball hits
+  // them, then it says -2 damage. Like its all mixed up").
+  //   heldHp          unit id -> hit points the label still shows ABOVE the
+  //                   engine's (damage not yet landed; negative for a heal
+  //                   not yet shown). cues.hit / cues.heal consume it.
+  //   killPending     units the engine has killed whose death cue is owed
+  //   respawnPending  mages the engine has brought back whose respawn cue is owed
+  const heldHp = new Map();
+  const killPending = new Set();
+  const respawnPending = new Set();
+  /** The hit points the label shows: the engine's, plus whatever damage the timeline has not landed yet. */
+  function shownHp(id) {
+    const rec = actors.get(id);
+    const u = rec?.unit || cur.field.units.find((x) => x.id === id);
+    if (!u) return 0;
+    // A mage whose respawn is still owed is, on screen, the body that died:
+    // the engine has already refilled the SAME unit object, so its hp says
+    // nothing about the corpse. It shows only the hits still to land.
+    const base = respawnPending.has(id) ? 0 : u.hp;
+    return Math.max(0, Math.min(u.maxHp, base + (heldHp.get(id) || 0)));
+  }
+  /** The name and pips over a body, from the presented hit points. */
+  function relabel(rec) {
+    const u = rec.unit, s = cur;
+    const hp = shownHp(u.id);
+    const name = handlers.unitLabel ? handlers.unitLabel(u) : u.kind === 'mage' ? 'Mage' : (s.defs[u.def]?.name || 'Golem');
+    const pips = Array.from({ length: u.maxHp }, (_, i) => `<i class="${i < hp ? 'f' : ''}"></i>`).join('');
+    const html = `<b>${name}</b><span class="hp">${pips}</span>${u.poison ? `<em class="poi">☠${u.poison}</em>` : ''}${u.burn > 0 ? `<em class="poi" style="color:#ff9a3a">🔥${u.burn}</em>` : ''}${u.acted && s.active === u.owner && s.phase === 'unit' ? '<em>done</em>' : ''}`;
+    if (rec.label.innerHTML !== html) rec.label.innerHTML = html;
+    rec.label.classList.toggle('acted', !!u.acted && s.active === u.owner);
+  }
+  /** The body dies: off the living list, the death clip, then the rites take it (the frame loop's `dying` pass). */
+  function bury(rec, u) {
+    dynRelease(rec);
+    if (rec.burning) { rec.burning = false; fx.unburn(`u${u.id}`); }
+    rec.actor.die();
+    actors.delete(u.id);
+    dying.push({ rec, t: 0 });
+    rec.label.classList.add('gone');
+    heldHp.delete(u.id);
+    if (u.kind === 'mage') fallen.add(u.id);
+  }
 
   /* ---------------------------------------------------------- markers */
   const markerGroup = new THREE.Group();
@@ -418,6 +479,8 @@ export function createArena(host, state, handlers = {}) {
   // What the engine's notes become. main.js decides WHEN; these decide HOW.
   const unitPos = (id) => { const rec = actors.get(id) || dying.find((d) => d.rec.unit.id === id)?.rec; return rec ? rec.actor.root.position.clone() : null; };
   const unitTop = (id) => { const rec = actors.get(id); const p = unitPos(id); if (p && rec) p.y += rec.actor.height * 0.55; return p; };
+  /** The upper face of a piece of terrain, where a bolt flown into it bursts. */
+  const propTop = (id) => { const m = propMeshes.get(id); return m ? m.position.clone().setY(m.position.y + m.userData.h * 0.6) : null; };
   const mageOf = (p) => [...actors.values()].find((r) => r.unit.owner === p && r.unit.kind === 'mage');
 
   /* ---------------------------------------------------------- dynamics playback */
@@ -756,15 +819,20 @@ export function createArena(host, state, handlers = {}) {
       m.actor.cast(big ? 'raise' : 'shoot');
     },
     /** A bolt from the caster's hand to a unit. `onArrive` runs when it lands. */
-    bolt(p, targetId, { element = 'fire', colour = null, onArrive = null, big = false } = {}) {
+    /**
+     * `prop` flies it into a piece of terrain instead -- the Earth Wall that
+     * rose in its path -- and it bursts there (user: "It should LITERALLY
+     * block the fireballs and stuff"). `dur` overrides the flight time.
+     */
+    bolt(p, targetId, { element = 'fire', colour = null, onArrive = null, big = false, prop = null, dur = null } = {}) {
       const m = mageOf(p);
-      const to = unitTop(targetId);
+      const to = prop !== null ? propTop(prop) : unitTop(targetId);
       if (!to) { onArrive?.(); return; }
       const from = m ? m.actor.handPoint() : to.clone().add(new THREE.Vector3(0, 3, 0));
       if (m) m.actor.lookAt(to.x, to.z);
       const col = colour ?? (element === 'fire' ? 0xff8a2a : element === 'lightning' ? 0xbfe8ff : element === 'force' ? 0x9fd8ff : 0xc98bff);
       if (element === 'lightning') { fx.lightning(from, to, { colour: col }); onArrive?.(); return; }
-      fx.bolt(from, to, { colour: col, dur: big ? 0.55 : 0.4, size: big ? 0.3 : 0.18, trail: element === 'fire' ? 'fire' : 'soft', onArrive: () => {
+      fx.bolt(from, to, { colour: col, dur: dur ?? (big ? 0.55 : 0.4), size: big ? 0.3 : 0.18, trail: element === 'fire' ? 'fire' : 'soft', onArrive: () => {
         if (element === 'fire') fx.explosion(to.x, to.y - 0.6, to.z, { r: big ? 1.4 : 0.7 });
         else { fx.flash(to.x, to.y, to.z, col, 10, 0.3, 5); fx.ring(to.x, to.y - 0.6, to.z, 1.2, col, { dur: 0.4 }); }
         onArrive?.();
@@ -777,6 +845,10 @@ export function createArena(host, state, handlers = {}) {
       fx.lightning(a || b.clone().add(new THREE.Vector3(0, 4, 0)), b);
     },
     hit(id, amount, cause = 'spell') {
+      // The held pips are released FIRST, so a body that has gone by now
+      // (buried, removed) never leaves a label stuck showing the old count.
+      const held = heldHp.get(id) || 0;
+      if (held > 0) { const left = held - amount; if (left > 0) heldHp.set(id, left); else heldHp.delete(id); }
       const rec = actors.get(id);
       if (!rec) return;
       // The body reacts to WHAT hit it: a flinch, a flail of burning robes, a
@@ -798,10 +870,107 @@ export function createArena(host, state, handlers = {}) {
       fx.pools.sparks.emit({ x: p.x, y: p.y + rec.actor.height * 0.5, z: p.z, n: 14, spread: 0.2, vspread: 3, vy: 1.5, life: 0.5, size: 0.1, sizeEnd: 0.02, color: 0xffffff, colorEnd: col, gravity: -8 });
       floatAtUnit(id, `−${amount}`, fiery ? 'dmg fire' : 'dmg');
       if (cause === 'fall' || crushing) fx.shake(0.05, 0.3);
+      // The pips drop WITH the number, not when the engine took them.
+      relabel(rec);
     },
-    heal(id, amount) { const p = unitPos(id); if (p) fx.motes(p.x, p.y, p.z, 0x6cf09a, { n: 28 }); floatAtUnit(id, `+${amount}`, 'heal'); },
+    heal(id, amount) {
+      const p = unitPos(id); if (p) fx.motes(p.x, p.y, p.z, 0x6cf09a, { n: 28 }); floatAtUnit(id, `+${amount}`, 'heal');
+      const rec = actors.get(id);
+      const held = heldHp.get(id) || 0;
+      if (held < 0) { const left = held + amount; if (left < 0) heldHp.set(id, left); else heldHp.delete(id); }
+      if (rec) relabel(rec);
+    },
+    /**
+     * The timeline owes this unit a hit (or a heal, `amount` < 0): the label
+     * keeps showing the hit points from BEFORE it until the cue lands.
+     * Called when the note is read, ahead of its turn.
+     */
+    holdHp(id, amount) {
+      const rec = actors.get(id);
+      heldHp.set(id, (heldHp.get(id) || 0) + amount);
+      if (rec) relabel(rec);
+    },
+    /** The engine has killed this unit; its death cue is still to play: it stays on its feet until then. */
+    dying(id) { killPending.add(id); },
+    /** The engine has brought this mage back to its circle; the body keeps its place (or its grave) until `respawn` plays. */
+    respawnHold(id) { respawnPending.add(id); },
+    /** The respawn cue: magic gathers on the circle and the body forms there (the rites' gather and materialise, through the sync). */
+    respawn(id) {
+      respawnPending.delete(id);
+      // A body that never got its death cue (the kill and the respawn in one
+      // flush) goes to its grave first, so the circle sees a materialisation
+      // and never a body that was simply moved.
+      const rec = actors.get(id);
+      if (rec && !rec.actor.dead) bury(rec, rec.unit);
+      sync(cur);
+    },
+    /** A teleport is coming for this unit: it stays put (no walk toward the engine's new spot) until `blink` plays. */
+    blinkHold(id) { const rec = actors.get(id); if (rec) rec.blink = { held: true }; },
+    /**
+     * A TELEPORT, ~0.9 s: the body implodes at `from` -- drawn in to a point
+     * of light, sparks sucked inward -- is gone a beat, and bursts back into
+     * being at `to` with a flash and a ring. It never walks or slides between
+     * the two (user: "Things that teleport you ... need to actually make you
+     * disappear and then come back with a cool animation"). A mage dissolves
+     * and re-forms (the death rites' dissolve, lit); a golem shrinks away and
+     * swells back.
+     */
+    blink(id, from, to) {
+      const rec = actors.get(id);
+      if (!rec) return;
+      const a = rec.actor, root = a.root;
+      const col = 0x9fd8ff, tint = 0xcfeeff;
+      const A = new THREE.Vector3(from.x * MM, from.z * MM, from.y * MM), B = new THREE.Vector3(to.x * MM, to.z * MM, to.y * MM);
+      const h = a.height || 1.6;
+      const fade = (k) => { if (a.setDissolve) a.setDissolve(k, { tint, glow: 2.5 }); else root.scale.setScalar(Math.max(0.01, 1 - k)); };
+      rec.blink = { held: true };
+      root.position.copy(A); rec.target.copy(A);
+      a.moving = false;
+      // Out: sparks drawn inward, the body unmade feet to head.
+      fx.pools.sparks.emit({ x: A.x, y: A.y + h * 0.5, z: A.z, n: 26, spread: 0.7, spreadY: h * 0.5, radial: -2.4, life: 0.35, size: 0.07, sizeEnd: 0.01, color: 0xffffff, colorEnd: col, drag: 0.4 });
+      fx.ring(A.x, A.y, A.z, 0.9, col, { dur: 0.35, width: 0.1 });
+      fx.tween(0.32, (t) => fade(t * t), () => {
+        fade(1);
+        a.setHidden?.(true);
+        // Nothing of it stays behind: not its ring on the ground, not its name.
+        rec.base.visible = false; rec.label.classList.add('gone');
+        fx.flash(A.x, A.y + h * 0.5, A.z, col, 10, 0.2, 4);
+        fx.pools.soft.emit({ x: A.x, y: A.y + h * 0.5, z: A.z, n: 1, life: 0.2, size: 0.9, sizeEnd: 0.05, color: 0xffffff, alpha: 0.9, fade: 0 });
+        // Gone a beat; then THERE, with no frame in between.
+        setTimeout(() => {
+          root.position.copy(B); rec.target.copy(B); rec.walk = null; rec.falling = false; rec.vy = 0;
+          a.setHidden?.(false);
+          rec.base.visible = true; rec.label.classList.remove('gone');
+          fx.flash(B.x, B.y + h * 0.5, B.z, col, 14, 0.3, 6);
+          fx.ring(B.x, B.y, B.z, 1.2, col, { dur: 0.45, width: 0.12 });
+          fx.burst(B.x, B.y + h * 0.4, B.z, col, { n: 30, r: 0.4, up: 1.6 });
+          fx.tween(0.38, (t) => fade(1 - t), () => { fade(0); root.scale.setScalar(1); if (a.setDissolve) a.setDissolve(0); rec.blink = null; });
+        }, 150);
+      });
+    },
+    /** An earth wall the engine has raised, whose rise is still to play: it waits in the ground. */
+    wallHold(propId) { wallPending.add(propId); },
+    /** The wall heaves up now; the engine's verdict on it (cracked, shattered) is still held for `wallDone`. */
+    raiseWall(propId) {
+      const m = propMeshes.get(propId);
+      const pr = cur.field.props.find((x) => x.id === propId);
+      if (m && pr) rise(m, pr);
+    },
+    /** The bolt has burst on the wall: what the engine made of it (its cracks, its rubble) shows from here on. */
+    wallDone(propId) {
+      wallPending.delete(propId);
+      const m = propMeshes.get(propId);
+      if (m) { m.userData.damage = -1; m.scale.y = 1; }
+      sync(cur);
+    },
     poison(id) { const p = unitPos(id); if (p) fx.motes(p.x, p.y + 1.2, p.z, 0x86e03a, { n: 18, up: 0.6, size: 0.18, drip: true }); },
     kill(id) {
+      killPending.delete(id);
+      // Held on its feet until now (cues.dying): the fatal hit has landed and
+      // its number has shown; the body goes down here, and the rites
+      // (mage-rites.js: lie still, go to ash) follow in the frame loop.
+      const rec = actors.get(id);
+      if (rec && !rec.actor.dead) bury(rec, rec.unit);
       const p = unitPos(id);
       if (p) { fx.motes(p.x, p.y, p.z, 0xffffff, { n: 40, up: 2.2, r: 0.5, life: 1.8, size: 0.16 }); fx.flash(p.x, p.y + 1, p.z, 0xffffff, 10, 0.5, 6); }
       floatAtUnit(id, 'SLAIN', 'kill');
@@ -1133,7 +1302,13 @@ export function createArena(host, state, handlers = {}) {
       m.actor.cast('raise');
     },
     summon(id) { const p = unitPos(id); if (p) { fx.sigil(p.x, p.y, p.z, 0xe0a46a, { dur: 1.2, r: 0.9 }); } const m = mageOf(actors.get(id)?.unit.owner ?? 0); m?.actor.summon(); },
-    score(p) { const m = mageOf(p); if (m) { const pos = m.actor.root.position; fx.burst(pos.x, pos.y + 0.5, pos.z, 0xffcf5a, { n: 50, r: 0.6, up: 2.5 }); fx.flash(pos.x, pos.y + 1.5, pos.z, 0xffcf5a, 14, 0.6, 7); } },
+    score(p, amount = 0) {
+      const m = mageOf(p);
+      if (m) { const pos = m.actor.root.position; fx.burst(pos.x, pos.y + 0.5, pos.z, 0xffcf5a, { n: 50, r: 0.6, up: 2.5 }); fx.flash(pos.x, pos.y + 1.5, pos.z, 0xffcf5a, 14, 0.6, 7); }
+      // The points themselves, over the scorer, so a kill reads as a kill
+      // (user: "sometimes they don't die ... it just sends them back").
+      if (m && amount > 0) floatAtUnit(m.unit.id, `+${amount} VP`, 'vp');
+    },
     /** A link between two spells' casters: Spell Splice, Confluence, keyword copies. */
     link(p, colour = 0xc98bff) { const m = mageOf(p); if (m) { const a = m.actor.handPoint(); fx.beam(a, a.clone().add(new THREE.Vector3(0, 1.6, 0)), colour, { dur: 0.6, width: 0.1 }); } },
     cheer(p) { mageOf(p)?.actor.cheer(); },
@@ -1724,7 +1899,7 @@ export function createArena(host, state, handlers = {}) {
   requestAnimationFrame(frame);
 
   return {
-    sync, setMarkers, clearMarkers, highlightUnits, floatText, floatAtUnit, pulse, pulseUnit,
+    sync, setMarkers, clearMarkers, highlightUnits, floatText, floatAtUnit, pulse, pulseUnit, shownHp,
     setRanges, setMoveCircle, showGhost, insideMove: (x, y) => insideMove(x, y), moveShape, setViewport,
     beginDrag, endDrag, screenAngle,
     camera, controls, renderer, scene, fx, cues,
@@ -1739,6 +1914,17 @@ export function createArena(host, state, handlers = {}) {
       const dz = to.z * MM - p.y;
       // A drop on the way is a push-off, the fall and the landing; a climb is slower than a walk.
       return (dist / Math.max(0.5, rec.actor.speed)) * 1000 + (dz < -0.35 ? 350 + Math.sqrt(2 * -dz / 9.8) * 1000 : dz > 0.35 ? 250 : 0) + 150;
+    },
+    /**
+     * How long a body takes, from its kill cue, to be done dying: a mage's
+     * death clip, the still beat and the dust (mage-rites.js); a golem's
+     * crumble. A respawn waits for this, so the circle never takes a body
+     * that is still falling (user: "it just sends them back to their base").
+     */
+    ritesMs(id) {
+      const rec = actors.get(id) || dying.find((d) => d.rec.unit.id === id)?.rec;
+      if (!rec || rec.unit.kind !== 'mage') return 0;
+      return Math.round(((rec.actor.deathClipDur || 1) + DEATH_STILL + DEATH_DISSOLVE) * 1000) + 100;
     },
     get ready() { return ready; }, whenReady: readyPromise,
     project(x, y, z) {

@@ -226,7 +226,13 @@ const LOOKS = {
   SPARK_WISP:     { kind: 'wisp', core: 0xfff1a0, height: 1.5, speed: 3.4 },
   GLASS_SENTINEL: { kind: 'biped', glass: true, core: 0x5fd8ff, height: 2.25, speed: 2.2 },
   EMBER_HOUND:    { kind: 'hound', tint: 0x3a2b24, rough: 0.9, metal: 0, core: 0xff6a1a, cracks: 0xff4a10, crackI: 1.1, height: 1.15, speed: 3.2 },
+  // Newer cards: their own colours on a peer's body plan (BODY_OF below).
+  BOG_CRAWLER:    { kind: 'hound', tint: 0x3d4a2c, rough: 1.0, metal: 0, core: 0x9fe05a, cracks: 0x6fae2a, crackI: 0.6, height: 1.0, speed: 2.4 },
+  GRANITE_RAM:    { kind: 'biped', tint: 0x7d7468, rough: 0.9, metal: 0.1, core: 0xffc04a, height: 2.0, speed: 2.1 },
+  OBSIDIAN_TITAN: { kind: 'biped', tint: 0x1c1a22, rough: 0.25, metal: 0.4, env: 2.2, core: 0xb46bff, cracks: 0x9b4bff, crackI: 0.6, height: 2.5, speed: 1.7 },
 };
+/** Which body plan a newer golem borrows. */
+const BODY_OF = { GRANITE_RAM: 'STONE_WARDEN', OBSIDIAN_TITAN: 'IRON_COLOSSUS' };
 
 /* ------------------------------------------------------ biped specs */
 // Sizes are [w, h, d] boxes in metres; `at` positions are relative to the
@@ -495,7 +501,10 @@ export function makeGolemActor(gltfs, defId, { team = 0x4fd2ff } = {}) {
   /* ------------------------------------------------ build: biped */
   let P = null;
   if (look.kind === 'biped') {
-    P = BIPEDS[defId];
+    // A golem card with no look of its own (a new card) borrows the Clay
+    // Hand's, body plan and all -- the look fell back already, the build did
+    // not, and a summon threw.
+    P = BIPEDS[defId] || BIPEDS[BODY_OF[defId]] || BIPEDS.CLAY_HAND;
     const hips = G(body, [0, P.hipY, 0]);
     rock(P.pelvis, hips);
     const torsoP = G(hips, [0, P.torsoPivotY, 0]);
